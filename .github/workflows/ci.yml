@@ -14,7 +14,7 @@ env:
 
 jobs:
   gates:
-    name: 16 项门禁（与本地同一脚本）
+    name: 17 项门禁（与本地同一脚本）
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -81,4 +81,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test:coverage
-      - run: cargo test --workspace
+      - run: cargo test --workspace --locked

@@ -1,0 +1,6 @@
+# MSRV 感知解析：让 cargo 自动挑选与 rust-version 兼容的依赖版本。
+# 背景：本项目 rust-version = 1.88，但 tauri 2.12 系列要求 rustc 1.90。
+# 没有这个设置时，cargo 会解析到需要更新 toolchain 的版本，CI（固定 1.88）会直接失败。
+# 对应 Cargo 1.84 起稳定的 resolver.incompatible-rust-versions（详见技术方案 §3.6.1）。
+[resolver]
+incompatible-rust-versions = "fallback"

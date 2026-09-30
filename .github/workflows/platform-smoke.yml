@@ -53,7 +53,7 @@ jobs:
         run: pnpm build
 
       - name: 构建应用（debug 即可验证窗口启动）
-        run: cargo build --manifest-path src-tauri/Cargo.toml
+        run: cargo build --manifest-path src-tauri/Cargo.toml --locked
 
       - name: 冒烟启动 · Linux（Xvfb）
         if: runner.os == 'Linux'

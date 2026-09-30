@@ -1112,6 +1112,18 @@ strip = false
    commit message 写明升级原因（安全修复 / 功能需要 / 例行）。**禁止**把 lockfile 变更混在功能提交里，
    否则 review 无法看出依赖树发生了什么变化。
 
+**Rust 侧的等价规则（2026-09-30 补充，起因见 §12 勘误 R-11）**：
+
+| 层面 | 载体 | 写法 | 作用 |
+| --- | --- | --- | --- |
+| 声明 | `src-tauri/Cargo.toml`、`crates/*/Cargo.toml` | 向后兼容范围（`^` / `~`）+ `rust-version = "1.88"` | 表达兼容性意图 |
+| 锁定 | `Cargo.lock`（**提交入库**，工作区根唯一一份） | 精确版本 | 保证所有人构建同一依赖树 |
+| 解析 | `.cargo/config.toml` 的 `[resolver] incompatible-rust-versions = "fallback"` + 工作区 `resolver = "3"` | **MSRV 感知解析** | 自动挑选与 1.88 兼容的版本，不会解析到要求 rustc 1.90 的 `tauri 2.12` 系列 |
+| 构建 | CI 与门禁 | `cargo ... --locked` | lockfile 与 manifest 不一致即失败，**绝不自行解析新版本**（Rust 版的 R-17） |
+
+> ⚠️ **不得删除 `.cargo/config.toml`**：缺少它时 cargo 按「最新可用」解析依赖，CI（固定 rustc 1.88）会在 `cargo check` 计划阶段直接失败。
+> 也**不能只靠 `--locked`**：它保证「不再重新解析」，防不住**首次解析 / 删锁重建**时选中过高版本——两者互补，缺一不可。
+
 **范围符的选择依据**：
 
 | 包 | 声明 | 为什么用这个范围符 |

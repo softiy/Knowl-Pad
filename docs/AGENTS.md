@@ -168,6 +168,8 @@ pnpm test:perf -- --baseline .perf-baseline.json           # 性能基准比对
    这不是 Tauri 的要求，而是被 `time` 与 `image` 两个依赖拉高的实际下限。
    低于 1.88 的 toolchain **必然构建失败**。固定方式见 `rust-toolchain.toml`（技术方案 §9.4.2）。
    相关权衡登记为 `DEBT-08`（技术方案 §13.2）。
+   ⚠️ 依赖解析由 `.cargo/config.toml` 的 MSRV 感知解析（+ 工作区 `resolver = "3"`）保证不会选到高于 1.88 的依赖；
+   门禁与 CI 的 cargo 命令一律带 `--locked`（Rust 版 R-17）。**不要删除 `.cargo/config.toml`**，详见技术方案 §3.6.1。
 
 2. **Node = 24.19.0，包管理器 = pnpm**
    `.nvmrc` 与 `package.json` 的 `engines` / `packageManager` 三处必须一致（技术方案 §11.2）。
