@@ -105,6 +105,11 @@ describe('parseArgs', () => {
     expect(o.merge).toBe(false);
     expect(o.verifyMirror).toBe(false);
   });
+  it('忽略 pnpm 透传的裸 -- 分隔符', () => {
+    const o = parseArgs(['--', 'open', '--wait', '2']);
+    expect(o.command).toBe('open');
+    expect(o.wait).toBe(2);
+  });
   it('未知选项抛错（避免静默忽略拼错的参数）', () => {
     expect(() => parseArgs(['--wiat', '3'])).toThrow();
   });
