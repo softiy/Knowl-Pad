@@ -60,7 +60,16 @@ CI 见 [`.github/workflows/`](.github/workflows/)：`ci.yml`（17 项门禁 + Wi
 
 1. **先读真相源**：动代码前读 `docs/AGENTS.md` 的「红线清单」与「模块边界纪律」；
 2. **提交信息**遵循 Conventional Commits（`feat` / `fix` / `perf` …）；
-3. **禁止直接推送 `main`**：须经 PR + Code Review，且 CI 门禁全绿；
+3. **禁止直接推送 `main`**：分支保护已启用（PR 必需 + 2 项必需检查 + 禁止强推与删除，`enforce_admins` 开启 —— 管理员同样不能直推）。标准流程：
+
+   ```bash
+   git switch -c feat/<简短描述>      # 或 fix/ chore/ docs/
+   # …改动 + 本地 pnpm ci 全绿…
+   git commit -m "feat(scope): …"     # Conventional Commits
+   git push -u origin HEAD            # 推分支，不推 main
+   ```
+
+   然后在 GitHub 上开 PR（模板会自动带上自检清单），**CI 全绿后**再合并；合并后删除分支。
 4. 修 bug 必须附回归测试；改 IPC 接口必须同步契约测试（门禁 17）；
 5. 发现文档矛盾请按技术方案 §13.2 登记 `DEBT-NN`，**不要悄悄绕过**。
 
