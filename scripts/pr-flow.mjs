@@ -98,6 +98,19 @@ function credential() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 识别 TLS 证书校验失败并给出可操作提示。
+ * 背景：本机若使用代理/加速器（TLS 中间人 + 自签 CA），Node 内置信任库不认它，
+ * 表现为 fetch failed + cause.code=UNABLE_TO_VERIFY_LEAF_SIGNATURE；而 git 走系统证书库所以正常。
+ */
+export function tlsHint(err) {
+  const code = err && err.cause && err.cause.code ? String(err.cause.code) : '';
+  if (!/CERT|UNABLE_TO_VERIFY|SELF_SIGNED|_SSL/i.test(code)) return null;
+  return '检测到 TLS 证书校验失败（' + code + '）：本机可能存在代理/加速器的自签证书。' +
+    '解决方式：用 pnpm pr（已在 package.json 里带 --use-system-ca），或手工执行 ' +
+    'node --use-system-ca scripts/pr-flow.mjs ...，或设置 NODE_EXTRA_CA_CERTS 指向该 CA。';
+}
+
 /** 判定 git 失败是否属于「网络类」错误（可安全重试）。纯函数。 */
 export function isNetworkError(text) {
   return [
@@ -163,7 +176,8 @@ async function api(path, { method = 'GET', body, retries = 5, raw = false } = {}
       }
     }
   }
-  throw new Error('网络请求连续失败 ' + retries + ' 次：' + (lastErr && lastErr.message));
+  const hint = tlsHint(lastErr);
+  throw new Error('网络请求连续失败 ' + retries + ' 次：' + (lastErr && lastErr.message) + (hint ? '\n    ' + hint : ''));
 }
 
 async function readState() {

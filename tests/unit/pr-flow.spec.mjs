@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REQUIRED_CHECKS, backoffMs, evaluateChecks, isNetworkError, parseArgs, parseRepoFromUrl } from '../../scripts/pr-flow.mjs';
+import { REQUIRED_CHECKS, backoffMs, evaluateChecks, isNetworkError, parseArgs, parseRepoFromUrl, tlsHint } from '../../scripts/pr-flow.mjs';
 
 const run = (name, status, conclusion) => ({ name, status, conclusion });
 
@@ -57,6 +57,17 @@ describe('isNetworkError', () => {
     expect(isNetworkError('remote: error: GH006: Protected branch update failed for refs/heads/main.')).toBe(false);
     expect(isNetworkError('! [rejected] main -> main (non-fast-forward)')).toBe(false);
     expect(isNetworkError('remote: Permission to x/y.git denied')).toBe(false);
+  });
+});
+
+describe('tlsHint', () => {
+  it('证书类错误给出 --use-system-ca 提示', () => {
+    const hint = tlsHint({ cause: { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' } });
+    expect(hint).toContain('--use-system-ca');
+  });
+  it('普通网络错误不误报为证书问题', () => {
+    expect(tlsHint({ cause: { code: 'ECONNRESET' } })).toBeNull();
+    expect(tlsHint(new Error('plain'))).toBeNull();
   });
 });
 

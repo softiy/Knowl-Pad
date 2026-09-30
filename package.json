@@ -34,7 +34,7 @@
     "changelog:gen": "node scripts/changelog.mjs",
     "changelog:self-test": "node scripts/changelog.mjs --self-test",
     "release:prepare": "node scripts/prepare-release.mjs",
-    "pr": "node scripts/pr-flow.mjs"
+    "pr": "node --use-system-ca scripts/pr-flow.mjs"
   },
   "dependencies": {
     "vue": "^3.5.43",
