@@ -209,7 +209,9 @@ pnpm test:perf -- --baseline .perf-baseline.json           # 性能基准比对
 4. **测试跟着改**。修 bug 必须附回归测试（PRD TEST-03）；改接口必须同步契约测试（门禁 17）。
 5. **发现文档矛盾就登记，不要悄悄绕过**。按技术方案 §13.2 的格式新增 `DEBT-NN` 条目，
    或直接修正真相源并在 §12 留痕。
-6. **禁止直接推送 `main`**（PRD CODE-09），须经 PR + Code Review，CI 17 项门禁全绿。
+6. **禁止直接推送 `main`**（PRD CODE-09）：分支保护已启用（PR 必需、2 项必需检查 = 门禁 17 项 + Windows 冒烟、
+   `strict` 要求分支最新、禁止强推/删除、`enforce_admins` 开启）。流程：新建分支 → 本地 `pnpm ci` 全绿 →
+   推送**分支** → 开 PR（模板含自检清单）→ CI 全绿后合并。PR 模板见 `.github/pull_request_template.md`。
 
 ---
 
