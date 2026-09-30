@@ -54,7 +54,8 @@ export function parseArgs(argv) {
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--wait') opts.wait = Number(argv[++i]);
+    if (a === '--') continue; // pnpm run <script> -- <args> 会把分隔符原样传进来，忽略之
+    else if (a === '--wait') opts.wait = Number(argv[++i]);
     else if (a === '--interval') opts.interval = Number(argv[++i]);
     else if (a === '--retries') opts.retries = Number(argv[++i]);
     else if (a === '--title') opts.title = argv[++i];
