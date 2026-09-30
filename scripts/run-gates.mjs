@@ -2,6 +2,12 @@
 // 本地等价于 PRD §8.4 的 13 项门禁；CI（.github/workflows/ci.yml）按同一顺序执行。
 // 用法：node scripts/run-gates.mjs [--only <id>] [--skip <id,...>]
 import { spawnSync } from 'node:child_process';
+
+/** 为 shell 执行转义单个参数：仅在含空白或 shell 元字符时加引号。 */
+function shellQuote(arg) {
+  const s = String(arg);
+  return /[\s"&|<>^()%!]/.test(s) ? '"' + s.replace(/"/g, '\\"') + '"' : s;
+}
 import { writeFileSync } from 'node:fs';
 import process from 'node:process';
 
@@ -33,7 +39,13 @@ function runStep(cmd, args) {
   const printable = [cmd, ...args].join(' ');
   console.log('\n\u25b6 ' + printable);
   const started = Date.now();
-  const res = spawnSync(cmd, args, { stdio: 'inherit', shell: process.platform === 'win32' });
+  // Windows 下 pnpm/cargo/node 多为 .cmd/.bat，必须经 shell 执行；但 Node 的
+  // DEP0190 警告禁止「shell: true + args 数组」组合（参数不转义、可被注入），
+  // 因此改为自行转义后传单条命令字符串，POSIX 仍走无 shell 的直连方式。
+  const res =
+    process.platform === 'win32'
+      ? spawnSync([cmd, ...args].map(shellQuote).join(' '), { stdio: 'inherit', shell: true })
+      : spawnSync(cmd, args, { stdio: 'inherit' });
   return { code: res.status ?? 1, ms: Date.now() - started, printable };
 }
 

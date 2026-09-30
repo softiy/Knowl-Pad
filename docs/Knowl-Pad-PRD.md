@@ -243,7 +243,7 @@ Knowl Pad 采用 Tauri 2.0 的**前后端分离混合架构**：
 | 语言 | TypeScript 6.0.3（**刻意停留 6.x**，上游 latest 已是 7.0.2，理由见技术方案 §3.2.1） |
 | 构建 | Vite `^8.3.0`（Rolldown + Oxc + Lightning CSS）。**已决策不回退**，生产回归风险改为必须规避（技术方案 §3.4.3） |
 | 前端框架 | Vue 3.5.43 / Pinia 4.0.3 / vue-router 5.3.1 |
-| 桌面框架 | Tauri 2.11.6（crate）/ @tauri-apps/cli 2.11.5 / @tauri-apps/api 2.11.1 |
+| 桌面框架 | Tauri 2.12.0（crate，2026-09-30 随 MSRV 1.90 跟进）/ @tauri-apps/cli 2.11.5 / @tauri-apps/api 2.11.1 |
 | UI | Tailwind CSS 4.3.3 / shadcn-vue 2.8.2（基于 Reka UI）/ lucide-vue-next 1.0.0 |
 | 编辑器 | md-editor-v3 6.5.6（MVP 阶段，**刻意不升 7.0.0**）→ CodeMirror 6（M8 正式版） |
 | 代码高亮 | MVP 用 md-editor-v3 内置高亮；M8 起**统一用 CodeMirror 6 / Lezer 原生方案**，不引入第三方高亮库（技术方案 §3.2.4） |
@@ -1450,14 +1450,14 @@ FTS5 默认 `unicode61` 分词器按 Unicode 词边界切分，**对中文不分
 | 需求 ID | 需求描述 | 优先级 |
 | --- | --- | --- |
 | `FR-UPDATE-01` | 启动时按检查频率自动检查更新（可关闭）；命令面板与设置页提供手动「检查更新」 | P1 |
-| `FR-UPDATE-02` | 更新流程：请求 `update.json` → SemVer 比对本地版本 → 发现新版本则提示（显示版本号与 Release Notes） | P1 |
+| `FR-UPDATE-02` | 更新流程：请求 `latest.json` → SemVer 比对本地版本 → 发现新版本则提示（显示版本号与 Release Notes） | P1 |
 | `FR-UPDATE-03` | 用户确认后下载安装包，显示下载进度，可取消 | P1 |
 | `FR-UPDATE-04` | **签名验证**：使用 `tauri.conf.json` 中配置的公钥验证更新包签名，验签失败**必须**中止并提示，不得安装 | P0 |
-| `FR-UPDATE-05` | **完整性校验**：验证下载文件的 SHA-256 与 `update.json` 声明一致，不一致则中止并删除下载文件 | P0 |
+| `FR-UPDATE-05` | **完整性校验**：验证下载文件的 SHA-256 与 `latest.json` 声明一致，不一致则中止并删除下载文件 | P0 |
 | `FR-UPDATE-06` | 传输强制 TLS 1.2+；更新源 URL 必须为 HTTPS | P0 |
 | `FR-UPDATE-07` | 安装需用户确认，重启后完成更新；更新前提示用户保存工作 | P1 |
 | `FR-UPDATE-08` | 更新失败时保留当前版本可继续使用，给出失败原因与手动下载链接 | P1 |
-| `FR-UPDATE-09` | 强制更新：`update.json` 中标记 `force: true` 的版本，提示不可跳过（用于严重安全漏洞修复） | P2 |
+| `FR-UPDATE-09` | 强制更新：`latest.json` 中标记 `force: true` 的版本，提示不可跳过（用于严重安全漏洞修复） | P2 |
 | `FR-UPDATE-10` | 「跳过此版本」选项：记录被跳过的版本号，不再提示，但更高版本仍提示 | P1 |
 | `FR-UPDATE-11` | 更新元数据请求失败（离线）时静默降级，**不得**弹窗打扰用户或阻塞启动 | P0 |
 | `FR-UPDATE-12` | 设置页显示当前版本号、更新通道、最近一次检查结果 | P1 |
@@ -1469,7 +1469,7 @@ FTS5 默认 `unicode61` 分词器按 Unicode 词边界切分，**对中文不分
 #### 4.12.2 验收标准
 
 **AC-UPDATE-01｜正常更新流程**
-- Given 本地版本 1.0.0，更新源 `update.json` 声明 1.1.0 且签名有效
+- Given 本地版本 1.0.0，更新源 `latest.json` 声明 1.1.0 且签名有效
 - When 用户执行检查更新并确认安装
 - Then 显示 Release Notes；下载显示进度；签名与 SHA-256 校验均通过；提示重启安装；重启后版本为 1.1.0；Vault 数据完整无变化
 
@@ -1479,7 +1479,7 @@ FTS5 默认 `unicode61` 分词器按 Unicode 词边界切分，**对中文不分
 - Then 更新被**中止**；显示明确的安全警告（不得安装）；下载文件被删除；当前版本继续正常使用；事件记入日志
 
 **AC-UPDATE-03｜SHA-256 不匹配**
-- Given `update.json` 声明的哈希与实际下载文件不符
+- Given `latest.json` 声明的哈希与实际下载文件不符
 - When 校验执行
 - Then 更新中止并提示"文件可能已损坏或被篡改"；下载文件被清理；不留下半成品状态
 
@@ -2182,6 +2182,7 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | D-04 | v5 未定义任何功能需求 | 本 PRD 补齐 12 个功能模块、59 个 Command、13 个事件、完整 DDL 与验收标准 | 全文 |
 | D-05 | v5 未涉及中文分词 | 明确 jieba-rs 预分词 + FTS5 unicode61 方案 | §3.4 |
 | D-06 | v5 CI 用 `github.*` 变量但声称 Gitee Go | 技术方案 §9 给出 Gitee Go 正确变量映射 | 技术方案 |
+| D-07 | v5 §11.7 与本草稿使用 `update.json` | 统一改为 **`latest.json`**——Tauri 2 updater 的约定文件名（`createUpdaterArtifacts: true` 生成），FR-UPDATE-02/05/09 与验收样例已同步 | 技术方案 §11.5、§12 D-05 |
 | D-07 | v5 §11.3 表格有错行（`feat!` 行损坏）与重复段落 | 技术方案 §9 修正为完整正确的 Conventional Commits 表 | 技术方案 |
 
 ---
@@ -2204,7 +2205,7 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | vue-router | `^5.3.1` | 🟡 主版本升级；已跟进（5.2.0→5.3.1） | 官方声明无破坏性变更；若出现阻断问题，回退 4.5.x（API 差异小） |
 | md-editor-v3 | `^6.5.6` | 🟡 上游已发布 **7.0.0**（major breaking） | **刻意不升级**：该包在 M8 即被 CodeMirror 6 整体替换，为临时方案做 breaking 升级投入产出比过低。`^6.5.6` 的范围天然阻断升到 7.x |
 | jieba-rs | `0.11.0`（2026-09-19 经 crates.io 核实，不在 v5 矩阵） | 🟡 分词质量决定中文搜索可用性；词典全量内置增加约 5MB 包体（`OPEN-02` 已决接受） | 调用 `cut(text, false)` 关闭 HMM 新词发现（确定性优先；**M0 实测 jieba-rs 0.11.0 无 `hmm` cargo feature**）以保证索引可重建且两次结果一致；若分词质量不达标，备选 `tantivy`（自带 CJK 分词）或 `cang-jie`，需在 M3 前评估 |
-| tauri / tauri-plugin-updater | `2.11.6` / `2.12.0` | 🟢 已跟进上游（patch / minor） | 插件版本须与 tauri 主版本配套；`3.0.0-alpha.0` 为预发布，一律禁用 |
+| tauri / tauri-plugin-updater | `2.12.0` / `2.12.0` | 🟢 已跟进上游（minor）；tauri 2.12 家族要求 **rustc ≥ 1.90** | 插件版本须与 tauri 主版本配套；`3.0.0-alpha.0` 为预发布，一律禁用 |
 
 ### A.2 降级决策点（2026-09-21 更新）
 

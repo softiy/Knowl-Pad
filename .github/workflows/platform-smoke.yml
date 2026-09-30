@@ -3,8 +3,18 @@ name: Platform Smoke
 on:
   push:
     branches: [main]
+    # 纯文档改动不触发三平台 GUI 冒烟（每次约消耗 15-25 分钟额度）；
+    # ci.yml 不加同类过滤——它是必需门禁，跳过会让 PR 的必需检查永远等不到结果。
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'gate-report.json'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'gate-report.json'
   workflow_dispatch:
 
 env:

@@ -167,7 +167,7 @@ pnpm test:perf -- --baseline .perf-baseline.json           # 性能基准比对
 1. **Rust MSRV = 1.90**
    由 `tauri 2.12.0` 家族（含 `tauri-utils 2.10.0`、`muda 0.20.0`）的 `rust-version` 决定；
    `time` / `image` 的 1.88 已不再是约束（2026-09-30 更新）。
-   低于 1.90 的 toolchain **必然构建失败**。固定方式见 `rust-toolchain.toml`（技术方案 §9.4.2）。
+   低于 1.90 的 toolchain **必然构建失败**。固定方式见**仓库根**的 `rust-toolchain.toml`（技术方案 §9.4.2）——必须放根目录，否则工作区根/`crates/` 下的 `cargo` 不会应用该固定。
    相关权衡登记为 `DEBT-08`（技术方案 §13.2）。
    ⚠️ 依赖解析由 `.cargo/config.toml` 的 MSRV 感知解析（+ 工作区 `resolver = "3"`）保证不会选到高于 1.90 的依赖；
    门禁与 CI 的 cargo 命令一律带 `--locked`（Rust 版 R-17）。**不要删除 `.cargo/config.toml`**，详见技术方案 §3.6.1。

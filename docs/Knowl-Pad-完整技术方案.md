@@ -2903,14 +2903,16 @@ pub async fn check_and_install(app: &AppHandle, force: bool) -> Result<UpdateOut
 | 依赖审计门禁 | CI 执行 `pnpm audit --audit-level=high` + `cargo audit`，高危即失败 | SEC-06 / AC-SEC-04 |
 | 停更包排除 | `vuedraggable` → `vue-draggable-next`（v5 已确立）；`serde_yaml`（已归档）→ `yaml-rust2`（§3.5.2） | R-16 |
 | CI 权限最小化 | `GITEE_TOKEN` 仅授予 `projects` + `releases` 权限（v5 §11.6）；私钥仅在 release job 中以 secret 注入，PR 构建**不注入** | SEC-06 |
-| 构建可复现性 | 固定 Node 版本（`.nvmrc`）、固定 Rust toolchain（`rust-toolchain.toml`）、`pnpm` 版本由 `packageManager` 字段锁定 | SEC-06 |
+| 构建可复现性 | 固定 Node 版本（`.nvmrc`）、固定 Rust toolchain（**仓库根** `rust-toolchain.toml`，使全工作区一致）、`pnpm` 版本由 `packageManager` 字段锁定 | SEC-06 |
 
 ```toml
-# rust-toolchain.toml —— 固定 Rust 版本，防止 CI 与本地构建差异
+# rust-toolchain.toml（仓库根）—— 固定 Rust 版本，防止 CI 与本地构建差异
+# ⚠️ 必须放在仓库根：rustup 按当前目录向上查找，放在 src-tauri/ 会导致
+#    在工作区根或 crates/ 下执行 cargo 时使用开发者默认 toolchain（2026-09-30 修正）
 # ⚠️ 注意：TOML 注释符是 #，不是 //（本节原稿误用 //，已修正）
 [toolchain]
 channel = "1.90.0"        # 实际有效 MSRV，由 tauri 2.12 家族决定（2026-09-30 核实）
-                          # 注意：Tauri 2.11.x 自身仅要求约 1.77（已核实 2.11.5 为 1.77.2），
+                          # 注意：Tauri 自身声明的 MSRV 历来低于其实际传递依赖，
                           # 但 2026-09-30 起由 tauri 2.12 家族抬到 1.90（time/image 的 1.88 已不再是约束）。见 DEBT-08
 components = ["rustfmt", "clippy", "llvm-tools-preview"]   # llvm-tools 供 cargo-llvm-cov 使用（DEBT-10）
 profile = "minimal"
@@ -4107,7 +4109,7 @@ echo "✅ 路径封装检查通过"
 | `tsconfig.json` | §3.3.2 | ✅ 可直接使用 |
 | `vite.config.ts` | §3.4.4 | ✅ **M0 已校准**：`minify: 'oxc'` 合法（且是默认值）；`advancedChunks` 已废弃 → 改用 `codeSplitting`；实测构建通过 |
 | `Cargo.toml` | §3.5.4 | ✅ **M0 实测可编译**：`cargo check` 在 rustc 1.98.1 与 **1.90.0** 下均通过（含 `rusqlite` bundled、`jieba-rs`、`image`、`r2d2_sqlite`） |
-| `rust-toolchain.toml` | §9.4.2 | ✅ `1.90.0`（由 tauri 2.12 家族的实际 MSRV 决定，见 `DEBT-08`） |
+| `rust-toolchain.toml` | §9.4.2 | ✅ 位于**仓库根**，`1.90.0`（由 tauri 2.12 家族的实际 MSRV 决定，见 `DEBT-08`） |
 | `.nvmrc` | §11.7.1 | ✅ `24.19.0` |
 | `.gitignore` | §11.7.2 | ✅ 可直接使用 |
 | `.npmrc` | §11.7.3 | ✅ 可直接使用（锁定 pnpm 严格模式与 registry） |
