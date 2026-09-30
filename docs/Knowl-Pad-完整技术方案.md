@@ -254,6 +254,8 @@ knowl-pad/
 ├── tailwind.config.ts
 ├── components.json               # shadcn-vue 配置
 ├── index.html
+├── README.md                     # 项目说明（指针型，不复制版本矩阵）
+├── LICENSE-MIT / LICENSE-APACHE  # MIT OR Apache-2.0 双许可（与两个 crate 的 license 字段一致）
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml                # 17 项门禁（§11.4）
@@ -3370,6 +3372,10 @@ git tag vx.y.z && git push --follow-tags   # 触发 release.yml
 ```
 
 > 回归测试：`tests/unit/changelog.spec.mjs`（18 项，覆盖解析/过滤/分组/推断/渲染/插入）；`node scripts/changelog.mjs --self-test` 可在无 git 环境下自检。
+
+> **分发端点约束（2026-09-30）**：GitHub 与 Gitee 两个仓库均为**公开**仓库，因此 updater 可匿名拉取 `latest.json` 与安装包。
+> **若任一仓库改为私有，自动更新会静默失效**（私有资产需认证）——改私有前必须先落地公开的替代分发端点，见 PRD §4.12 的硬约束说明。
+> endpoint 形如 `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`（M9 联调时用匿名 `curl` 验证 200 + JSON 合法）。
 
 > **配置文件说明**：原设计的 `.releaserc.json` **已删除**——它引用的 6 个 semantic-release 插件在 `devDependencies` 中一个都未安装，属不可执行配置；且其中的 `semantic-release-gitee` 已违反 R-16。发布说明与版本号自动化暂缺，登记为 `DEBT-11`。
 ```
