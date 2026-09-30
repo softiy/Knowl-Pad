@@ -19,3 +19,6 @@ src-tauri/gen/
 
 # DSH/office-claw 治理工作区（非本产品内容；如需纳入请删除本行）
 fp/
+
+# 临时提交信息文件（应始终放在 .git/ 内，此处兜底）
+.kp-commit-msg.txt

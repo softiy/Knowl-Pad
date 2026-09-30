@@ -30,7 +30,10 @@
     "ci": "node scripts/run-gates.mjs",
     "dev": "vite",
     "fixture:gen": "node scripts/gen-fixture-vault.mjs",
-    "gate:rust": "pnpm gate:clippy && pnpm gate:fmt && pnpm gate:rust-test && pnpm gate:coverage && cargo audit --file Cargo.lock"
+    "gate:rust": "pnpm gate:clippy && pnpm gate:fmt && pnpm gate:rust-test && pnpm gate:coverage && cargo audit --file Cargo.lock",
+    "changelog:gen": "node scripts/changelog.mjs",
+    "changelog:self-test": "node scripts/changelog.mjs --self-test",
+    "release:prepare": "node scripts/prepare-release.mjs"
   },
   "dependencies": {
     "vue": "^3.5.43",

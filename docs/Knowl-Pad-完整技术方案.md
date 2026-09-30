@@ -3336,6 +3336,27 @@ jobs:
 | GitHub Release | `gh release create <tag> --notes-file CHANGELOG.md artifacts/*` |
 | Gitee Release 同步 | `scripts/publish-gitee-release.mjs`（Gitee OpenAPI v5；`--verify` 只读联调、`--dry-run` 预演、幂等复用 Release） |
 
+#### 11.5.1 版本与变更日志自动化（DEBT-11 已关闭）
+
+不引入 semantic-release：改用**零依赖自研脚本**，直接读 `git log` 解析 Conventional Commits（PRD CODE-09）。
+
+| 脚本 | 职责 |
+| --- | --- |
+| `scripts/changelog.mjs` | 解析 `git log` → 过滤发布提交与 `[skip ci]` → 按「✨ 新功能 / 🐛 问题修复 / ⚡ 性能优化 / ⏪ 回滚」分组，破坏性变更单列；默认打印（dry-run），`--write` 写入 `CHANGELOG.md` 顶部 |
+| `scripts/prepare-release.mjs` | 推断递增类型（破坏性→major、feat→minor、其余→patch）→ 调 `bump-version.mjs` 同步 `package.json`/`tauri.conf.json`/`Cargo.toml` 并校验一致 → 写 CHANGELOG → 打印 `git commit/tag/push` 后续命令。**工作区不干净即拒绝**，默认 dry-run |
+| `scripts/bump-version.mjs` | 唯一的版本号写入点（四处同步 + 一致性校验） |
+
+人工发布流程：
+
+```bash
+pnpm release:prepare            # 预演：看版本推断与 CHANGELOG 预览
+pnpm release:prepare -- --write # 落盘：同步版本 + 写 CHANGELOG
+git add -A && git commit -m "chore(release): x.y.z"
+git tag vx.y.z && git push --follow-tags   # 触发 release.yml
+```
+
+> 回归测试：`tests/unit/changelog.spec.mjs`（18 项，覆盖解析/过滤/分组/推断/渲染/插入）；`node scripts/changelog.mjs --self-test` 可在无 git 环境下自检。
+
 > **配置文件说明**：原设计的 `.releaserc.json` **已删除**——它引用的 6 个 semantic-release 插件在 `devDependencies` 中一个都未安装，属不可执行配置；且其中的 `semantic-release-gitee` 已违反 R-16。发布说明与版本号自动化暂缺，登记为 `DEBT-11`。
 ```
 
@@ -4037,7 +4058,7 @@ echo "✅ 路径封装检查通过"
 | `DEBT-08` | `time 0.3.55` 与 `image 0.25.10` 把项目 MSRV 从 Tauri 自身的 `1.77.2` 拉高到 **`1.88`**（2026-09-19 核实） | ① CI 与所有开发者的 toolchain 必须 ≥ 1.88；② 部分企业内网的离线 Rust 镜像可能尚未同步 1.88；③ 未来若需支持更老的构建环境会被此约束卡住 | ✅ **M0 已评估（2026-09-25，附录 D.1）**：`cargo check` 在 1.98.1 与 1.88.0 下均通过，**保持 MSRV = 1.88**。若未来确需降低 toolchain，再走「`time`→`chrono` + 移除 `image`（仅存原始字节）」备选（PRD FR-ATTACH-05 降级） |
 | `DEBT-09` | **阅读态代码高亮的语言覆盖不确定**（2026-09-21 评估发现）。Lezer 原生 grammar（`@lezer/*`）仅约 **14 种**语言；`@codemirror/legacy-modes` 虽含约 **100 种**，但它导出的是 **StreamParser**（旧式流式接口），能否经 `StreamLanguage.define()` 包装后供 `highlightCode()` 使用**未经验证** | 若 legacy-modes 链路不可行，阅读态仅 14 种语言可高亮，SQL/Bash/Ruby/TOML/PowerShell 等常见语言（`@lezer/sql`、`@lezer/bash` 已确认**不存在**，npm 404）只能纯文本降级——对技术笔记用户是明显体验缺口 | **M8 启动时先做最小 spike**：取 `legacy-modes/mode/shell` 走通一次 `highlightCode()`。① 可行 → 按需注册约 100 种语言，本债项关闭；② 不可行 → 在「接受 14 种上限」与「阅读态改用 highlight.js/shiki（需正式变更 `ED-06`）」之间做产品决策。详见 §3.2.4「语言覆盖」 |
 | `DEBT-10` | PRD §8.3 要求 Rust `domain/` 覆盖率 ≥ 85%，而门禁 6 原先只跑 `cargo test`，**无覆盖率度量与阈值强制** | 覆盖率承诺不可验证，domain 层质量无法随迭代守护 | **本版已落地**：`rust-toolchain.toml` 与 CI 增加 `llvm-tools-preview`，CI 安装 `cargo-llvm-cov` 并执行 `cargo llvm-cov --fail-under-lines 85`；本地由 `pnpm gate:rust` 覆盖 |
-| `DEBT-11` | **发布说明与版本号自动化暂缺**：原 `.releaserc.json` 已删除（插件依赖未安装 + 含 R-16 违规包），发布由 GitHub Actions 触发，`CHANGELOG.md` 需人工维护、版本号由 `bump-version.mjs` 显式执行 | 每次发布需人工确认版本号与变更说明；漏改会造成四处版本不一致 | M1 起评估：① 引入 `semantic-release`（仅官方插件，不含停更的 Gitee 插件）② 或自研基于 Conventional Commits 的 changelog 生成；任一方案必须保留 `bump-version.mjs` 的一致性校验 |
+| ~~`DEBT-11`~~ ✅ **已关闭（2026-09-30）** | ~~发布说明与版本号自动化暂缺~~：已落地**零依赖自研方案**——`scripts/changelog.mjs`（解析 Conventional Commits → 按类型分组渲染）+ `scripts/prepare-release.mjs`（推断递增类型 → 调 `bump-version.mjs` 同步四处版本 → 写入 `CHANGELOG.md`；默认 dry-run，`--write` 才落盘，工作区不干净时拒绝执行） | ~~CHANGELOG 需人工维护、版本号需手工同步~~ | 已由 `pnpm release:prepare` 覆盖；回归测试见 `tests/unit/changelog.spec.mjs`（18 项）。人工 review 仍作为最后一道确认（发布是显式动作） |
 
 > `DEBT-07` 是本文档编写过程中发现的 **PRD 缺项**，已在此显式登记。它必须在 M3 开始前补入 PRD，否则别名匹配（MD-WL-02、AC-EDITOR-04）无法实现。
 

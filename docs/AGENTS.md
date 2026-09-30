@@ -146,6 +146,10 @@ pnpm build                  # 前端产物
 pnpm tauri build            # 门禁 9：完整安装包
 pnpm build:verify           # 构建 + Vite 8 chunk 完整性校验
 
+# ── 发布准备（DEBT-11 已关闭）─────────────────────
+pnpm changelog:gen          # 依据 Conventional Commits 打印变更日志（dry-run）
+pnpm release:prepare        # 推断版本 → 同步四处 + 写 CHANGELOG（dry-run；--write 落盘）
+
 # ── 测试夹具与基准 ─────────────────────────────────
 pnpm fixture:gen -- --tier standard --out /tmp/std-vault   # 生成基准数据集
 pnpm test:perf -- --baseline .perf-baseline.json           # 性能基准比对
@@ -186,7 +190,7 @@ pnpm test:perf -- --baseline .perf-baseline.json           # 性能基准比对
 | 做搜索 | PRD §3.4（中文分词方案）、§4.5、技术方案 §5（索引引擎） |
 | 加权限 / 碰 Capabilities | PRD §6.3（威胁模型与 SEC 需求）、技术方案 §9.1 |
 | 处理跨平台路径 / 回收站 | 技术方案 §6.2（路径安全）、§10（跨平台）、PRD §6.4 |
-| 改 CI / 发布流程 | 技术方案 §11.4（CI）、§11.5（semantic-release）、§11.7（配置文件） |
+| 改 CI / 发布流程 | 技术方案 §11.4（CI）、§11.5（发布链路与版本自动化）、§11.7（配置文件） |
 | 看当前已知技术债与妥协 | 技术方案 §13.2（DEBT 登记）、§13.3（已知妥协）、§12（对 v5 的勘误） |
 | 确认某功能是否在本版范围 | PRD §1.4（In / Out of Scope）、§9.3（V1.1 候选，**不承诺**） |
 
