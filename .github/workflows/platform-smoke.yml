@@ -1,0 +1,94 @@
+name: Platform Smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '24.19.0'
+  RUST_TOOLCHAIN: '1.88.0'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  smoke:
+    name: 窗口启动冒烟（${{ matrix.os }}）
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 12.4.2 }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '${{ env.NODE_VERSION }}'
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '${{ env.RUST_TOOLCHAIN }}'
+
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+
+      - name: Linux 系统依赖 + Xvfb（无头窗口服务器）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev xvfb
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 构建前端（generate_context! 在编译期嵌入 dist）
+        run: pnpm build
+
+      - name: 构建应用（debug 即可验证窗口启动）
+        run: cargo build --manifest-path src-tauri/Cargo.toml
+
+      - name: 冒烟启动 · Linux（Xvfb）
+        if: runner.os == 'Linux'
+        env:
+          KP_SMOKE: '1'
+          WEBKIT_DISABLE_COMPOSITING_MODE: '1'
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          set -o pipefail
+          xvfb-run -a ./target/debug/knowl-pad 2>&1 | tee smoke.log
+          grep -q "KP_SMOKE_OK" smoke.log
+
+      - name: 冒烟启动 · macOS
+        if: runner.os == 'macOS'
+        env:
+          KP_SMOKE: '1'
+        run: |
+          set -o pipefail
+          ./target/debug/knowl-pad 2>&1 | tee smoke.log
+          grep -q "KP_SMOKE_OK" smoke.log
+
+      - name: 冒烟启动 · Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          KP_SMOKE: '1'
+        run: |
+          .\target\debug\knowl-pad.exe 2>&1 | Tee-Object -FilePath smoke.log
+          if (-not (Select-String -Path smoke.log -Pattern 'KP_SMOKE_OK' -Quiet)) {
+            throw '未在输出中找到 KP_SMOKE_OK'
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.os }}
+          path: smoke.log

@@ -1,0 +1,12 @@
+[package]
+name = "kp-domain"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+thiserror = "2.0.21"
+
+[dev-dependencies]
+tempfile = "3.27.0"

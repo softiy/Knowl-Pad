@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '24.19.0'
+  RUST_TOOLCHAIN: '1.88.0'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gates:
+    name: 16 项门禁（与本地同一脚本）
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 12.4.2 }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+
+      - name: 系统依赖（Tauri Linux 构建 + 门禁脚本的 ripgrep）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev ripgrep
+
+      - name: 门禁工具（均不在 rustup components 中）
+        run: |
+          cargo install cargo-audit --locked
+          cargo install cargo-llvm-cov --locked
+
+      - name: 校验工作流（actionlint，官方安装脚本）
+        run: |
+          bash <(curl -sSf https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+      - run: pnpm install --frozen-lockfile
+
+      # 单一真相源：本地与 CI 跑同一个脚本，避免两套门禁漂移
+      - name: 运行全部门禁
+        run: node scripts/run-gates.mjs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-report
+          path: gate-report.json
+
+  windows-gates:
+    name: Windows 冒烟（构建 + 单元测试）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 12.4.2 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: pnpm }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { toolchain: '${{ env.RUST_TOOLCHAIN }}' }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+      - run: choco install ripgrep -y --no-progress
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test:coverage
+      - run: cargo test --workspace

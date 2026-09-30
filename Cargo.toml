@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["src-tauri", "crates/kp-domain"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = "fat"
+opt-level = 3
+strip = true
+debug = false

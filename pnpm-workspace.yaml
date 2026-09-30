@@ -1,0 +1,8 @@
+# pnpm 12：设置项从 package.json 的 "pnpm" 字段迁移到此处（https://pnpm.io/settings）。
+# pnpm 12 默认不执行依赖的构建脚本，且会以 ERR_PNPM_IGNORED_BUILDS 失败。
+# allowBuilds 是 map 形式（包名 -> 是否允许执行构建脚本）。
+packages:
+  - '.'
+allowBuilds:
+  esbuild: true
+strictDepBuilds: false

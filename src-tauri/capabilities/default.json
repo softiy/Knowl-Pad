@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Knowl Pad 主窗口最小权限集（SEC-05）",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:path:default",
+    "core:event:default",
+    "core:window:default",
+    "dialog:allow-open",
+    "opener:default",
+    "process:allow-restart",
+    {
+      "identifier": "shell:allow-open",
+      "allow": [
+        {
+          "url": "https://**"
+        },
+        {
+          "url": "mailto:**"
+        }
+      ]
+    }
+  ]
+}

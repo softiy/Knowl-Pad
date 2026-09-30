@@ -1,0 +1,21 @@
+node_modules/
+dist/
+dist-*/
+coverage/
+src-tauri/target/
+target/
+artifacts/
+*.local
+
+# 本地门禁便利二进制（不入库；CI 用系统包管理器安装 ripgrep）
+tools/rg.exe
+tools/rg-wrapper
+
+# tauri-build 生成的 schema
+src-tauri/gen/
+
+# 备份目录兜底
+*.bak/
+
+# DSH/office-claw 治理工作区（非本产品内容；如需纳入请删除本行）
+fp/

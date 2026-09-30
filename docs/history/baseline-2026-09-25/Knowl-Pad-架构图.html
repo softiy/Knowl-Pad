@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Knowl Pad · 系统架构图 v2.0</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #020617;
+    color: #e2e8f0;
+    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+    padding: 32px 24px 48px;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1520px; margin: 0 auto; }
+
+  header { margin-bottom: 24px; }
+  .title-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #34d399; box-shadow: 0 0 12px #34d399;
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.45; transform: scale(0.82); }
+  }
+  h1 { font-size: 22px; font-weight: 700; color: #f8fafc; letter-spacing: -0.3px; }
+  .subtitle { font-size: 12px; color: #94a3b8; line-height: 1.8; }
+  .subtitle b { color: #cbd5e1; font-weight: 600; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .badge {
+    font-size: 10px; padding: 4px 10px; border-radius: 4px;
+    border: 1px solid #334155; background: rgba(30,41,59,0.5); color: #94a3b8;
+  }
+  .badge.no-plugin { border-color: #fb7185; color: #fb7185; background: rgba(136,19,55,0.18); font-weight: 600; }
+  .badge.truth { border-color: #a78bfa; color: #a78bfa; background: rgba(76,29,149,0.18); font-weight: 600; }
+
+  .diagram-card {
+    border: 1px solid #1e293b; border-radius: 12px;
+    background: rgba(15,23,42,0.35); padding: 16px;
+    overflow-x: auto;
+  }
+  svg { display: block; min-width: 1440px; width: 100%; height: auto; }
+
+  .cards {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 16px; margin-top: 24px;
+  }
+  .card {
+    border: 1px solid #1e293b; border-radius: 10px;
+    background: rgba(15,23,42,0.55); padding: 18px;
+  }
+  .card h2 {
+    font-size: 12px; font-weight: 600; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card h2 .bar { width: 3px; height: 14px; border-radius: 2px; }
+  .card ul { list-style: none; }
+  .card li {
+    font-size: 11px; color: #94a3b8; line-height: 1.75;
+    padding-left: 14px; position: relative;
+  }
+  .card li::before { content: '▸'; position: absolute; left: 0; color: #475569; }
+  .card li b { color: #cbd5e1; font-weight: 600; }
+  .card li code { color: #a5b4fc; font-size: 10px; }
+
+  .c-cyan h2 { color: #22d3ee; }   .c-cyan .bar { background: #22d3ee; }
+  .c-emerald h2 { color: #34d399; }.c-emerald .bar { background: #34d399; }
+  .c-violet h2 { color: #a78bfa; } .c-violet .bar { background: #a78bfa; }
+  .c-rose h2 { color: #fb7185; }   .c-rose .bar { background: #fb7185; }
+
+  footer {
+    margin-top: 28px; padding-top: 16px; border-top: 1px solid #1e293b;
+    font-size: 10px; color: #475569; line-height: 1.9;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="title-row">
+    <div class="dot"></div>
+    <h1>Knowl Pad · 系统架构图</h1>
+  </div>
+  <div class="subtitle">
+    跨平台本地优先笔记与知识管理软件 · 双向链接与知识图谱 · <b>Tauri 2.11.6</b> 前后端分离混合架构<br>
+    配套文档：<b>PRD v2.0</b> · <b>完整技术方案 v6.0</b> · 上游基线 <b>v5 依赖锁定矩阵</b> · 项目状态：尚未开始开发
+  </div>
+  <div class="badges">
+    <span class="badge no-plugin">无插件系统 · 零第三方代码执行面</span>
+    <span class="badge truth">Markdown 文件 = 唯一真相源</span>
+    <span class="badge">模块化单体 Modular Monolith</span>
+    <span class="badge">58 Commands / 13 Events</span>
+    <span class="badge">四层安全防护</span>
+    <span class="badge">零遥测 · 离线可用</span>
+  </div>
+</header>
+
+<div class="diagram-card">
+<svg viewBox="0 0 1440 1610" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Knowl Pad 四层系统架构图">
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+    </pattern>
+    <marker id="ah-slate" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+    </marker>
+    <marker id="ah-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/>
+    </marker>
+    <marker id="ah-emerald" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#34d399"/>
+    </marker>
+    <marker id="ah-amber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24"/>
+    </marker>
+    <marker id="ah-violet" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa"/>
+    </marker>
+  </defs>
+
+  <rect width="1440" height="1610" fill="#020617"/>
+  <rect width="1440" height="1610" fill="url(#grid)"/>
+
+  <!-- ============ 连接箭头（先绘制，位于组件框之下）============ -->
+  <!-- IPC 下行：invoke -->
+  <line x1="110" y1="674" x2="110" y2="736" stroke="#22d3ee" stroke-width="2" marker-end="url(#ah-cyan)"/>
+  <!-- IPC 上行：event -->
+  <line x1="1330" y1="738" x2="1330" y2="676" stroke="#34d399" stroke-width="2" marker-end="url(#ah-emerald)"/>
+  <!-- Rust → 磁盘：写入 -->
+  <line x1="400" y1="1180" x2="400" y2="1214" stroke="#34d399" stroke-width="2" marker-end="url(#ah-emerald)"/>
+  <!-- 磁盘 → Rust：读取/索引 -->
+  <line x1="1000" y1="1216" x2="1000" y2="1182" stroke="#a78bfa" stroke-width="2" marker-end="url(#ah-violet)"/>
+  <!-- 更新通道：R1 → R3（右侧独立通道，不穿越 WebView）-->
+  <path d="M 1344 165 L 1408 165 L 1408 800 L 1348 800" fill="none" stroke="#fbbf24"
+        stroke-width="1.8" stroke-dasharray="6,4" marker-end="url(#ah-amber)"/>
+  <text x="1420" y="470" transform="rotate(90 1420 470)" font-size="9" fill="#fbbf24"
+        text-anchor="middle" font-family="JetBrains Mono, monospace">tauri-plugin-updater · Ed25519 验签 + SHA-256 校验</text>
+
+  <!-- ============ ① 更新分发层 ============ -->
+  <rect x="60" y="90" width="1320" height="140" rx="12" fill="none"
+        stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="8,4" opacity="0.55"/>
+  <text x="80" y="114" font-size="11" fill="#fbbf24" font-weight="600" font-family="JetBrains Mono, monospace">① 更新分发层 · Gitee Release（应用唯一的对外网络目标）</text>
+
+  <rect x="100" y="130" width="270" height="70" rx="6" fill="#0f172a"/>
+  <rect x="100" y="130" width="270" height="70" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+  <text x="235" y="158" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">latest.json</text>
+  <text x="235" y="176" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">更新元数据 · SemVer 比对</text>
+
+  <rect x="400" y="130" width="290" height="70" rx="6" fill="#0f172a"/>
+  <rect x="400" y="130" width="290" height="70" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+  <text x="545" y="158" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">平台安装包（全量）</text>
+  <text x="545" y="176" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">.msi · .exe · .dmg · .deb · .AppImage</text>
+
+  <rect x="720" y="130" width="270" height="70" rx="6" fill="#0f172a"/>
+  <rect x="720" y="130" width="270" height="70" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+  <text x="855" y="158" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">minisign 签名 .sig</text>
+  <text x="855" y="176" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">Ed25519 · 验签失败即中止安装</text>
+
+  <rect x="1020" y="130" width="320" height="70" rx="6" fill="#0f172a"/>
+  <rect x="1020" y="130" width="320" height="70" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+  <text x="1180" y="158" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">HTTPS / TLS 1.2+</text>
+  <text x="1180" y="176" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">CSP connect-src 白名单仅此域名</text>
+
+  <!-- ============ ② WebView 进程 ============ -->
+  <rect x="60" y="270" width="1320" height="400" rx="12" fill="none"
+        stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="8,4" opacity="0.55"/>
+  <text x="80" y="294" font-size="11" fill="#22d3ee" font-weight="600" font-family="JetBrains Mono, monospace">② WebView 进程 · Vue 3.5.43 + TypeScript 6.0.3 + Vite 8.3.0 · 系统 WebView（WebView2 / WKWebView / WebKitGTK）</text>
+
+  <!-- Row A -->
+  <rect x="100" y="306" width="280" height="56" rx="6" fill="#0f172a"/>
+  <rect x="100" y="306" width="280" height="56" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="240" y="328" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">app/ 装配层</text>
+  <text x="240" y="345" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">路由守卫 · 三栏布局 · 启动流程</text>
+
+  <rect x="400" y="306" width="280" height="56" rx="6" fill="#0f172a"/>
+  <rect x="400" y="306" width="280" height="56" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="540" y="328" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">Pinia 4.0.3 · 10 Store</text>
+  <text x="540" y="345" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">按数据归属划分 · 事件驱动局部失效</text>
+
+  <rect x="700" y="306" width="280" height="56" rx="6" fill="#0f172a"/>
+  <rect x="700" y="306" width="280" height="56" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="840" y="328" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">core/ 共享内核</text>
+  <text x="840" y="345" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">ipc · markdown · theme · shortcut · logger</text>
+
+  <rect x="1000" y="306" width="340" height="56" rx="6" fill="#0f172a"/>
+  <rect x="1000" y="306" width="340" height="56" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="1170" y="328" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">shared/ UI 组件</text>
+  <text x="1170" y="345" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">shadcn-vue 2.8.2 + Tailwind CSS 4.3.3</text>
+
+  <text x="100" y="380" font-size="9" fill="#64748b" font-family="JetBrains Mono, monospace">features/ 业务模块（12）· 模块间禁止直接 import，仅经 Pinia store / 事件总线 / index.ts 公共 API 通信</text>
+
+  <!-- Row B1 -->
+  <rect x="100" y="390" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="100" y="390" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="198" y="409" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">vault</text>
+  <text x="198" y="425" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">知识库管理</text>
+
+  <rect x="308" y="390" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="308" y="390" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="406" y="409" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">file-tree</text>
+  <text x="406" y="425" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">文件树 · 虚拟滚动</text>
+
+  <rect x="516" y="390" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="516" y="390" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="614" y="409" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">editor</text>
+  <text x="614" y="425" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">双内核适配层</text>
+
+  <rect x="724" y="390" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="724" y="390" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="822" y="409" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">link</text>
+  <text x="822" y="425" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">反链 · 悬空 · 歧义</text>
+
+  <rect x="932" y="390" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="932" y="390" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="1030" y="409" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">search</text>
+  <text x="1030" y="425" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">全文 · 快速打开</text>
+
+  <rect x="1140" y="390" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="1140" y="390" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="1238" y="409" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">graph</text>
+  <text x="1238" y="425" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">知识图谱视图</text>
+
+  <!-- Row B2 -->
+  <rect x="100" y="450" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="100" y="450" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="198" y="469" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">tag</text>
+  <text x="198" y="485" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">标签树 · 层级</text>
+
+  <rect x="308" y="450" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="308" y="450" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="406" y="469" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">attachment</text>
+  <text x="406" y="485" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">附件 · 粘贴导入</text>
+
+  <rect x="516" y="450" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="516" y="450" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="614" y="469" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">palette</text>
+  <text x="614" y="485" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">命令面板</text>
+
+  <rect x="724" y="450" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="724" y="450" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="822" y="469" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">trash</text>
+  <text x="822" y="485" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">回收站</text>
+
+  <rect x="932" y="450" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="932" y="450" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="1030" y="469" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">settings</text>
+  <text x="1030" y="485" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">设置 · 主题</text>
+
+  <rect x="1140" y="450" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="1140" y="450" width="196" height="48" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+  <text x="1238" y="469" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">update</text>
+  <text x="1238" y="485" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">更新提示 UI</text>
+
+  <!-- Row C -->
+  <rect x="100" y="516" width="560" height="64" rx="6" fill="#0f172a"/>
+  <rect x="100" y="516" width="560" height="64" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+  <text x="380" y="542" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">Markdown 渲染管线（安全关键路径）</text>
+  <text x="380" y="560" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">markdown-it 15.0.2 → DOMPurify 3.4.15（逐次传参，禁用 setConfig）</text>
+  <text x="380" y="573" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">→ 远程图片占位 → 事件委托 · 启动时自检失败即阻断启动</text>
+
+  <rect x="680" y="516" width="300" height="64" rx="6" fill="#0f172a"/>
+  <rect x="680" y="516" width="300" height="64" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="830" y="542" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">cytoscape 3.34.3</text>
+  <text x="830" y="560" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">力导向布局 · 全局/局部图谱</text>
+  <text x="830" y="573" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">&gt;3000 节点触发降级</text>
+
+  <rect x="1000" y="516" width="340" height="64" rx="6" fill="#0f172a"/>
+  <rect x="1000" y="516" width="340" height="64" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="1170" y="542" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">fuse.js 7.5.0 + 虚拟滚动</text>
+  <text x="1170" y="560" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">纯前端模糊匹配 &lt;50ms（不走 IPC）</text>
+  <text x="1170" y="573" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">10 万节点扁平化 · ≥50 FPS</text>
+
+  <text x="100" y="608" font-size="9" fill="#fb7185" font-family="JetBrains Mono, monospace">✗ 不直连文件系统（AC-01）　✗ 不引入 WASM SQLite（AC-02）　✗ 不用 v-html 渲染未净化 HTML（AC-05）　✗ 不执行任何第三方代码（P-4）</text>
+  <text x="100" y="630" font-size="9" fill="#64748b" font-family="JetBrains Mono, monospace">依赖方向单向向下：app → features → core；core 禁止反向 import features；features 禁止直接 invoke，必须经 core/ipc 强类型封装</text>
+  <text x="100" y="652" font-size="9" fill="#64748b" font-family="JetBrains Mono, monospace">编辑器双内核：MVP 阶段 md-editor-v3 6.5.6 → M8 阶段 CodeMirror 6（Live Preview）；由 KpEditorAdapter 接口隔离，构建时择一，不共存</text>
+
+  <!-- ============ IPC 边界 ============ -->
+  <rect x="60" y="684" width="1320" height="44" rx="8" fill="rgba(136,19,55,0.15)"
+        stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <text x="720" y="702" font-size="10" fill="#fb7185" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">Tauri IPC 边界 · invoke（58 Commands，请求-响应）⇄ emit / listen（13 Events，单向推送）</text>
+  <text x="720" y="718" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">Capabilities 最小权限白名单 · 禁止 fs:* 与 shell:allow-execute · 路径一律相对 Vault 根 · 响应体 ≤ 4MB · JSON 键 camelCase</text>
+  <text x="128" y="708" font-size="8" fill="#22d3ee" text-anchor="middle" font-family="JetBrains Mono, monospace">invoke ↓</text>
+  <text x="1312" y="708" font-size="8" fill="#34d399" text-anchor="middle" font-family="JetBrains Mono, monospace">↑ event</text>
+
+  <!-- ============ ③ Rust 主进程 ============ -->
+  <rect x="60" y="738" width="1320" height="440" rx="12" fill="none"
+        stroke="#34d399" stroke-width="1.5" stroke-dasharray="8,4" opacity="0.55"/>
+  <text x="80" y="762" font-size="11" fill="#34d399" font-weight="600" font-family="JetBrains Mono, monospace">③ Rust 主进程 · Tauri 2.11.6 + rusqlite 0.40.2（bundled）· 依赖方向单向：commands → domain → storage / platform</text>
+
+  <!-- Row A: commands -->
+  <rect x="100" y="774" width="1240" height="52" rx="6" fill="#0f172a"/>
+  <rect x="100" y="774" width="1240" height="52" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="720" y="795" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">commands/ 薄壳层 · 58 Commands（其中 21 个写操作记审计日志）</text>
+  <text x="720" y="812" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">仅做参数反序列化 → 调用 domain → 序列化结果与 AppError 映射；函数体 ≤30 行；全部 async fn；禁止 SQL / 文件 IO / 业务分支</text>
+
+  <text x="100" y="848" font-size="9" fill="#64748b" font-family="JetBrains Mono, monospace">domain/ 领域服务层 · 可脱离 Tauri 独立单元测试（RS-02）· 红色为正确性关键的高风险模块</text>
+
+  <!-- Row B1: 核心引擎 -->
+  <rect x="100" y="856" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="100" y="856" width="196" height="48" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="198" y="875" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">md_parse</text>
+  <text x="198" y="891" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">纯函数解析器 · 输出 span</text>
+
+  <rect x="308" y="856" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="308" y="856" width="196" height="48" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="406" y="875" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">tokenize</text>
+  <text x="406" y="891" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">jieba-rs · 非 HMM 确定性</text>
+
+  <rect x="516" y="856" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="516" y="856" width="196" height="48" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="614" y="875" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">index_engine</text>
+  <text x="614" y="891" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">全量/增量 · 签名 · 队列</text>
+
+  <rect x="724" y="856" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="724" y="856" width="196" height="48" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="822" y="875" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">search</text>
+  <text x="822" y="891" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">FTS5 MATCH · bm25 · 片段</text>
+
+  <rect x="932" y="856" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="932" y="856" width="196" height="48" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="1030" y="875" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">graph</text>
+  <text x="1030" y="891" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">N 跳裁剪 · 降级判定</text>
+
+  <rect x="1140" y="856" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="1140" y="856" width="196" height="48" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+  <text x="1238" y="875" font-size="11" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">rewrite ⚠</text>
+  <text x="1238" y="891" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">预览→备份→原子→回滚</text>
+
+  <!-- Row B2: 服务 -->
+  <rect x="100" y="916" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="100" y="916" width="196" height="48" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="198" y="935" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">vault</text>
+  <text x="198" y="951" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">生命周期 · canonical root</text>
+
+  <rect x="308" y="916" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="308" y="916" width="196" height="48" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+  <text x="406" y="935" font-size="11" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">path_guard ⚠</text>
+  <text x="406" y="951" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">七步校验 · 防符号链接逃逸</text>
+
+  <rect x="516" y="916" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="516" y="916" width="196" height="48" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+  <text x="614" y="935" font-size="11" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">note_io ⚠</text>
+  <text x="614" y="951" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">原子写入 · fsync · 备份</text>
+
+  <rect x="724" y="916" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="724" y="916" width="196" height="48" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="822" y="935" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">fs_ops</text>
+  <text x="822" y="951" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">CRUD · 重命名 · 移动</text>
+
+  <rect x="932" y="916" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="932" y="916" width="196" height="48" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="1030" y="935" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">watcher</text>
+  <text x="1030" y="951" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">notify · 200ms 去抖归并</text>
+
+  <rect x="1140" y="916" width="196" height="48" rx="6" fill="#0f172a"/>
+  <rect x="1140" y="916" width="196" height="48" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="1238" y="935" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">tag · trash</text>
+  <text x="1238" y="951" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">规范化 · 软删除恢复</text>
+
+  <text x="100" y="988" font-size="9" fill="#64748b" font-family="JetBrains Mono, monospace">线程与并发模型 · 解析（CPU 密集，可并行）与写库（IO 密集，须串行）分离，经 mpsc 通道衔接</text>
+
+  <!-- Row C: 线程模型 -->
+  <rect x="100" y="996" width="230" height="52" rx="6" fill="#0f172a"/>
+  <rect x="100" y="996" width="230" height="52" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="215" y="1017" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">主线程</text>
+  <text x="215" y="1034" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">事件循环 · IPC 分发 · 禁 &gt;16ms</text>
+
+  <rect x="350" y="996" width="230" height="52" rx="6" fill="#0f172a"/>
+  <rect x="350" y="996" width="230" height="52" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="465" y="1017" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">tokio 运行时</text>
+  <text x="465" y="1034" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">异步 IO · DB 读 · 长任务编排</text>
+
+  <rect x="600" y="996" width="250" height="52" rx="6" fill="#0f172a"/>
+  <rect x="600" y="996" width="250" height="52" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="725" y="1017" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">索引工作线程池</text>
+  <text x="725" y="1034" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">num_cpus-1 · 纯计算 · 不写库</text>
+
+  <rect x="870" y="996" width="230" height="52" rx="6" fill="#0f172a"/>
+  <rect x="870" y="996" width="230" height="52" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.2"/>
+  <text x="985" y="1017" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">DB 写线程（单）</text>
+  <text x="985" y="1034" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">独占写连接 · 批量事务 200/批</text>
+
+  <rect x="1120" y="996" width="220" height="52" rx="6" fill="#0f172a"/>
+  <rect x="1120" y="996" width="220" height="52" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+  <text x="1230" y="1017" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">文件监听线程</text>
+  <text x="1230" y="1034" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">过滤 .knowlpad/ 防死循环</text>
+
+  <!-- Row D: storage + platform -->
+  <rect x="100" y="1066" width="560" height="64" rx="6" fill="#0f172a"/>
+  <rect x="100" y="1066" width="560" height="64" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="380" y="1092" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">storage/ 存储层（SQL 唯一所在地）</text>
+  <text x="380" y="1110" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">WAL · synchronous=NORMAL · foreign_keys=ON · mmap 256MB</text>
+  <text x="380" y="1123" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">读连接池（4）+ 单写连接 · 索引库丢弃重建 / 全局库版本化迁移</text>
+
+  <rect x="680" y="1066" width="300" height="64" rx="6" fill="#0f172a"/>
+  <rect x="680" y="1066" width="300" height="64" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="830" y="1092" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">platform/ 平台适配</text>
+  <text x="830" y="1110" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">rename 语义 · 权限 · 菜单 · 长路径</text>
+  <text x="830" y="1123" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">文件名校验取三平台最严格并集</text>
+
+  <rect x="1000" y="1066" width="340" height="64" rx="6" fill="#0f172a"/>
+  <rect x="1000" y="1066" width="340" height="64" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="1170" y="1092" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">error.rs · state.rs</text>
+  <text x="1170" y="1110" font-size="9" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">AppError 23 种 → KpError 错误码</text>
+  <text x="1170" y="1123" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">AppState：Vault / 池 / 队列 / 取消令牌 / jieba 单例</text>
+
+  <text x="100" y="1158" font-size="9" fill="#fb7185" font-family="JetBrains Mono, monospace">domain 与 storage 中禁止出现裸 fs::read / fs::write / File::open，必须经 note_io / fs_ops 封装（CI grep 门禁守护，PATH-02）</text>
+
+  <!-- ============ ④ 用户磁盘 ============ -->
+  <rect x="60" y="1218" width="1320" height="230" rx="12" fill="none"
+        stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="8,4" opacity="0.55"/>
+  <text x="80" y="1242" font-size="11" fill="#a78bfa" font-weight="600" font-family="JetBrains Mono, monospace">④ 用户磁盘 · 本地优先 · 零遥测 · 除更新检查外无任何对外网络请求</text>
+
+  <!-- Vault 子区域 -->
+  <rect x="90" y="1252" width="760" height="176" rx="8" fill="none"
+        stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="4,4" opacity="0.5"/>
+  <text x="106" y="1272" font-size="10" fill="#a78bfa" font-weight="500" font-family="JetBrains Mono, monospace">Vault 根目录（用户指定的本地文件夹）</text>
+
+  <rect x="110" y="1284" width="230" height="56" rx="6" fill="#0f172a"/>
+  <rect x="110" y="1284" width="230" height="56" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="2"/>
+  <text x="225" y="1306" font-size="11" fill="#fff" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">★ Markdown 文件</text>
+  <text x="225" y="1323" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">唯一真相源 · 可 Git 版本控制</text>
+
+  <rect x="360" y="1284" width="200" height="56" rx="6" fill="#0f172a"/>
+  <rect x="360" y="1284" width="200" height="56" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="460" y="1306" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">附件目录</text>
+  <text x="460" y="1323" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">图片 · PDF · 音视频</text>
+
+  <rect x="580" y="1284" width="250" height="56" rx="6" fill="#0f172a"/>
+  <rect x="580" y="1284" width="250" height="56" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="705" y="1306" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">第三方软件配置目录（若存在）</text>
+  <text x="705" y="1323" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">只读忽略 · 绝不修改或删除</text>
+
+  <rect x="110" y="1352" width="350" height="56" rx="6" fill="#0f172a"/>
+  <rect x="110" y="1352" width="350" height="56" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="285" y="1374" font-size="11" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">.knowlpad/index.db</text>
+  <text x="285" y="1391" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">SQLite FTS5 · 纯派生 · 可删除可完整重建</text>
+
+  <rect x="480" y="1352" width="170" height="56" rx="6" fill="#0f172a"/>
+  <rect x="480" y="1352" width="170" height="56" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="565" y="1374" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">.knowlpad/trash/</text>
+  <text x="565" y="1391" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">软删除实体</text>
+
+  <rect x="670" y="1352" width="160" height="56" rx="6" fill="#0f172a"/>
+  <rect x="670" y="1352" width="160" height="56" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="750" y="1374" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">.knowlpad/backup/</text>
+  <text x="750" y="1391" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">改写前备份</text>
+
+  <!-- 配置目录子区域 -->
+  <rect x="880" y="1252" width="470" height="176" rx="8" fill="none"
+        stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4,4" opacity="0.5"/>
+  <text x="896" y="1272" font-size="10" fill="#94a3b8" font-weight="500" font-family="JetBrains Mono, monospace">全局配置目录（%APPDATA% / ~/Library / ~/.config）</text>
+
+  <rect x="900" y="1290" width="200" height="56" rx="6" fill="#0f172a"/>
+  <rect x="900" y="1290" width="200" height="56" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="1000" y="1312" font-size="11" fill="#fff" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">global.db</text>
+  <text x="1000" y="1329" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">Vault 注册表 · 偏好 · 窗口状态</text>
+
+  <rect x="1120" y="1290" width="210" height="56" rx="6" fill="#0f172a"/>
+  <rect x="1120" y="1290" width="210" height="56" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="1225" y="1312" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">logs/</text>
+  <text x="1225" y="1329" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">按日滚动 · 14 天 · 不含正文</text>
+
+  <rect x="900" y="1358" width="430" height="48" rx="6" fill="#0f172a"/>
+  <rect x="900" y="1358" width="430" height="48" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="1115" y="1377" font-size="11" fill="#fff" font-weight="500" text-anchor="middle" font-family="JetBrains Mono, monospace">update-cache/</text>
+  <text x="1115" y="1393" font-size="8" fill="#94a3b8" text-anchor="middle" font-family="JetBrains Mono, monospace">更新包临时下载 · 安装完成或失败后清理</text>
+
+  <!-- ============ 图例（位于全部边界之外）============ -->
+  <text x="60" y="1484" font-size="10" fill="#64748b" font-weight="600" font-family="JetBrains Mono, monospace">图例</text>
+
+  <rect x="100" y="1494" width="16" height="12" rx="2" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="124" y="1504" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">前端 WebView</text>
+
+  <rect x="250" y="1494" width="16" height="12" rx="2" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+  <text x="274" y="1504" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">Rust 后端</text>
+
+  <rect x="390" y="1494" width="16" height="12" rx="2" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="414" y="1504" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">数据存储</text>
+
+  <rect x="530" y="1494" width="16" height="12" rx="2" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+  <text x="554" y="1504" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">安全控制点 / 高风险模块</text>
+
+  <rect x="740" y="1494" width="16" height="12" rx="2" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+  <text x="764" y="1504" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">外部 / 更新源</text>
+
+  <rect x="900" y="1494" width="16" height="12" rx="2" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="924" y="1504" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">通用 / 辅助</text>
+
+  <line x1="1050" y1="1500" x2="1090" y2="1500" stroke="#fbbf24" stroke-width="1.8" stroke-dasharray="6,4"/>
+  <text x="1098" y="1504" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">更新通道（不经 WebView）</text>
+
+  <text x="60" y="1540" font-size="10" fill="#fb7185" font-weight="600" font-family="JetBrains Mono, monospace">四层安全防护</text>
+  <text x="60" y="1560" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">① 进程与权限边界：Capabilities 最小权限白名单，禁 fs:* / shell:allow-execute / process:allow-exit，shell:allow-open 限定 https? 与 mailto</text>
+  <text x="60" y="1576" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">② 路径与文件系统边界：PathGuard 七步校验（拒空/拒绝对路径/拒 NUL/拒 .. 与 ./词法前缀/符号链接 canonical 二次校验）</text>
+  <text x="60" y="1592" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">③ 内容渲染边界：DOMPurify 逐次传参净化 + CSP script-src 'self'（无 unsafe-inline / unsafe-eval）+ 远程资源默认不加载 + 启动自检</text>
+  <text x="760" y="1560" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">④ 更新与供应链边界：Ed25519 验签 + SHA-256 校验 + 强制 HTTPS</text>
+  <text x="760" y="1576" font-size="9" fill="#94a3b8" font-family="JetBrains Mono, monospace">　 精确版本锁定 + lockfile 入库 + CI 依赖审计门禁 + 停更包排除</text>
+  <text x="760" y="1592" font-size="9" fill="#64748b" font-family="JetBrains Mono, monospace">　 无插件系统 → 不存在沙箱逃逸 / 权限提升 / 第三方代码执行威胁</text>
+</svg>
+</div>
+
+<div class="cards">
+
+  <div class="card c-violet">
+    <h2><span class="bar"></span>数据所有权与真相源</h2>
+    <ul>
+      <li><b>Markdown 文件是唯一真相源</b>：正文、wikilink、标签、frontmatter、Block ID 全部可从 <code>.md</code> 完整还原</li>
+      <li><b>index.db 是纯派生数据</b>：删除后重新打开 Vault 即可 100% 重建（成功判据 SJ-03）</li>
+      <li><b>索引签名</b> = schema 版本 + 解析器版本 + 分词器版本&amp;词典哈希 + Vault 绝对路径，任一变化即全量重建</li>
+      <li><b>global.db</b> 存软件配置（Vault 注册表、偏好、窗口状态），丢失不影响任何笔记数据</li>
+      <li><b>禁止</b>在索引库存储无法从 Markdown 重建的数据（架构约束 AC-06）</li>
+      <li>用户可用任意编辑器直接改文件、可纳入 Git；<code>.knowlpad/</code> 建议加入 <code>.gitignore</code>（不自动修改）</li>
+    </ul>
+  </div>
+
+  <div class="card c-emerald">
+    <h2><span class="bar"></span>关键数据流</h2>
+    <ul>
+      <li><b>冷启动</b>：Vault 校验 → 签名比对 → walkdir 遍历 → 线程池并行解析+分词 → mpsc → 单写线程批量事务 → 全局链接裁决</li>
+      <li><b>解析与写库分离</b>：解析 CPU 密集可并行，写库 IO 密集须串行，规避 SQLite 写锁竞争</li>
+      <li><b>编辑保存</b>：防抖 1s → <code>base_mtime</code> 冲突检测 → 原子写入（临时文件 + fsync + rename + 父目录 fsync）→ 增量索引</li>
+      <li><b>重命名改写</b>：预览（只读，冻结 span）→ 用户确认 → 备份 → 事务内原子改写 → 失败全量回滚</li>
+      <li><b>外部变更</b>：notify 监听 → 200ms 去抖动归并 → 索引队列 → 事件推送前端局部失效</li>
+      <li><b>中文搜索</b>：jieba 预分词写入 FTS5（<code>unicode61</code> 不分中文），查询同样先分词再构造 MATCH</li>
+    </ul>
+  </div>
+
+  <div class="card c-rose">
+    <h2><span class="bar"></span>最高风险模块与红线</h2>
+    <ul>
+      <li><b>rewrite 批量链接改写</b>：唯一会批量修改用户既有文件的操作。必须「备份 + 预览 + 全有或全无 + 回滚」，任一环节缺失即视为缺陷</li>
+      <li><b>陈旧检测（防 TOCTOU）</b>：预览与执行之间文件可能被外部修改，导致 span 偏移错位损坏无关内容 —— 双重校验（mtime 整体 + 逐 span 内容）</li>
+      <li><b>path_guard</b>：词法 <code>..</code> 拦截与符号链接 canonical 二次校验互补，缺一即可被绕过</li>
+      <li><b>note_io 原子写入</b>：任何时刻强杀或断电，磁盘上必须是完整旧内容或完整新内容，绝不允许半截文件</li>
+      <li><b>watcher 死循环防护</b>：<code>.knowlpad/</code> 在 Vault 内，不过滤则索引写入触发监听形成无限循环</li>
+      <li><b>16 条红线</b>见 PRD §8.2；<b>23 种错误码</b>统一收敛为 <code>AppError</code>，禁止向前端抛未分类字符串</li>
+    </ul>
+  </div>
+
+  <div class="card c-cyan">
+    <h2><span class="bar"></span>范围边界与性能目标</h2>
+    <ul>
+      <li><b>V1.0 交付 12 个模块</b>：Vault · 文件树 · 编辑器 · 双链 · 搜索 · 图谱 · 标签 · 附件 · 命令面板 · 回收站 · 设置 · 更新</li>
+      <li><b>明确排除 15 项</b>：插件系统、云同步、移动端、协同编辑、AI、加密 Vault、遥测等（PRD §1.4 Out of Scope）</li>
+      <li><b>性能</b>：冷启动 &lt;1.5s · 万篇搜索 &lt;200ms · 输入延迟 &lt;16ms · 10 万节点 ≥50 FPS · 空闲 CPU &lt;1%</li>
+      <li><b>规模基准</b>：标准库 3000 篇 / 大库 20000 篇 / 压力库 100000 篇</li>
+      <li><b>跨平台</b>：Windows 10 21H2+ · macOS 12+（Intel &amp; Apple Silicon）· Linux（deb + AppImage）</li>
+      <li><b>11 个里程碑</b> M0→M10，关键路径为数据层与链接模块；M3 解析器与 M4 链接改写为最高技术风险环节</li>
+    </ul>
+  </div>
+
+</div>
+
+<footer>
+  Knowl Pad 系统架构图 v2.2 · 2026-09-21 · 配套《Knowl-Pad-PRD》v2.0 与《Knowl-Pad-完整技术方案》v6.0 · 上游依赖基线《Knowl_Pad_完整技术方案_v5》<br>
+  架构形态：模块化单体（Modular Monolith），无插件系统 · 技术栈：Node.js 24.19.0 / TypeScript 6.0.3（刻意停留 6.x）/ Vite 8.3.0（不回退）/ Vue 3.5.43 / Tauri 2.11.6 / rusqlite 0.40.2 / Rust MSRV 1.88<br>
+  ✅ 依赖版本已于 2026-09-21 跟进上游并锁定；<code>TBD</code> 占位已清零，<code>Cargo.toml</code> 可用于构建。<br>
+  ⚠ 本图为设计蓝图，项目尚未开始开发。仍待 M0 核实的项为 Gitee Go 变量语法、<code>deb.depends</code> 包名、Vite 8 的 <code>minify</code>/<code>advancedChunks</code> 键名、updater 公钥（详见技术方案文末声明）。
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: '24.19.0'
+  RUST_TOOLCHAIN: '1.88.0'
+
+jobs:
+  build:
+    name: 构建并发布（${{ matrix.platform }}）
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: windows-latest, target: x86_64-pc-windows-msvc }
+          - { platform: ubuntu-22.04,   target: x86_64-unknown-linux-gnu }
+          - { platform: macos-latest,   target: aarch64-apple-darwin }
+          - { platform: macos-15-intel, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 12.4.2 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: pnpm }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { toolchain: '${{ env.RUST_TOOLCHAIN }}' }
+      - name: Linux 系统依赖
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - run: pnpm install --frozen-lockfile
+      - name: 记录版本号（package.json 为准，四处已同步）
+        id: ver
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: 构建安装包（签名产物 .sig 由 tauri 生成）
+        run: pnpm tauri build --target ${{ matrix.target }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: 生成 latest.json（updater 元数据）
+        shell: bash
+        run: node scripts/gen-latest-json.mjs --target ${{ matrix.target }} --version ${{ steps.ver.outputs.version }}
+      - name: 上传构建产物（供后续 job 使用）
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.target }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            latest.json
+          if-no-files-found: error
+
+  publish:
+    name: 发布到 GitHub Release 并同步 Gitee
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - name: 汇总 updater 元数据（合并各平台条目）
+        run: node scripts/merge-latest-json.mjs --dir artifacts --out latest.json
+      - name: 发布 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --notes-file CHANGELOG.md artifacts/*
+      # ⬇︎ 替换 semantic-release-gitee（已停更逾 4 年，违反红线 R-16）
+      - name: 同步到 Gitee Release（自研脚本，Gitee OpenAPI v5）
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+        run: |
+          node scripts/publish-gitee-release.mjs \
+            --tag "${{ github.ref_name }}" \
+            --name "${{ github.ref_name }}" \
+            --notes-file CHANGELOG.md \
+            --assets "artifacts/**/*"

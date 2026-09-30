@@ -1,0 +1,61 @@
+{
+  "name": "knowl-pad",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.19.0"
+  },
+  "packageManager": "pnpm@12.4.2",
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit && vue-tsc -p tsconfig.test.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:security": "node scripts/run-security.mjs",
+    "test:reliability": "node scripts/run-reliability.mjs",
+    "test:perf": "node scripts/run-perf.mjs",
+    "gate:clippy": "cargo clippy --workspace --all-targets -- -D warnings",
+    "gate:fmt": "cargo fmt --all --check",
+    "gate:rust-test": "cargo test --workspace",
+    "gate:coverage": "cargo llvm-cov -p kp-domain --fail-under-lines 85",
+    "gate:lockfile": "pnpm install --frozen-lockfile --dry-run",
+    "gate:naming": "node scripts/run-shell-gate.mjs check-naming",
+    "gate:path-encapsulation": "node scripts/run-shell-gate.mjs check-path-encapsulation",
+    "gate:rust-build": "cargo build --manifest-path src-tauri/Cargo.toml",
+    "build": "vite build",
+    "build:verify": "pnpm build && node scripts/verify-build-integrity.mjs",
+    "contract:verify": "node scripts/verify-ipc-contract.mjs",
+    "tauri": "tauri",
+    "ci": "node scripts/run-gates.mjs",
+    "dev": "vite",
+    "fixture:gen": "node scripts/gen-fixture-vault.mjs",
+    "gate:rust": "pnpm gate:clippy && pnpm gate:fmt && pnpm gate:rust-test && pnpm gate:coverage && cargo audit --file Cargo.lock"
+  },
+  "dependencies": {
+    "vue": "^3.5.43",
+    "pinia": "^4.0.3",
+    "vue-router": "^5.3.1",
+    "@tauri-apps/api": "^2.11.1",
+    "dompurify": "^3.4.15",
+    "markdown-it": "^15.0.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.5",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.0",
+    "vue-tsc": "^3.3.11",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "@eslint/js": "^9.0.0",
+    "typescript-eslint": "^8.0.0",
+    "eslint-plugin-vue": "^9.0.0",
+    "vue-eslint-parser": "^9.0.0",
+    "prettier": "^3.0.0",
+    "vitest": "^3.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "jsdom": "^25.0.0",
+    "@vue/test-utils": "^2.4.0"
+  }
+}

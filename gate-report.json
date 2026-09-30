@@ -1,0 +1,107 @@
+{
+  "generatedAt": "2026-09-30T15:30:31.690Z",
+  "results": [
+    {
+      "id": "1",
+      "name": "TypeScript 类型检查",
+      "ok": true,
+      "ms": 2915
+    },
+    {
+      "id": "2",
+      "name": "前端 Lint",
+      "ok": true,
+      "ms": 5292
+    },
+    {
+      "id": "14",
+      "name": "前端构建 + 完整性（准备 dist）",
+      "ok": true,
+      "ms": 818
+    },
+    {
+      "id": "3",
+      "name": "Rust Lint (clippy -D warnings)",
+      "ok": true,
+      "ms": 758
+    },
+    {
+      "id": "4",
+      "name": "Rust 格式 (fmt --check)",
+      "ok": false,
+      "ms": 286
+    },
+    {
+      "id": "6",
+      "name": "Rust 单元/集成测试",
+      "ok": true,
+      "ms": 973
+    },
+    {
+      "id": "15",
+      "name": "Rust domain 覆盖率 ≥ 85%",
+      "ok": true,
+      "ms": 3925
+    },
+    {
+      "id": "5",
+      "name": "前端单元/组件测试 + 覆盖率",
+      "ok": true,
+      "ms": 2776
+    },
+    {
+      "id": "7",
+      "name": "依赖安全审计（pnpm + cargo）",
+      "ok": true,
+      "ms": 6313
+    },
+    {
+      "id": "8",
+      "name": "Lockfile 一致性",
+      "ok": true,
+      "ms": 472
+    },
+    {
+      "id": "9",
+      "name": "Rust 应用构建（tauri build 的本地等价）",
+      "ok": true,
+      "ms": 574
+    },
+    {
+      "id": "10",
+      "name": "性能基准（P50 回退 ≤ 20%）",
+      "ok": true,
+      "ms": 1077
+    },
+    {
+      "id": "11",
+      "name": "安全测试集（AC-SEC）",
+      "ok": true,
+      "ms": 2795
+    },
+    {
+      "id": "12",
+      "name": "可靠性测试集（AC-REL）",
+      "ok": true,
+      "ms": 527
+    },
+    {
+      "id": "13",
+      "name": "命名一致性（门禁 13）",
+      "ok": true,
+      "ms": 3278
+    },
+    {
+      "id": "16",
+      "name": "路径封装检查（SEC PATH-02）",
+      "ok": true,
+      "ms": 929
+    },
+    {
+      "id": "17",
+      "name": "IPC 契约一致性（TS↔Rust）",
+      "ok": true,
+      "ms": 79
+    }
+  ]
+}

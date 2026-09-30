@@ -1,0 +1,95 @@
+// 隐藏 Windows 下的控制台窗口（release）
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Tauri 的 #[tauri::command] 宏展开依赖 never type fallback（Rust 2024 兼容性 lint，
+// 现为 deny-by-default）。此处显式允许；待 Tauri 宏修复后移除。
+#![allow(dependency_on_unit_never_type_fallback)]
+
+mod commands;
+mod error_wrapper;
+mod platform;
+mod state;
+mod storage;
+
+use commands::note::{note_read, note_write};
+use commands::system::{ping, system_info};
+use commands::vault::{index_status, vault_close, vault_list, vault_open};
+use state::AppState;
+
+fn main() {
+    // 平台冒烟模式：KP_SMOKE=1 时，窗口创建后自行断言并在超时内退出。
+    // 供 CI（Linux/xvfb、macOS、Windows runner）验证「应用能启动且主窗口存在」。
+    let smoke = std::env::var("KP_SMOKE").is_ok();
+
+    tauri::Builder::default()
+        .setup(move |app| {
+            if smoke {
+                use tauri::Manager;
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                    loop {
+                        if let Some(win) = handle.get_webview_window("main") {
+                            let visible = win.is_visible().unwrap_or(false);
+                            println!("KP_SMOKE_OK window=main visible={visible}");
+                            handle.exit(0);
+                            return;
+                        }
+                        if std::time::Instant::now() > deadline {
+                            eprintln!("KP_SMOKE_FAIL: main window not created within 20s");
+                            handle.exit(1);
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
+                });
+            }
+            Ok(())
+        })
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .manage(AppState::new())
+        .invoke_handler(tauri::generate_handler![
+            ping,
+            system_info,
+            note_read,
+            note_write,
+            vault_open,
+            vault_list,
+            index_status,
+            vault_close
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Knowl Pad");
+}
+
+#[cfg(test)]
+mod m0_stub_tests {
+    use super::*;
+
+    #[test]
+    fn platform_flag_is_defined() {
+        // 至少调用一次，保证平台适配入口可用且不被 dead_code 判定
+        let _ = platform::case_insensitive_fs();
+    }
+
+    #[test]
+    fn storage_constants_are_stable() {
+        assert_eq!(storage::INDEX_DIR_REL, ".knowlpad");
+        assert_eq!(storage::INDEX_DB_REL, ".knowlpad/index.db");
+    }
+
+    #[test]
+    fn state_guard_requires_open_vault() {
+        let state = AppState::new();
+        assert!(state.guard().is_err(), "未打开 Vault 时必须报错");
+
+        let dir = tempfile::tempdir().unwrap();
+        state.set_root(Some(dir.path().to_path_buf()));
+        assert!(state.guard().is_ok(), "打开 Vault 后应可用");
+
+        state.set_root(None);
+        assert!(state.guard().is_err(), "关闭后应再次报错");
+    }
+}
