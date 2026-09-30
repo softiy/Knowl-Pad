@@ -87,7 +87,7 @@
     <h1>Knowl Pad · 系统架构图</h1>
   </div>
   <div class="subtitle">
-    跨平台本地优先笔记与知识管理软件 · 双向链接与知识图谱 · <b>Tauri 2.11.6</b> 前后端分离混合架构<br>
+    跨平台本地优先笔记与知识管理软件 · 双向链接与知识图谱 · <b>Tauri 2.12.0</b> 前后端分离混合架构<br>
     配套文档：<b>PRD v2.3</b> · <b>完整技术方案 v6.3</b> · 上游基线 <b>v5 依赖锁定矩阵</b> · 项目状态：尚未开始开发
   </div>
   <div class="badges">
@@ -559,7 +559,7 @@
 
 <footer>
   Knowl Pad 系统架构图 v2.4 · 2026-09-29 · 配套《Knowl-Pad-PRD》v2.3 与《Knowl-Pad-完整技术方案》v6.3 · 上游依赖基线《Knowl_Pad_完整技术方案_v5》<br>
-  架构形态：模块化单体（Modular Monolith），无插件系统 · 技术栈：Node.js 24.19.0 / TypeScript 6.0.3（刻意停留 6.x）/ Vite 8.3.0（不回退）/ Vue 3.5.43 / Tauri 2.11.6 / rusqlite 0.40.2 / Rust MSRV 1.88<br>
+  架构形态：模块化单体（Modular Monolith），无插件系统 · 技术栈：Node.js 24.19.0 / TypeScript 6.0.3（刻意停留 6.x）/ Vite 8.3.0（不回退）/ Vue 3.5.43 / Tauri 2.11.6 / rusqlite 0.40.2 / Rust MSRV 1.90<br>
   ✅ 依赖版本已于 2026-09-21 跟进上游并锁定；<code>TBD</code> 占位已清零，<code>Cargo.toml</code> 可用于构建。<br>
   ✅ M0 核实完成（2026-09-25，见技术方案附录 D）：Gitee Go 变量语法与流水线模型已确认不兼容并迁移 GitHub Actions；<code>deb.depends</code> 包名（Ubuntu 22.04 / Debian 12）已核实；Vite 8 <code>minify</code>/<code>codeSplitting</code> 键名已实测校准；三平台窗口冒烟（<code>KP_SMOKE=1</code>）已自动化。<br>
   ⚠ 后续仍需：runner 实跑（Linux/macOS）与人工验收（高 DPI、Gatekeeper、安装/卸载）；updater 公钥与更新配置属 M9。

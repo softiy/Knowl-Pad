@@ -10,7 +10,7 @@ permissions:
 
 env:
   NODE_VERSION: '24.19.0'
-  RUST_TOOLCHAIN: '1.88.0'
+  RUST_TOOLCHAIN: '1.90.0'
 
 jobs:
   build:

@@ -253,7 +253,7 @@ Knowl Pad 采用 Tauri 2.0 的**前后端分离混合架构**：
 | 虚拟滚动 | @tanstack/vue-virtual 3.13.39 |
 | 拖拽 | vue-draggable-next 2.3.0 |
 | 数据库 | rusqlite 0.40.2（`bundled` feature） |
-| Rust MSRV | **1.88**（由 `time` 与 `image` 决定，非 Tauri 要求） |
+| Rust MSRV | **1.90**（由 tauri 2.12 家族要求；`time` / `image` 的 1.88 已不再是约束，2026-09-30 更新） |
 
 ### 2.3 数据所有权与真相源
 

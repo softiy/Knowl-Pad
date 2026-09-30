@@ -9,7 +9,7 @@ on:
 
 env:
   NODE_VERSION: '24.19.0'
-  RUST_TOOLCHAIN: '1.88.0'
+  RUST_TOOLCHAIN: '1.90.0'
   CARGO_TERM_COLOR: always
 
 jobs:

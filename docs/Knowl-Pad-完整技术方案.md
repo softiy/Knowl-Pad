@@ -859,8 +859,8 @@ export default defineConfig({
 
 | Crate | 锁定版本 | 复核结论 | 用途 |
 | --- | --- | --- | --- |
-| `tauri` | `2.11.6` | ✅ 2026-09-21 跟进（2.11.5→2.11.6，patch）；`3.0.0-alpha.0` 为预发布，禁用 | 桌面框架（修复多个死锁问题） |
-| `tauri-build` | `2.6.3` | ⚠️ **修正**：v5 写的 `2.1.0` 已过期，实际配套 tauri 2.11.x 的是 `2.6.3` | 构建脚本 |
+| `tauri` | `2.12.0` | ✅ 2026-09-30 跟进（2.11.6→2.12.0，minor）；**要求 rustc ≥ 1.90**，据此把项目 MSRV 提升至 1.90；`3.0.0-alpha.x` 为预发布，禁用 | 桌面框架 |
+| `tauri-build` | `2.7.0` | ✅ 与 tauri 2.12.0 配套（随 MSRV 1.90 一并跟进） | 构建脚本 |
 | `rusqlite` | `0.40.2`（`bundled`） | ✅ `bundled` feature 确认存在 | SQLite 访问 |
 | `serde` | `1.0.229`（`derive`） | ✅ | 序列化 |
 | `serde_json` | `1.0.151` | ✅ | JSON |
@@ -871,7 +871,7 @@ export default defineConfig({
 > 下表「锁定版本」列指 **M0 首次 `cargo build` 后应写入 `Cargo.lock` 的精确值**；
 > 写入 `Cargo.toml` 时按 Cargo 的 caret 语义声明为范围（见 §3.6.1）。
 >
-> ⚠️ **MSRV 硬约束（重要修正）**：核实发现 `time 0.3.55` 与 `image 0.25.10` 均要求 **Rust ≥ 1.88**，远高于 Tauri 2.11.x 自身声明的 `rust_version`（已核实 2.11.5 为 `1.77.2`；2.11.6 未单独核实，但不影响结论）。因此**本项目实际有效 MSRV 为 1.88**，由 `time` 与 `image` 决定，而非 Tauri；原方案写的 `1.82` 会导致构建失败。详见 §9.4.2 `rust-toolchain.toml` 与 `DEBT-08`。
+> ⚠️ **MSRV 硬约束（2026-09-30 再次修正）**：`tauri 2.12.0` 及其同族 crate（`tauri-build 2.7.0`、`tauri-utils 2.10.0`、`tauri-runtime 2.12.0`、`tauri-runtime-wry 2.12.0`、`tauri-codegen/macros/plugin 2.7.0`、`muda 0.20.0`）的 `rust-version` 均为 **1.90**，因此**本项目实际有效 MSRV 为 1.90**。
 
 | Crate | 锁定版本 | 用途 | 选型理由 | 备选 | 引入阶段 |
 | --- | --- | --- | --- | --- | --- |
@@ -890,10 +890,10 @@ export default defineConfig({
 | `tracing-appender` | `0.2.5` | 日志按日滚动（PRD §2.4.2 保留 14 天） | 与 `tracing` 配套，`rolling::daily` 原生支持 | 手写滚动 | M0 |
 | `uuid` | `1.26.1`（`v4`） | `operation_id` / `preview_id` | 取消令牌与预览缓存的键。`v4` feature 确认存在（依赖 `rng`），MSRV 1.85 | 自增计数器（但跨重启不安全） | M1 |
 | `dashmap` | `6.2.1` | 并发哈希表（cancellations、previews） | 无锁读、分片写。⚠️ `7.0.0-rc2` 为预发布，禁用 | `std::sync::RwLock<HashMap>` | M1 |
-| `time` | `0.3.55`（`formatting`, `local-offset`） | 时间戳、回收站按月目录、过期计算 | ✅ **选型已确认**：`time` 比 `chrono` 更轻量无历史包袱。⚠️ **MSRV 瓶颈**：该版本要求 **Rust ≥ 1.88**，直接决定本项目 MSRV 下限 | `chrono`（生态更广，MSRV 更低；若需降低 toolchain 要求可改用） | M1 |
+| `time` | `0.3.55`（`formatting`, `local-offset`） | 时间戳、回收站按月目录、过期计算 | ✅ **选型已确认**：`time` 比 `chrono` 更轻量无历史包袱。其自身要求 Rust ≥ 1.88，**低于项目 MSRV 1.90，自 2026-09-30 起不再是瓶颈** | `chrono`（生态更广，MSRV 更低） |
 | `dunce` | `1.0.5` | Windows 路径规范化（去除 `\\?\` 前缀的可读形式） | 解决 Windows 长路径显示问题（NFR-PLAT-10），无 features | 手写 | M1 |
 | `base64` | `0.23.1` | 剪贴板图片 IPC 传输编码（`attachment_paste_image`） | 标准实现。⚠️ **major bump**（0.22→0.23），`Engine` trait 用法与 0.21 不同，代码示例按 0.23 API 书写 | Tauri 自带的 IPC 二进制传输（若支持则更优，避免 base64 膨胀 33%） | M6 |
-| `image` | `0.25.10`（`default-features = false`, `png`/`jpeg`/`webp`） | 剪贴板图片格式转换与尺寸读取 | 纯 Rust。三个 feature 均确认存在。⚠️ **MSRV 瓶颈**：要求 **Rust ≥ 1.88**；⚠️ `webp` 现委托 `image-webp` crate 实现 | 仅存原始字节不转换（更轻，但无法生成缩略图） | M6 |
+| `image` | `0.25.10`（`default-features = false`, `png`/`jpeg`/`webp`） | 剪贴板图片格式转换与尺寸读取 | 纯 Rust，三个 feature 均确认存在。其自身要求 Rust ≥ 1.88，**低于项目 MSRV 1.90，不再是瓶颈**；⚠️ `webp` 现委托 `image-webp` crate 实现 | 仅存原始字节不转换（更轻，但无法生成缩略图） |
 
 #### 3.5.3 Tauri 插件（版本已核实，2026-09-19）
 
@@ -902,10 +902,10 @@ export default defineConfig({
 | 插件 | 锁定版本 | 用途 | Capabilities 权限 |
 | --- | --- | --- | --- |
 | `tauri-plugin-updater` | `2.12.0` | 自动更新（PRD §4.12） | `updater:default` |
-| `tauri-plugin-dialog` | `2.7.3` | 原生文件/文件夹选择对话框（Vault 选择） | `dialog:allow-open` |
-| `tauri-plugin-shell` | `2.3.6` | 外部链接交系统浏览器打开 | `shell:allow-open`（**仅限 `https://` 与 `mailto:`**，SEC-07；不含 `http://` / `file://`） |
-| `tauri-plugin-opener` | `2.5.5` | 「在文件管理器中显示」（`file_reveal`）与远程 URL 交系统浏览器。**仅在 Rust 侧调用**（自定义 Command 内） | 无（Rust 侧调用不经过 Capabilities；见 §9.1.1 与 AC-01） |
-| `tauri-plugin-process` | `2.3.1` | 更新后重启应用 | `process:allow-restart`（**仅此项，禁止 `process:allow-exit` 之外的宽权限**） |
+| `tauri-plugin-dialog` | `2.8.0` | 原生文件/文件夹选择对话框（Vault 选择） | `dialog:allow-open` |
+| `tauri-plugin-shell` | `2.4.0` | 外部链接交系统浏览器打开 | `shell:allow-open`（**仅限 `https://` 与 `mailto:`**，SEC-07；不含 `http://` / `file://`） |
+| `tauri-plugin-opener` | `2.7.0` | 「在文件管理器中显示」（`file_reveal`）与远程 URL 交系统浏览器。**仅在 Rust 侧调用**（自定义 Command 内） | 无（Rust 侧调用不经过 Capabilities；见 §9.1.1 与 AC-01） |
+| `tauri-plugin-process` | `2.4.0` | 更新后重启应用 | `process:allow-restart`（**仅此项，禁止 `process:allow-exit` 之外的宽权限**） |
 | `tauri-plugin-log` | 不引入 | 前端日志转发 | 改用自研 `log_report` Command，统一落盘路径与轮转策略（§9.5），避免与 `tracing` 形成两套日志体系 |
 
 > **明确不引入**：`tauri-plugin-fs`（违反 PRD AC-01，全部文件操作走自定义 Command 以统一施加路径校验与原子写入）、`tauri-plugin-sql`（违反 AC-02）、`tauri-plugin-store`（偏好存储走自定义 `global.db`，保持单一数据层）。
@@ -919,7 +919,7 @@ export default defineConfig({
 name = "knowl-pad"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88"          # ⚠️ 实际有效 MSRV：由 time 0.3.55 与 image 0.25.10 决定（非 Tauri 的 1.77.2），2026-09-19 核实
+rust-version = "1.90"          # ⚠️ 实际有效 MSRV：由 tauri 2.12 家族（含 muda 0.20.0）决定，2026-09-30 核实
 description = "跨平台本地优先笔记与知识管理软件"
 license = "MIT OR Apache-2.0"
 
@@ -956,10 +956,10 @@ tracing-subscriber    = { version = "0.3.23", features = ["env-filter"] }  # M0
 tracing-appender      = "0.2.5"           # 日志按日滚动，M0
 uuid                  = { version = "1.26.1", features = ["v4"] }          # 操作/预览令牌，M1
 dashmap               = "6.2.1"           # 并发哈希表（禁用 7.0.0-rc2），M1
-time                  = { version = "0.3.55", features = ["formatting", "local-offset"] }  # ⚠️ MSRV 1.88 瓶颈，M1
+time                  = { version = "0.3.55", features = ["formatting", "local-offset"] }  # 其 MSRV 1.88 < 项目 1.90，不再是瓶颈；M1
 dunce                 = "1.0.5"           # Windows 路径规范化，M1
 base64                = "0.23.1"          # 剪贴板图片编码（major bump 0.22→0.23），M6
-image                 = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }  # ⚠️ MSRV 1.88 瓶颈，M6
+image                 = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }  # 其 MSRV 1.88 < 项目 1.90；M6
 r2d2                  = "0.8.10"           # 读连接池，M1
 r2d2_sqlite           = "0.35.0"           # ✅ M0 实测：crate 名为下划线 `r2d2_sqlite`（连字符名在 Cargo 中解析失败）；
                                           # 0.35.0 依赖 rusqlite ^0.40，与 0.40.2 配套；版本号**不跟随** rusqlite
@@ -984,12 +984,12 @@ debug = true
 strip = false
 ```
 
-> **版本锁定纪律**：以上版本号已于 **2026-09-19** 通过 crates.io 官方 API（`https://crates.io/api/v1/crates/<name>`）**抽样核实**为当时稳定版，不再是 `TBD` 占位。⚠️ 该结论不可离线复核，且 `0.x` crate 的适配关系（尤其 `r2d2-sqlite` 与 `rusqlite`）历史上存在失配：**原计划 M0 逐项重新核实并以实际 `Cargo.lock` 回写** —— ✅ **M0 已复核（2026-09-25，附录 D.1）**：`cargo check` 在 rustc 1.98.1 与 **1.88.0** 下均通过，`0.x` 适配关系由真实 `Cargo.lock` 验证（`r2d2_sqlite` 实测取 `0.35.0` 配 `rusqlite ^0.40`）。
+> **版本锁定纪律**：以上版本号已于 **2026-09-19** 通过 crates.io 官方 API（`https://crates.io/api/v1/crates/<name>`）**抽样核实**为当时稳定版，不再是 `TBD` 占位。⚠️ 该结论不可离线复核，且 `0.x` crate 的适配关系（尤其 `r2d2-sqlite` 与 `rusqlite`）历史上存在失配：**原计划 M0 逐项重新核实并以实际 `Cargo.lock` 回写** —— ✅ **M0 已复核（2026-09-25，附录 D.1）**：`cargo check` 在 rustc 1.98.1 与 **1.88.0** 下均通过，`0.x` 适配关系由真实 `Cargo.lock` 验证（`r2d2_sqlite` 实测取 `0.35.0` 配 `rusqlite ^0.40`）。 ⚠️ **2026-09-30 复核定版**：随 MSRV 提升至 1.90，tauri 家族升到 2.12.0 一档（详见 `docs/history/MSRV升至1.90-2026-09-30.md`）；此后由 `.cargo/config.toml` 的 MSRV 感知解析保证解析结果不越界。
 >
 > **三条后续纪律**：
 > 1. **禁用预发布**：`notify 9.0.0-rc`、`notify-debouncer-full 0.8.0-rc`、`dashmap 7.0.0-rc2`、所有 tauri 插件的 `3.0.0-alpha.0` 均为预发布，**不得**误用。
 > 2. **major bump 复核（M0 已实测，2026-09-25）**：`sha2`（0.10→0.11）、`thiserror`（1→2）、`base64`（0.22→0.23）三个 crate 的 API 均已通过真实编译验证。其中一条**必须注意**：`sha2 0.11` 的 `finalize()` 返回 `hybrid-array` 的 `Array`，**不再实现 `LowerHex`**，`format!("{:x}", h.finalize())` 会报 E0277；十六进制需手动编码（如 `d.iter().map(|b| format!("{b:02x}")).collect::<String>()`）。`base64 0.23` 需 `use base64::Engine` trait 才能调用 `.encode()`。
-> 3. **MSRV 门禁**：`time 0.3.55` 与 `image 0.25.10` 要求 Rust ≥ 1.88，故 `rust-toolchain.toml`（§9.4.2）与 CI 的 Rust 安装步骤**必须**固定 `1.88` 或更高，低于此版本构建必然失败。若希望降低 toolchain 要求，唯一途径是把 `time` 换回 `chrono` 并移除 `image`（改用仅存原始字节的方案），此权衡登记为 `DEBT-08`（见 §13.2）。
+> 3. **MSRV 门禁**：`tauri 2.12.0` 家族要求 Rust ≥ 1.90（`time 0.3.55` 与 `image 0.25.10` 的 1.88 已不再是约束），故 `rust-toolchain.toml`（§9.4.2）与 CI 的 Rust 安装步骤**必须**固定 `1.90` 或更高，低于此版本构建必然失败。
 
 ### 3.6 package.json（继承 v5，补充脚本）
 
@@ -1116,12 +1116,12 @@ strip = false
 
 | 层面 | 载体 | 写法 | 作用 |
 | --- | --- | --- | --- |
-| 声明 | `src-tauri/Cargo.toml`、`crates/*/Cargo.toml` | 向后兼容范围（`^` / `~`）+ `rust-version = "1.88"` | 表达兼容性意图 |
+| 声明 | `src-tauri/Cargo.toml`、`crates/*/Cargo.toml` | 向后兼容范围（`^` / `~`）+ `rust-version = "1.90"` | 表达兼容性意图 |
 | 锁定 | `Cargo.lock`（**提交入库**，工作区根唯一一份） | 精确版本 | 保证所有人构建同一依赖树 |
-| 解析 | `.cargo/config.toml` 的 `[resolver] incompatible-rust-versions = "fallback"` + 工作区 `resolver = "3"` | **MSRV 感知解析** | 自动挑选与 1.88 兼容的版本，不会解析到要求 rustc 1.90 的 `tauri 2.12` 系列 |
+| 解析 | `.cargo/config.toml` 的 `[resolver] incompatible-rust-versions = "fallback"` + 工作区 `resolver = "3"` | **MSRV 感知解析** | 自动挑选与 1.90 兼容的版本，不会解析到超出已固定 toolchain 能力的依赖 |
 | 构建 | CI 与门禁 | `cargo ... --locked` | lockfile 与 manifest 不一致即失败，**绝不自行解析新版本**（Rust 版的 R-17） |
 
-> ⚠️ **不得删除 `.cargo/config.toml`**：缺少它时 cargo 按「最新可用」解析依赖，CI（固定 rustc 1.88）会在 `cargo check` 计划阶段直接失败。
+> ⚠️ **不得删除 `.cargo/config.toml`**：缺少它时 cargo 按「最新可用」解析依赖，一旦依赖抬高 MSRV，CI（固定 rustc 1.90）会在 `cargo check` 计划阶段直接失败。
 > 也**不能只靠 `--locked`**：它保证「不再重新解析」，防不住**首次解析 / 删锁重建**时选中过高版本——两者互补，缺一不可。
 
 **范围符的选择依据**：
@@ -2909,9 +2909,9 @@ pub async fn check_and_install(app: &AppHandle, force: bool) -> Result<UpdateOut
 # rust-toolchain.toml —— 固定 Rust 版本，防止 CI 与本地构建差异
 # ⚠️ 注意：TOML 注释符是 #，不是 //（本节原稿误用 //，已修正）
 [toolchain]
-channel = "1.88.0"        # 实际有效 MSRV，由 time 0.3.55 与 image 0.25.10 决定（2026-09-19 核实）
+channel = "1.90.0"        # 实际有效 MSRV，由 tauri 2.12 家族决定（2026-09-30 核实）
                           # 注意：Tauri 2.11.x 自身仅要求约 1.77（已核实 2.11.5 为 1.77.2），
-                          # 但被上述两个依赖拉高到 1.88。见 DEBT-08
+                          # 但 2026-09-30 起由 tauri 2.12 家族抬到 1.90（time/image 的 1.88 已不再是约束）。见 DEBT-08
 components = ["rustfmt", "clippy", "llvm-tools-preview"]   # llvm-tools 供 cargo-llvm-cov 使用（DEBT-10）
 profile = "minimal"
 ```
@@ -3193,7 +3193,7 @@ on:
 
 env:
   NODE_VERSION: '24.19.0'
-  RUST_TOOLCHAIN: '1.88.0'   # 实际 MSRV，由 time 0.3.55 / image 0.25.10 决定（2026-09-19 核实，见 DEBT-08）
+RUST_TOOLCHAIN: '1.90.0'   # 实际 MSRV，由 tauri 2.12 家族决定（2026-09-30 核实，见 DEBT-08）
 
 jobs:
   # ── 阶段 1：静态检查与测试（PR 与 push 均执行）──────────
@@ -3982,8 +3982,8 @@ echo "✅ 路径封装检查通过"
 | **D-07** | §11.3 | Conventional Commits 表格中 `` `feat! `` 行结构损坏（三列错位），且整段说明与表格**重复出现两次** | 文档质量问题，直接复制会导致规范不清 | 修正为完整的 10 类 commit type 表格（§11.3） |
 | **D-08** | §5 `package.json` | 缺少 `@tailwindcss/vite`（Tailwind 4 的 Vite 集成方式）、测试工具链、Lint 工具链、CI 脚本；`shadcn-vue` 误置于 `dependencies` | 无法支撑 PRD §8.3/§8.4 的测试与门禁要求；shadcn-vue 是 CLI 工具而非运行时依赖 | 补齐并修正（§3.6） |
 | **D-09** | §6 `Cargo.toml` | 仅锁 `tauri`/`tauri-build`/`rusqlite`/`serde`/`serde_json` 五个 crate | **不足以实现任何功能**：缺文件监听、目录遍历、中文分词、哈希、异步运行时、错误处理、日志、YAML 解析、正则等全部必需依赖 | 补充 19 个新增 crate 的选型与理由；版本号已于 **2026-09-19** 经 crates.io 官方 API 核实并锁定（§3.5.2、§3.5.4）。**始终未编造任何版本号** |
-| **D-09b** | §6 `tauri-build` | 锁定 `2.1.0` | 版本过期，与 `tauri 2.11.5` 不配套 | 修正为 `2.6.3`（crates.io 核实） |
-| **D-09c** | 隐含 MSRV | 未明确项目 MSRV，本文档前序草稿写 `1.82` | **会导致构建失败**：`time 0.3.55` 与 `image 0.25.10` 要求 Rust ≥ **1.88**，高于 Tauri 自身声明的 `1.77.2` | 修正 `rust-version` 与 `rust-toolchain.toml` 为 `1.88`；权衡登记为 `DEBT-08` |
+| **D-09b** | §6 `tauri-build` | 锁定 `2.1.0` | 版本过期，与 `tauri` 不配套 | 修正为 `2.7.0`（随 tauri 2.12.0 配套，crates.io 核实） |
+| **D-09c** | 隐含 MSRV | 未明确项目 MSRV，前序草稿写 `1.82` | **会导致构建失败**：MSRV 由依赖的实际 `rust-version` 决定。2026-09-19 为 `1.88`（`time`/`image`），2026-09-30 随 tauri 2.12 家族升至 **`1.90`** | 修正 `rust-version` 与 `rust-toolchain.toml` 为 `1.90`；权衡登记为 `DEBT-08` |
 | **D-09d** | §9.4.2 `rust-toolchain.toml` | 代码块使用 `//` 作为注释符 | **TOML 不支持 `//`**，仅支持 `#`，该文件原样落地会解析失败 | 改用 `#` |
 | **D-09e** | 前端依赖 | 虚拟滚动、日期库未选型；`cytoscape-fcose` 版本「待核实」 | 无法实现 PRD 的万级列表性能指标与图谱布局 | 选型 `@tanstack/vue-virtual 3.13.39`、`dayjs 1.11.23`；核实 `cytoscape-fcose 2.2.0`（peerDep `cytoscape ^3.2.0`，与 `3.34.3` 兼容） |
 | **D-10** | §5 注意 | 「Vite 8 要求 `@vitejs/plugin-vue` 升级至 6.0.0+」 | 表述正确，但 v5 的 `package.json` 中写的是 `"@vitejs/plugin-vue": "^6.0.0"` 而 dependencies 里未列 `@tailwindcss/vite` | 已在 §3.6 补齐 |
@@ -4031,7 +4031,7 @@ echo "✅ 路径封装检查通过"
 | 3 | 门禁扩充 | `scripts/run-gates.mjs` 新增**门禁 17：IPC 契约一致性（TS↔Rust）**；PRD §8.4 与 AGENTS.md 同步为 17 项（13 基准 + 4 扩展） |
 | 4 | 契约生成决策 | 评估 `tauri-specta`：稳定版 `1.0.2` 仅面向 Tauri 1.x，支持 Tauri 2 的 `2.0.0-rc.25` 仍为预发布；正式决定「手写 `commands.ts` + CI 契约校验」，关闭 `TR-01`（§8.3） |
 | 5 | Gitee 遗留 | §11.4 标注为历史设计（实际已迁移 `.github/workflows/`）；`DEBT-06` 关闭；附录 A 同步 |
-| 6 | M0 核实回写 | §3.3 `vue-tsc`/TS 6、§3.5 `Cargo.lock` 逐项复核、§3.5.4 测试依赖、`DEBT-08` MSRV 1.88 均回写为「M0 已验证」 |
+| 6 | M0 核实回写 | §3.3 `vue-tsc`/TS 6、§3.5 `Cargo.lock` 逐项复核、§3.5.4 测试依赖、`DEBT-08` MSRV 1.90 均回写为「M0 已验证」 |
 | 7 | 架构图 | 页脚移除过时的「待 M0 核实」四项，改为 M0 核实完成结论与后续 M9/人工项 |
 
 > 完整逐条记录见 `docs/history/M0收尾修订说明.md`。门禁现状：**17 项**（见附录 D 与仓库根 `gate-report.json`）。
@@ -4067,7 +4067,7 @@ echo "✅ 路径封装检查通过"
 | `DEBT-05` | macOS E2E 受 `tauri-driver` 限制，可能降级为人工验证 | 回归风险 | M0 确认限制范围；评估 `WebDriverAgent` 或其他方案 |
 | `DEBT-06` | ~~Gitee Go 的 action 生态弱于 GitHub Actions，CI 配置可能需多轮调试~~ ✅ **已关闭（2026-09-25）**：CI 已迁移至 `.github/workflows/`（`ci.yml` + `release.yml` + `platform-smoke.yml`，`actionlint` 通过），发布由 `scripts/publish-gitee-release.mjs` 同步 Gitee Release | M0 工期 | 见附录 D.3 第 1/2 项 |
 | `DEBT-07` | ✅ **已关闭（2026-09-19）**：`file_alias` 表原在 PRD §3.2.1 的 DDL 中未定义，但 §5.3.3 的链接裁决依赖它 | Schema 不完整 | 已补入 PRD §3.2.1：`file_alias(file_id, alias)` + `idx_alias_lower`，并同步更新 PRD §3.2.2 的查询模式表。本文档 §5.3.3 的裁决 SQL 现已有对应 schema 支撑 |
-| `DEBT-08` | `time 0.3.55` 与 `image 0.25.10` 把项目 MSRV 从 Tauri 自身的 `1.77.2` 拉高到 **`1.88`**（2026-09-19 核实） | ① CI 与所有开发者的 toolchain 必须 ≥ 1.88；② 部分企业内网的离线 Rust 镜像可能尚未同步 1.88；③ 未来若需支持更老的构建环境会被此约束卡住 | ✅ **M0 已评估（2026-09-25，附录 D.1）**：`cargo check` 在 1.98.1 与 1.88.0 下均通过，**保持 MSRV = 1.88**。若未来确需降低 toolchain，再走「`time`→`chrono` + 移除 `image`（仅存原始字节）」备选（PRD FR-ATTACH-05 降级） |
+| `DEBT-08` | **MSRV 两次抬升**：2026-09-19 由 `time 0.3.55` / `image 0.25.10` 抬到 `1.88`；2026-09-30 因 tauri 2.12 家族（`tauri-utils 2.10.0`、`muda 0.20.0` 等）再次抬到 **`1.90`** | ① CI 与所有开发者 toolchain 必须 ≥ 1.90；② 部分企业内网离线镜像可能未同步；③ 依赖升级会继续抬高 MSRV，需靠 MSRV 感知解析守住 | ✅ **已处置**：`.cargo/config.toml` 启用 `resolver.incompatible-rust-versions = "fallback"` + 工作区 `resolver = "3"`，解析不再越界；每次抬高 MSRV 需同步更新 `rust-toolchain.toml`、3 个 workflow 与本文档矩阵 |
 | `DEBT-09` | **阅读态代码高亮的语言覆盖不确定**（2026-09-21 评估发现）。Lezer 原生 grammar（`@lezer/*`）仅约 **14 种**语言；`@codemirror/legacy-modes` 虽含约 **100 种**，但它导出的是 **StreamParser**（旧式流式接口），能否经 `StreamLanguage.define()` 包装后供 `highlightCode()` 使用**未经验证** | 若 legacy-modes 链路不可行，阅读态仅 14 种语言可高亮，SQL/Bash/Ruby/TOML/PowerShell 等常见语言（`@lezer/sql`、`@lezer/bash` 已确认**不存在**，npm 404）只能纯文本降级——对技术笔记用户是明显体验缺口 | **M8 启动时先做最小 spike**：取 `legacy-modes/mode/shell` 走通一次 `highlightCode()`。① 可行 → 按需注册约 100 种语言，本债项关闭；② 不可行 → 在「接受 14 种上限」与「阅读态改用 highlight.js/shiki（需正式变更 `ED-06`）」之间做产品决策。详见 §3.2.4「语言覆盖」 |
 | `DEBT-10` | PRD §8.3 要求 Rust `domain/` 覆盖率 ≥ 85%，而门禁 6 原先只跑 `cargo test`，**无覆盖率度量与阈值强制** | 覆盖率承诺不可验证，domain 层质量无法随迭代守护 | **本版已落地**：`rust-toolchain.toml` 与 CI 增加 `llvm-tools-preview`，CI 安装 `cargo-llvm-cov` 并执行 `cargo llvm-cov --fail-under-lines 85`；本地由 `pnpm gate:rust` 覆盖 |
 | ~~`DEBT-11`~~ ✅ **已关闭（2026-09-30）** | ~~发布说明与版本号自动化暂缺~~：已落地**零依赖自研方案**——`scripts/changelog.mjs`（解析 Conventional Commits → 按类型分组渲染）+ `scripts/prepare-release.mjs`（推断递增类型 → 调 `bump-version.mjs` 同步四处版本 → 写入 `CHANGELOG.md`；默认 dry-run，`--write` 才落盘，工作区不干净时拒绝执行） | ~~CHANGELOG 需人工维护、版本号需手工同步~~ | 已由 `pnpm release:prepare` 覆盖；回归测试见 `tests/unit/changelog.spec.mjs`（18 项）。人工 review 仍作为最后一道确认（发布是显式动作） |
@@ -4106,8 +4106,8 @@ echo "✅ 路径封装检查通过"
 | `package.json` | §3.6 | ✅ 可直接使用（测试/lint 工具版本以 `^` 约束，M0 锁定） |
 | `tsconfig.json` | §3.3.2 | ✅ 可直接使用 |
 | `vite.config.ts` | §3.4.4 | ✅ **M0 已校准**：`minify: 'oxc'` 合法（且是默认值）；`advancedChunks` 已废弃 → 改用 `codeSplitting`；实测构建通过 |
-| `Cargo.toml` | §3.5.4 | ✅ **M0 实测可编译**：`cargo check` 在 rustc 1.98.1 与 **1.88.0** 下均通过（含 `rusqlite` bundled、`jieba-rs`、`image`、`r2d2_sqlite`） |
-| `rust-toolchain.toml` | §9.4.2 | ✅ `1.88.0`（由 `time`/`image` 的实际 MSRV 决定，见 `DEBT-08`） |
+| `Cargo.toml` | §3.5.4 | ✅ **M0 实测可编译**：`cargo check` 在 rustc 1.98.1 与 **1.90.0** 下均通过（含 `rusqlite` bundled、`jieba-rs`、`image`、`r2d2_sqlite`） |
+| `rust-toolchain.toml` | §9.4.2 | ✅ `1.90.0`（由 tauri 2.12 家族的实际 MSRV 决定，见 `DEBT-08`） |
 | `.nvmrc` | §11.7.1 | ✅ `24.19.0` |
 | `.gitignore` | §11.7.2 | ✅ 可直接使用 |
 | `.npmrc` | §11.7.3 | ✅ 可直接使用（锁定 pnpm 严格模式与 registry） |
@@ -4189,8 +4189,8 @@ PRD §10.1 已列 10 项产品/技术风险。此处补充**纯实现层面**的
 | const enum 回归（RISK-01 #1） | 构造带别名成员的字符串 const enum 并构建 | ✅ **未复现**：成员被正确内联（var c=s("ok")），无反转映射。仍保留 ESLint 禁用规则作为廉价护栏 |
 | writeBundle 产物遗漏（RISK-01 #2） | 连续 3 次生产构建 + 产物清单比对 + 引用完整性校验 | ✅ 三次产物清单完全一致；index.html 引用的 chunk 全部存在 |
 | Rust 依赖可编译 | cargo check（rustc 1.98.1） | ✅ 33 个 crate 全部通过（含 rusqlite bundled、jieba-rs、image、r2d2_sqlite） |
-| MSRV 1.88（DEBT-08） | rustup toolchain install 1.88.0 + cargo +1.88.0 check | ✅ **通过**，1.88 足以编译整个依赖集 |
-| Tauri 及插件可编译 | cargo check（tauri 2.11.6 + updater/dialog/shell/opener/process） | ✅ 通过（约 1 分 19 秒） |
+| MSRV 1.90（DEBT-08） | rustup toolchain install 1.90.0 + cargo +1.90.0 check | ✅ **通过**，1.90 足以编译当前依赖集 |
+| Tauri 及插件可编译 | cargo check（tauri 2.12.0 + updater/dialog/shell/opener/process） | ✅ 通过 |
 | 依赖安全审计（门禁 7） | cargo install cargo-audit + cargo audit --json | ✅ **0 vulnerabilities / 0 warnings**（182 个依赖） |
 | Lockfile 门禁（门禁 8） | pnpm install --frozen-lockfile / --dry-run / --lockfile-only | ✅ 三者均可用；**--dry-run 受 pnpm 12.4.2 支持**，故恢复为最初写法 |
 | updater 密钥生成 | pnpm tauri signer generate | ✅ 成功生成密钥对；签名环境变量为 TAURI_SIGNING_PRIVATE_KEY(_PATH) + _PASSWORD |
@@ -4268,7 +4268,7 @@ knowl-pad/（仓库根）
 | 8 vitest 覆盖率 | ✅ | 全局 ≥80%，`core/utils` ≥90% |
 | 9 依赖审计 | ✅ | `pnpm audit --audit-level=high` + `cargo audit`（0 漏洞） |
 | 10 Lockfile | ✅ | `pnpm install --frozen-lockfile --dry-run` |
-| 11 Rust 应用构建 | ✅ | `cargo build` 成功（tauri 2.11.6 + shell/opener/dialog/process） |
+| 11 Rust 应用构建 | ✅ | `cargo build` 成功（tauri 2.12.0 + shell/opener/dialog/process） |
 | 12 性能基准 | ✅ | 渲染 P50 相对基线无回退 |
 | 13 安全测试集 | ✅ | 10 条 XSS 探针 + 启动自检 + Capabilities/CSP 审计 |
 | 14 可靠性测试集 | ✅ | 并发读取一致性 + 临时文件清理（2 用例），通过 |

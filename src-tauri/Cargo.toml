@@ -2,7 +2,7 @@
 name = "knowl-pad"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.90"
 description = "跨平台本地优先笔记与知识管理软件"
 license = "MIT OR Apache-2.0"
 
