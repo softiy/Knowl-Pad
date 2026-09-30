@@ -33,7 +33,8 @@
     "gate:rust": "pnpm gate:clippy && pnpm gate:fmt && pnpm gate:rust-test && pnpm gate:coverage && cargo audit --file Cargo.lock",
     "changelog:gen": "node scripts/changelog.mjs",
     "changelog:self-test": "node scripts/changelog.mjs --self-test",
-    "release:prepare": "node scripts/prepare-release.mjs"
+    "release:prepare": "node scripts/prepare-release.mjs",
+    "pr": "node scripts/pr-flow.mjs"
   },
   "dependencies": {
     "vue": "^3.5.43",

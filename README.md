@@ -60,16 +60,18 @@ CI 见 [`.github/workflows/`](.github/workflows/)：`ci.yml`（17 项门禁 + Wi
 
 1. **先读真相源**：动代码前读 `docs/AGENTS.md` 的「红线清单」与「模块边界纪律」；
 2. **提交信息**遵循 Conventional Commits（`feat` / `fix` / `perf` …）；
-3. **禁止直接推送 `main`**：分支保护已启用（PR 必需 + 2 项必需检查 + 禁止强推与删除，`enforce_admins` 开启 —— 管理员同样不能直推）。标准流程：
+3. **禁止直接推送 `main`**：分支保护已启用（PR 必需 + 2 项必需检查 + 禁止强推与删除，`enforce_admins` 开启 —— 管理员同样不能直推）。标准流程用内置工具一条命令走完：
 
    ```bash
    git switch -c feat/<简短描述>      # 或 fix/ chore/ docs/
    # …改动 + 本地 pnpm ci 全绿…
-   git commit -m "feat(scope): …"     # Conventional Commits
-   git push -u origin HEAD            # 推分支，不推 main
+   git add -A && git commit -m "feat(scope): …"   # Conventional Commits
+   pnpm pr                            # 推送 → 开 PR → 等必需检查 → 合并 → 同步 main
    ```
 
-   然后在 GitHub 上开 PR（模板会自动带上自检清单），**CI 全绿后**再合并；合并后删除分支。
+   `pnpm pr` 会自动复用 `.github/pull_request_template.md` 之外的正文（用 `--body-file` 指定）；
+   **断网或中断后可原样重跑**——它把 PR 号记在 `.git/pr-flow-state.json`，不会重复开 PR。
+   也可分步：`pnpm pr -- open` / `pnpm pr -- status` / `pnpm pr -- merge`。
 4. 修 bug 必须附回归测试；改 IPC 接口必须同步契约测试（门禁 17）；
 5. 发现文档矛盾请按技术方案 §13.2 登记 `DEBT-NN`，**不要悄悄绕过**。
 

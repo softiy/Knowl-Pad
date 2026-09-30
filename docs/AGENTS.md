@@ -150,6 +150,12 @@ pnpm build:verify           # 构建 + Vite 8 chunk 完整性校验
 pnpm changelog:gen          # 依据 Conventional Commits 打印变更日志（dry-run）
 pnpm release:prepare        # 推断版本 → 同步四处 + 写 CHANGELOG（dry-run；--write 落盘）
 
+# ── PR 流程（分支保护已启用，禁止直推 main）───────
+pnpm pr                     # 推送分支 → 开 PR → 等必需检查 → 合并 → 同步 main（可续跑）
+pnpm pr -- status           # 查看当前 PR 与必需检查状态
+pnpm pr -- open             # 只推送分支并开 PR（不等待、不合并）
+pnpm pr -- merge            # 等待检查全绿后合并
+
 # ── 测试夹具与基准 ─────────────────────────────────
 pnpm fixture:gen -- --tier standard --out /tmp/std-vault   # 生成基准数据集
 pnpm test:perf -- --baseline .perf-baseline.json           # 性能基准比对
