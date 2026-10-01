@@ -5,6 +5,7 @@
 
 pub mod global;
 pub mod index;
+pub mod index_schema;
 pub mod migrate;
 pub mod pool;
 pub mod pragma;

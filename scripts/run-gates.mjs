@@ -26,7 +26,7 @@ const GATES = [
   { id: '10', name: '性能基准（P50 回退 ≤ 20%）', cmd: ['pnpm', ['test:perf']] },
   { id: '11', name: '安全测试集（AC-SEC）', cmd: ['pnpm', ['test:security']] },
   { id: '12', name: '可靠性测试集（AC-REL）', cmd: ['pnpm', ['test:reliability']] },
-  { id: '13', name: '命名一致性（门禁 13）', cmd: ['pnpm', ['gate:naming']] },
+  { id: '13', name: '命名一致性与文件长度（门禁 13 + CODE-11）', cmd: [null, null], steps: [['pnpm', ['gate:naming']], ['node', ['scripts/check-file-length.mjs', '--self-test']], ['node', ['scripts/check-file-length.mjs']]] },
   { id: '16', name: '路径封装检查（SEC PATH-02）', cmd: ['pnpm', ['gate:path-encapsulation']] },
   { id: '17', name: 'IPC 契约一致性（TS↔Rust）', cmd: ['node', ['scripts/verify-ipc-contract.mjs']] },
 ];
