@@ -7,6 +7,8 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 thiserror = "2.0.21"
+# Windows 路径规范化：去除 \\?\ 前缀的可读形式（技术方案 §3.5.2 / NFR-PLAT-10）
+dunce = "1.0.5"
 
 [dev-dependencies]
 tempfile = "3.27.0"
