@@ -117,3 +117,200 @@ mod tests {
         assert_eq!(name, "测试库");
     }
 }
+
+/// Vault 注册表行（PRD §3.3 的 `vault` 表）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultRow {
+    pub id: i64,
+    pub abs_path: String,
+    pub display_name: String,
+    pub last_opened: Option<i64>,
+    pub pinned: bool,
+    pub trust_level: String,
+}
+
+/// 注册 Vault（按 `abs_path` 幂等）。
+///
+/// 冲突时**只更新 last_opened**，保留既有 `display_name`——否则用户重命名显示名后，
+/// 每次打开都会被目录名覆盖（FR-VAULT-07）。返回 `vault_id`。
+pub fn upsert_vault(pool: &DbPool, abs_path: &str, display_name: &str) -> Result<i64, AppError> {
+    let path = abs_path.to_string();
+    let name = display_name.to_string();
+    pool.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO vault(abs_path, display_name, last_opened)
+             VALUES(?1, ?2, ?3)
+             ON CONFLICT(abs_path) DO UPDATE SET last_opened = excluded.last_opened",
+            rusqlite::params![path, name, now_ms()],
+        )
+        .map_err(map_err)?;
+        conn.query_row(
+            "SELECT id FROM vault WHERE abs_path = ?1",
+            [path.as_str()],
+            |row| row.get(0),
+        )
+        .map_err(map_err)
+    })
+}
+
+/// 列出全部注册 Vault：置顶优先，其次按最近打开时间倒序（PRD §3.3 / FR-VAULT-07）。
+pub fn list_vaults(pool: &DbPool) -> Result<Vec<VaultRow>, AppError> {
+    pool.with_reader(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, abs_path, display_name, last_opened, pinned, trust_level
+                 FROM vault
+                 ORDER BY pinned DESC, COALESCE(last_opened, 0) DESC, id ASC",
+            )
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(VaultRow {
+                    id: row.get(0)?,
+                    abs_path: row.get(1)?,
+                    display_name: row.get(2)?,
+                    last_opened: row.get(3)?,
+                    pinned: row.get::<_, i64>(4)? != 0,
+                    trust_level: row.get(5)?,
+                })
+            })
+            .map_err(map_err)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(map_err)?);
+        }
+        Ok(out)
+    })
+}
+
+/// 从注册表移除（**仅删注册记录，绝不触碰磁盘文件** —— AC-VAULT-04）。
+/// 返回是否确实删除了记录。
+pub fn remove_vault(pool: &DbPool, vault_id: i64) -> Result<bool, AppError> {
+    pool.with_writer(move |conn| {
+        let affected = conn
+            .execute("DELETE FROM vault WHERE id = ?1", [vault_id])
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    })
+}
+
+/// 修改显示名（FR-VAULT-07）。返回是否命中记录。
+pub fn rename_vault(pool: &DbPool, vault_id: i64, display_name: &str) -> Result<bool, AppError> {
+    let name = display_name.to_string();
+    pool.with_writer(move |conn| {
+        let affected = conn
+            .execute(
+                "UPDATE vault SET display_name = ?1 WHERE id = ?2",
+                rusqlite::params![name, vault_id],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    })
+}
+
+/// 重新定位：更新注册路径（路径失效后由用户重新选择，FR-VAULT-08 / AC-VAULT-02）。
+pub fn relocate_vault(pool: &DbPool, vault_id: i64, new_abs_path: &str) -> Result<(), AppError> {
+    let path = new_abs_path.to_string();
+    pool.with_writer(move |conn| {
+        conn.execute(
+            "UPDATE vault SET abs_path = ?1 WHERE id = ?2",
+            rusqlite::params![path, vault_id],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    })
+}
+
+/// 当前毫秒时间戳（Unix epoch）。
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn map_err(err: rusqlite::Error) -> AppError {
+    AppError::DbError(err.to_string())
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    fn pool() -> (tempfile::TempDir, DbPool) {
+        let dir = tempfile::tempdir().expect("临时目录应可创建");
+        let pool = open(dir.path()).expect("打开全局库应成功");
+        (dir, pool)
+    }
+
+    #[test]
+    fn upsert_is_idempotent_and_keeps_display_name() {
+        let (_dir, pool) = pool();
+        let id1 = upsert_vault(&pool, "/vault/a", "A").expect("注册应成功");
+        let id2 = upsert_vault(&pool, "/vault/a", "A-改名前的目录名").expect("重复注册应成功");
+        assert_eq!(id1, id2, "同一路径必须复用同一 id");
+        rename_vault(&pool, id1, "我的知识库").expect("重命名应成功");
+        upsert_vault(&pool, "/vault/a", "目录名").expect("再次打开应成功");
+        let rows = list_vaults(&pool).expect("列表应成功");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].display_name, "我的知识库",
+            "重开不得覆盖用户改的显示名"
+        );
+        assert!(rows[0].last_opened.is_some());
+    }
+
+    #[test]
+    fn list_orders_pinned_first_then_recent() {
+        let (_dir, pool) = pool();
+        let a = upsert_vault(&pool, "/vault/a", "A").expect("注册 A");
+        let b = upsert_vault(&pool, "/vault/b", "B").expect("注册 B");
+        let c = upsert_vault(&pool, "/vault/c", "C").expect("注册 C");
+        pool.with_writer(move |conn| {
+            conn.execute("UPDATE vault SET pinned = 1 WHERE id = ?1", [c])
+                .map_err(map_err)?;
+            conn.execute("UPDATE vault SET last_opened = 200 WHERE id = ?1", [a])
+                .map_err(map_err)?;
+            conn.execute("UPDATE vault SET last_opened = 100 WHERE id = ?1", [b])
+                .map_err(map_err)?;
+            Ok(())
+        })
+        .expect("排序准备应成功");
+        let rows = list_vaults(&pool).expect("列表应成功");
+        assert_eq!(rows[0].id, c, "置顶应排最前");
+        assert_eq!(rows[1].id, a, "其次按最近打开倒序");
+        assert_eq!(rows[2].id, b);
+    }
+
+    #[test]
+    fn remove_only_deletes_registry_row() {
+        // AC-VAULT-04：移除注册记录不得删除磁盘文件——本测试用真实目录验证
+        let dir = tempfile::tempdir().expect("临时目录应可创建");
+        let vault_dir = dir.path().join("vault-a");
+        std::fs::create_dir_all(&vault_dir).expect("应可创建 Vault 目录");
+        let note = vault_dir.join("note.md");
+        std::fs::write(&note, "# 内容").expect("应可写入笔记");
+
+        let (_cfg, pool) = pool();
+        let id = upsert_vault(&pool, &vault_dir.to_string_lossy(), "A").expect("注册应成功");
+        assert!(remove_vault(&pool, id).expect("移除应成功"));
+        assert!(
+            list_vaults(&pool).expect("列表应成功").is_empty(),
+            "记录应被删除"
+        );
+        assert!(note.exists(), "磁盘文件必须保持不变");
+        assert!(
+            !remove_vault(&pool, id).expect("重复移除应成功"),
+            "重复移除应返回 false"
+        );
+    }
+
+    #[test]
+    fn relocate_updates_path() {
+        let (_dir, pool) = pool();
+        let id = upsert_vault(&pool, "/old/path", "V").expect("注册应成功");
+        relocate_vault(&pool, id, "/new/path").expect("重新定位应成功");
+        let rows = list_vaults(&pool).expect("列表应成功");
+        assert_eq!(rows[0].abs_path, "/new/path");
+    }
+}
