@@ -131,15 +131,18 @@ impl PathGuard {
         if rel_path.starts_with('/') || rel_path.contains(':') {
             return Err(AppError::PathAbsolute);
         }
-        let raw = Path::new(rel_path);
+        // 3 Windows 风格分隔符统一按分隔符处理：保证**三平台判定一致**
+        // （\ 本就在 INVALID_CHARS 中，合法文件名不可能含它，故不存在误伤）
+        let normalized = rel_path.replace('\\', "/");
+        let raw = Path::new(&normalized);
         if raw.is_absolute() {
             return Err(AppError::PathAbsolute);
         }
-        // 3 NUL 字节
+        // 4 NUL 字节
         if rel_path.bytes().any(|byte| byte == 0) {
             return Err(AppError::PathEscapeDeny);
         }
-        // 4 逐段检查
+        // 5 逐段检查
         for comp in raw.components() {
             match comp {
                 Component::ParentDir => return Err(AppError::PathOutsideVault),
@@ -148,13 +151,13 @@ impl PathGuard {
                 Component::Normal(seg) => validate_segment(&seg.to_string_lossy())?,
             }
         }
-        // 5-6 词法规范化 + 组件级前缀校验
+        // 6-7 词法规范化 + 组件级前缀校验
         let joined = self.canonical_root.join(raw);
         let lexical = lexical_normalize(&joined);
         if !lexical.starts_with(&self.canonical_root) {
             return Err(AppError::PathOutsideVault);
         }
-        // 7 解析符号链接后再次校验（防逃逸，T-04）
+        // 8 解析符号链接后再次校验（防逃逸，T-04）
         let canonical = canonicalize_existing(&lexical)?;
         if !canonical.starts_with(&self.canonical_root) {
             return Err(AppError::PathEscapeDeny);
@@ -313,6 +316,22 @@ mod tests {
     fn guard_errors_when_root_missing() {
         let missing = std::env::temp_dir().join("kp-definitely-missing-root-xyz");
         assert!(PathGuard::new(&missing).is_err());
+    }
+
+    #[test]
+    fn windows_separators_are_treated_consistently() {
+        // 同一载荷在三平台必须得到**相同判定**：反斜杠按分隔符解析
+        let (_d, g) = guard();
+        assert_eq!(
+            g.resolve("..\\..\\windows\\system32\\config")
+                .unwrap_err()
+                .code(),
+            "E_PATH_OUTSIDE_VAULT"
+        );
+        // 合法嵌套路径用反斜杠书写时，等价于正斜杠写法
+        let a = g.resolve("notes\\a.md").expect("反斜杠嵌套路径应放行");
+        let b = g.resolve("notes/a.md").expect("正斜杠嵌套路径应放行");
+        assert_eq!(a, b, "两种分隔符必须解析到同一路径");
     }
 
     #[test]
