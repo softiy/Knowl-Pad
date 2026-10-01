@@ -95,6 +95,13 @@ pub(crate) fn prepare_vault(
     let root = guard.canonical_root().to_path_buf();
     ensure_knowlpad_dir(&root)?;
 
+    // §6.3 启动清理：删除上次崩溃/强杀遗留的 .kp-tmp-*（失败不影响打开）
+    match kp_domain::note_io::cleanup_temp_files_recursive(&root) {
+        Ok(0) => {}
+        Ok(removed) => tracing::info!(removed, "已清理临时文件残留"),
+        Err(err) => tracing::warn!(error = %err, "清理临时文件残留失败"),
+    }
+
     let display_name = root
         .file_name()
         .map(|name| name.to_string_lossy().to_string())

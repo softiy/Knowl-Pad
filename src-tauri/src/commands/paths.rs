@@ -43,7 +43,22 @@ mod tests {
         let dir = tempfile::tempdir().expect("临时目录应可创建");
         fs::create_dir_all(dir.path().join("notes")).expect("应可建目录");
         let ok = resolve_in(dir.path(), "notes/a.md").expect("正常路径应通过");
-        assert!(ok.starts_with(fs::canonicalize(dir.path()).expect("根应可规范化")));
+        // 基准取 PathGuard 的规范化根（与实现同源）：Windows 下 std::fs::canonicalize
+        // 会带 \\?\ 前缀，用它作基准会与 dunce 规范化后的结果不一致
+        let root = kp_domain::path_guard::PathGuard::new(dir.path())
+            .expect("根应可建立校验器")
+            .canonical_root()
+            .to_path_buf();
+        assert!(
+            ok.starts_with(&root),
+            "{} 应位于 {} 内",
+            ok.display(),
+            root.display()
+        );
+        assert!(
+            !ok.to_string_lossy().starts_with(r"\\?\"),
+            "解析结果不得带 verbatim 前缀"
+        );
         let err = resolve_in(dir.path(), "../escape.md").expect_err("穿越必须被拒绝");
         assert_eq!(err.0.code(), "E_PATH_OUTSIDE_VAULT");
     }

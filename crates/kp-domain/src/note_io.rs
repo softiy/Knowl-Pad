@@ -74,6 +74,50 @@ fn write_and_sync(tmp: &Path, content: &[u8]) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 递归清理 Vault 内的 .kp-tmp-* 残留（技术方案 §6.3「启动时扫描 Vault 清理残留」）。
+///
+/// 安全约束：
+/// - **不跟随符号链接**（Windows 的 junction/软链同样被跳过），避免删除 Vault 外的文件；
+/// - 跳过 .knowlpad/（内部目录，其残留不影响用户可见目录）；
+/// - 单个条目失败不中断整体，返回成功删除的数量。
+pub fn cleanup_temp_files_recursive(root: &Path) -> Result<usize, AppError> {
+    if !root.is_dir() {
+        return Ok(0);
+    }
+    let mut removed = 0usize;
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            // 目录不可读（权限等）不应让整个清理失败
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            // 关键：不跟随符号链接（file_type 不解析符号链接）
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name == crate::vault_paths::INTERNAL_DIR {
+                    continue;
+                }
+                stack.push(path);
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with(TEMP_PREFIX) && fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    Ok(removed)
+}
+
 /// 读取笔记；不存在时返回 E_FILE_NOT_FOUND。
 pub fn read_note(target: &Path) -> Result<Vec<u8>, AppError> {
     if !target.exists() {
@@ -261,5 +305,48 @@ mod tests {
             })
             .count();
         assert_eq!(leftovers, 0);
+    }
+
+    #[test]
+    fn recursive_cleanup_removes_nested_leftovers_only() {
+        let dir = tempfile::tempdir().expect("临时目录应可创建");
+        let nested = dir.path().join("a/b/c");
+        fs::create_dir_all(&nested).expect("应可建目录");
+        fs::create_dir_all(dir.path().join(".knowlpad")).expect("应可建内部目录");
+        fs::write(dir.path().join(format!("{TEMP_PREFIX}root")), b"junk").expect("应可写");
+        fs::write(nested.join(format!("{TEMP_PREFIX}deep")), b"junk").expect("应可写");
+        fs::write(dir.path().join(".knowlpad/index.db-wal"), b"keep").expect("应可写");
+        fs::write(dir.path().join("real.md"), b"keep").expect("应可写");
+
+        let removed = cleanup_temp_files_recursive(dir.path()).expect("清理应成功");
+        assert_eq!(removed, 2, "两处残留都应被删除");
+        assert!(dir.path().join("real.md").exists(), "正常文件必须保留");
+        assert!(
+            dir.path().join(".knowlpad/index.db-wal").exists(),
+            ".knowlpad 内不得被触碰"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_cleanup_does_not_follow_symlinks() {
+        let outside = tempfile::tempdir().expect("外部目录应可创建");
+        let victim = outside.path().join(format!("{TEMP_PREFIX}victim"));
+        fs::write(&victim, b"must survive").expect("应可写");
+        let dir = tempfile::tempdir().expect("临时目录应可创建");
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).expect("应可建软链");
+
+        let removed = cleanup_temp_files_recursive(dir.path()).expect("清理应成功");
+        assert_eq!(removed, 0, "不得沿符号链接删除外部文件");
+        assert!(victim.exists(), "Vault 外文件必须完好");
+    }
+
+    #[test]
+    fn recursive_cleanup_on_missing_dir_is_zero() {
+        let dir = tempfile::tempdir().expect("临时目录应可创建");
+        assert_eq!(
+            cleanup_temp_files_recursive(&dir.path().join("nope")).expect("应成功"),
+            0
+        );
     }
 }
