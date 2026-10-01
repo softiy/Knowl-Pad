@@ -24,10 +24,19 @@ pub struct DbPool {
 }
 
 impl DbPool {
-    /// 打开（或创建）数据库：应用 PRAGMA → 执行迁移 → 启动写线程。
-    ///
-    /// 迁移在写线程内、**在 open 返回之前**完成；迁移失败则 open 直接失败（不留下半迁移状态）。
+    /// 打开（或创建）全局库：应用 PRAGMA → 执行**版本化迁移** → 启动写线程。
     pub fn open(path: &Path) -> Result<Self, AppError> {
+        Self::open_with(path, |conn| super::migrate::migrate(conn).map(|_| ()))
+    }
+
+    /// 打开（或创建）数据库：应用 PRAGMA → 执行调用方给定的 schema 引导逻辑 → 启动写线程。
+    ///
+    /// 引导逻辑在写线程内、**在 open 返回之前**完成；失败则 open 直接失败（不留下半初始化状态）。
+    /// 全局库用版本化迁移（§4.5），索引库用**丢弃重建**（§4.4）——两者策略不同，故由此参数注入。
+    pub fn open_with<B>(path: &Path, bootstrap: B) -> Result<Self, AppError>
+    where
+        B: FnOnce(&mut Connection) -> Result<(), AppError> + Send + 'static,
+    {
         let manager = SqliteConnectionManager::file(path).with_init(|conn| {
             // 池中每条连接创建时应用一次 PRAGMA（幂等）
             pragma::apply(conn).map_err(|err| {
@@ -57,7 +66,7 @@ impl DbPool {
                     let _ = ready_tx.send(Err(err));
                     return;
                 }
-                if let Err(err) = super::migrate::migrate(&mut conn) {
+                if let Err(err) = bootstrap(&mut conn) {
                     let _ = ready_tx.send(Err(err));
                     return;
                 }

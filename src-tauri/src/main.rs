@@ -114,15 +114,17 @@ mod m0_stub_tests {
     }
 
     #[test]
-    fn state_guard_requires_open_vault() {
+    fn vault_root_lifecycle() {
+        // 路径校验职责已下沉到 storage::index::open / PathGuard（PR-2），
+        // 此处只断言 AppState 对根路径的持有语义。
         let state = AppState::new();
-        assert!(state.guard().is_err(), "未打开 Vault 时必须报错");
+        assert!(state.current_root().is_none(), "未打开 Vault 时应为空");
 
         let dir = tempfile::tempdir().unwrap();
         state.set_root(Some(dir.path().to_path_buf()));
-        assert!(state.guard().is_ok(), "打开 Vault 后应可用");
+        assert!(state.current_root().is_some(), "打开 Vault 后应有值");
 
         state.set_root(None);
-        assert!(state.guard().is_err(), "关闭后应再次报错");
+        assert!(state.current_root().is_none(), "关闭后应再次为空");
     }
 }

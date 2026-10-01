@@ -4,6 +4,7 @@
 //! 全局库版本化迁移（§4.5）。索引库 schema 与「丢弃重建」在 PR-2。
 
 pub mod global;
+pub mod index;
 pub mod migrate;
 pub mod pool;
 pub mod pragma;

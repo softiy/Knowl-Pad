@@ -32,6 +32,12 @@ export interface IndexStatus {
   indexDir: string;
   indexDb: string;
   ready: boolean;
+  /** 索引库 schema 版本（未就绪时为 undefined） */
+  schemaVersion?: number;
+  /** 索引签名摘要前 12 位（诊断用） */
+  signaturePrefix?: string;
+  /** 上次建库时间戳（毫秒） */
+  builtAt?: number;
 }
 
 export const vaultOpen = (absPath: string): Promise<VaultInfo> => call<VaultInfo>('vault_open', { args: { absPath } });
