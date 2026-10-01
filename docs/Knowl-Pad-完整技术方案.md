@@ -2252,6 +2252,11 @@ pub fn replace(tmp: &Path, target: &Path) -> Result<()> {
 }
 ```
 
+> **实现决策（登记为 §12 勘误 D-17）**：上表「三段式（备份旧文件 → rename → 失败则还原备份）」与紧随其后的代码示例（PermissionDenied ⇒ `E_FILE_LOCKED`）**互相矛盾**。
+> 实现采用**代码示例**的语义：目标被占用时**不强行替换**，返回 `E_FILE_LOCKED`（PRD §5.2，423）并保持旧内容完整。
+> 理由：目标被占用时，用备份文件去 rename 覆盖**同样会失败**，三段式不产生额外成功率，却引入「备份残留」与「还原也可能失败」两个新失败面。
+> 实现见 `crates/kp-domain/src/fs_atomic.rs`。
+
 **崩溃安全性论证**（对应 AC-REL-01）：
 
 | 崩溃时刻 | 磁盘状态 | 结果 |
@@ -4016,6 +4021,7 @@ echo "✅ 路径封装检查通过"
 | **D-13** | §4.2 | pinia 4.0.3「仅支持 ESM，Store 编写方式不变」 | 正确，但未提示 `"type": "module"` 是前置条件 | 已在 §3.2.2 标注项目本身即 ESM |
 | **D-14** | 全文 | 未涉及中文全文搜索的分词方案 | SQLite FTS5 的 `unicode61` **不对中文分词**，直接实现会导致中文搜索几乎不可用——对一款以中文知识库为主要场景的产品而言是致命缺陷 | 设计 jieba-rs 预分词方案（PRD §3.4、本文档 §5.2） |
 | **D-15** | 全文 | 未定义任何功能需求、数据模型、IPC 契约、验收标准 | v5 实质是「依赖清单 + 安全审计 + 发布流程」，不含软件设计 | 由 PRD v2.1 完整补齐；本文档补齐架构与实现设计 |
+| **D-17** | §6.3（**本文档内部不一致**） | 平台差异表写「先尝试 fs::rename；失败且为 AlreadyExists/PermissionDenied 时，走『备份旧文件 → rename → 失败则还原备份』的三段式」，而同节代码示例对 PermissionDenied 直接返回 `E_FILE_LOCKED` | 同一节内表格与代码自相矛盾；且三段式在目标被占用时同样会失败，**无收益却增加失败面** | 以代码示例为准：目标被占用 ⇒ `E_FILE_LOCKED`，旧内容保持完整；已抽出 `crates/kp-domain/src/fs_atomic.rs` 承载平台差异（M1 PR-5） |
 | **D-16** | PRD §5.1 `IPC-02` | 原文写「字段名统一 `snake_case`（serde 默认）」 | 与技术方案 §8.4 的 camelCase 决策冲突；前端 TS 惯例为 camelCase，snake_case 传输键会导致前端到处写 `rel_path` 等不符合 JS 惯例的字段名 | **PRD 已于 v2.1 修正**：IPC 传输的 JSON 键统一 camelCase（Rust 侧通过 `#[serde(rename_all = "camelCase")]` 映射），Rust 结构体内部字段名保持 snake_case。§8.1 `CMD-03` 中的冲突声明已同步移除 |
 
 ---
