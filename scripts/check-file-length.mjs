@@ -27,7 +27,9 @@ export function isExempt(relPath) {
 }
 
 export function measure(relPath, content) {
-  const lines = content.split("\n").length;
+  // 物理行数（与 wc -l 同口径）：末尾换行不计为额外一行
+  const newlines = (content.match(/\n/g) ?? []).length;
+  const lines = content.endsWith("\n") ? newlines : newlines + 1;
   const exempt = isExempt(relPath);
   let level = "ok";
   if (lines > HARD_LIMIT && !exempt) level = "error";
@@ -56,7 +58,7 @@ if (process.argv.includes("--self-test")) {
   ];
   let pass = 0;
   for (const [path, lines, want] of cases) {
-    const content = Array.from({ length: lines }, () => "x").join("\n");
+    const content = Array.from({ length: lines }, () => "x").join("\n") + "\n";
     const got = measure(path, content).level;
     if (got === want) pass += 1;
     else console.error(`❌ 自检失败：${path} ${lines} 行 期望 ${want} 实得 ${got}`);
