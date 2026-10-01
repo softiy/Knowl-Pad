@@ -10,6 +10,8 @@ pub struct AppState {
     global_db: Mutex<Option<Arc<DbPool>>>,
     /// 当前 Vault 的索引库连接池（M1 PR-2 接入；未打开 Vault 时为 None）。
     index_db: Mutex<Option<Arc<DbPool>>>,
+    /// 当前 Vault 在全局库中的注册 id（未注册或全局库不可用时为 None）。
+    current_vault_id: Mutex<Option<i64>>,
 }
 
 impl AppState {
@@ -39,6 +41,18 @@ impl AppState {
     /// 当前 Vault 的索引库句柄（未打开 Vault 时返回 None）。
     pub fn index_db(&self) -> Option<Arc<DbPool>> {
         self.index_db.lock().ok().and_then(|guard| guard.clone())
+    }
+
+    /// 记录当前 Vault 的注册 id。
+    pub fn set_current_vault_id(&self, id: Option<i64>) {
+        if let Ok(mut guard) = self.current_vault_id.lock() {
+            *guard = id;
+        }
+    }
+
+    /// 当前 Vault 的注册 id。
+    pub fn current_vault_id(&self) -> Option<i64> {
+        self.current_vault_id.lock().ok().and_then(|guard| *guard)
     }
 
     pub fn set_root(&self, root: Option<PathBuf>) {
