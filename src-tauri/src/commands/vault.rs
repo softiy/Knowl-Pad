@@ -128,6 +128,10 @@ pub(crate) fn activate_vault(
 ) -> Result<VaultInfo, AppError> {
     close_current(state);
 
+    // §9.5 日志内容红线：Vault 绝对路径**仅在此处记录一次**（用于诊断），
+    // 其余日志只允许出现相对路径
+    tracing::info!(root = %prepared.root.display(), "打开 Vault");
+
     let abs_path = prepared.root.to_string_lossy().to_string();
     let vault_id = match state.global_db() {
         Some(global) => Some(crate::storage::global::upsert_vault(
