@@ -23,6 +23,8 @@ pub enum AppError {
     FileExists(String),
     #[error("文件已被外部修改，请选择处理方式：{0}")]
     WriteConflict(String),
+    #[error("文件被外部程序占用：{0}")]
+    FileLocked(String),
     #[error("读写失败：{0}")]
     IoFailure(String),
     #[error("数据库错误：{0}")]
@@ -41,6 +43,7 @@ impl AppError {
             Self::FileNotFound(_) => "E_FILE_NOT_FOUND",
             Self::FileExists(_) => "E_FILE_EXISTS",
             Self::WriteConflict(_) => "E_WRITE_CONFLICT",
+            Self::FileLocked(_) => "E_FILE_LOCKED",
             Self::IoFailure(_) => "E_IO_FAILURE",
             Self::DbError(_) => "E_DB_ERROR",
         }
