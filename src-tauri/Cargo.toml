@@ -27,6 +27,11 @@ tauri-plugin-process = "2.3.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.21"
+# ── M1 存储层（PRD §3.3 全局库、技术方案 §4 连接/迁移）──
+rusqlite = { version = "0.40.2", features = ["bundled"] }   # bundled：避免依赖系统 SQLite（三平台一致）
+r2d2 = "0.8"                                                 # 读连接池
+r2d2_sqlite = "0.35.0"                                       # 与 rusqlite 0.40.x 配套
+tracing = "0.1.44"                                           # 结构化日志（迁移与连接生命周期）
 
 [dev-dependencies]
 tempfile = "3.27.0"
