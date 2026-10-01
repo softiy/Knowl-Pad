@@ -6,3 +6,4 @@ pub mod error;
 pub mod fs_atomic;
 pub mod note_io;
 pub mod path_guard;
+pub mod vault_paths;

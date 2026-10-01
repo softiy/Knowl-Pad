@@ -899,7 +899,7 @@ export default defineConfig({
 
 #### 3.5.3 Tauri 插件（版本已核实，2026-09-19）
 
-> 所有插件均需与 `tauri 2.11.x` 配套（当前锁定 `tauri 2.11.6`）。下列版本为 2026-09-21 crates.io 核实的当前稳定版；**每个插件都存在 `3.0.0-alpha.0` 预发布版，一律禁用**。
+> 所有插件均需与 `tauri 2.12.x` 配套（当前锁定 `tauri 2.12.0`；2026-09-30 随 MSRV 1.90 跟进）。下列版本为 2026-09-21 crates.io 核实的当前稳定版；**每个插件都存在 `3.0.0-alpha.0` 预发布版，一律禁用**。
 
 | 插件 | 锁定版本 | 用途 | Capabilities 权限 |
 | --- | --- | --- | --- |
@@ -929,8 +929,8 @@ license = "MIT OR Apache-2.0"
 tauri-build = { version = "2.6.3", features = [] }   # 修正：与 tauri 2.11.x 配套（v5 的 2.1.0 已过期）
 
 [dependencies]
-# ── 继承 v5 锁定（2026-09-19 复核；2026-09-21 跟进 tauri 至 2.11.6）─────
-tauri = { version = "2.11.6", features = [] }
+# ── 继承 v5 锁定（2026-09-19 复核；2026-09-30 随 MSRV 1.90 跟进 tauri 至 2.12.0）───
+tauri = { version = "2.12.0", features = [] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

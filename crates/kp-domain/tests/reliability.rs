@@ -90,20 +90,32 @@ fn payloads() -> (Vec<u8>, Vec<u8>) {
 #[test]
 #[ignore = "仅供崩溃测试通过 KP_RELIABILITY_CHILD 自举调用"]
 fn crash_child_writer() {
-    let Ok(target) = std::env::var(CHILD_ENV) else {
+    let Ok(dir) = std::env::var(CHILD_ENV) else {
         return; // 直接运行（无环境变量）时不做任何事
     };
-    let target = PathBuf::from(target);
+    let dir = PathBuf::from(dir);
     let (a, b) = payloads();
-    let mut round = 0usize;
+    let mut pass = 0usize;
     loop {
-        let data = if round.is_multiple_of(2) { &a } else { &b };
-        if atomic_write(&target, data).is_err() {
-            // 极端情况下（例如被占用）子进程退出即可，父进程仍会校验不变量
-            return;
+        // 首轮即写「新内容」：否则子进程在首轮被强杀时可能只有旧内容，
+        // 使 AC-REL-01 的「旧或新」断言失去区分度
+        let data = if pass.is_multiple_of(2) { &b } else { &a };
+        // 每轮把 100 个文件全部重写一遍（AC-REL-01：对 100 篇笔记各自执行写入）
+        for index in 0..NOTE_COUNT {
+            if atomic_write(&dir.join(note_name(index)), data).is_err() {
+                // 极端情况下（例如被占用）子进程退出即可，父进程仍会校验不变量
+                return;
+            }
         }
-        round += 1;
+        pass += 1;
     }
+}
+
+/// AC-REL-01 的笔记规模：100 篇。
+const NOTE_COUNT: usize = 100;
+
+fn note_name(index: usize) -> String {
+    format!("note-{index:03}.md")
 }
 
 /// 简易 LCG：避免为随机等待引入新依赖。
@@ -137,9 +149,11 @@ fn count_temp_files(dir: &std::path::Path) -> usize {
 /// 强杀写入进程 N 轮，每轮都校验 AC-REL-01 的三条不变量。
 fn run_kill_rounds(iterations: usize) {
     let dir = tempfile::tempdir().expect("临时目录应可创建");
-    let target = dir.path().join("note.md");
     let (a, b) = payloads();
-    atomic_write(&target, &a).expect("初始写入应成功");
+    // 准备 100 篇笔记，均为「完整旧内容」
+    for index in 0..NOTE_COUNT {
+        atomic_write(&dir.path().join(note_name(index)), &a).expect("初始写入应成功");
+    }
 
     let exe = std::env::current_exe().expect("应可定位测试二进制");
     let mut state = seed();
@@ -149,7 +163,7 @@ fn run_kill_rounds(iterations: usize) {
     for round in 0..iterations {
         let mut child = Command::new(&exe)
             .args(["--exact", "crash_child_writer", "--ignored", "--nocapture"])
-            .env(CHILD_ENV, target.to_string_lossy().to_string())
+            .env(CHILD_ENV, dir.path().to_string_lossy().to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -161,18 +175,31 @@ fn run_kill_rounds(iterations: usize) {
         let _ = child.kill(); // unix: SIGKILL；Windows: TerminateProcess
         let _ = child.wait();
 
-        // ① 完整旧内容或完整新内容（绝无半截）
-        let data = fs::read(&target).expect("目标文件必须始终存在");
-        assert!(
-            data == a || data == b,
-            "第 {round} 轮（等待 {wait_ms}ms）读到半截内容：{} 字节",
-            data.len()
-        );
-        if data == b {
-            saw_new_content += 1;
+        // ① 100 个文件必须各自为「完整旧内容」或「完整新内容」（绝无半截）
+        // ② 不得出现零字节文件
+        for index in 0..NOTE_COUNT {
+            let path = dir.path().join(note_name(index));
+            let data = fs::read(&path).unwrap_or_else(|err| {
+                panic!(
+                    "第 {round} 轮（等待 {wait_ms}ms）{} 不可读：{err}",
+                    note_name(index)
+                )
+            });
+            assert!(
+                data == a || data == b,
+                "第 {round} 轮 {} 为半截内容：{} 字节",
+                note_name(index),
+                data.len()
+            );
+            assert!(
+                !data.is_empty(),
+                "第 {round} 轮 {} 为零字节",
+                note_name(index)
+            );
+            if data == b {
+                saw_new_content += 1;
+            }
         }
-        // ② 不得零字节
-        assert!(!data.is_empty(), "第 {round} 轮出现零字节文件");
 
         // ③ 模拟重启清理：清理后用户目录不得残留临时文件
         cleanup_temp_files(dir.path()).expect("清理应成功");

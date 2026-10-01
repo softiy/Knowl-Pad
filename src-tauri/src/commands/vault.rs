@@ -392,6 +392,22 @@ mod tests {
         assert_eq!(prepared.display_name, "new-vault");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn knowlpad_dir_has_owner_only_permissions() {
+        // FR-STORAGE-01：.knowlpad/ 权限为仅当前用户可读写（0700）
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir().expect("临时目录应可创建");
+        let target = base.path().join("perm-vault");
+        let _prepared = prepare_vault(&target, true).expect("新建应成功");
+        let mode = std::fs::metadata(target.join(".knowlpad"))
+            .expect("应可读取目录元数据")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "实际权限为 {mode:o}");
+    }
+
     #[test]
     fn activate_registers_in_global_and_sets_state() {
         let (_cfg, state) = state_with_global();

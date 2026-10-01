@@ -19,7 +19,7 @@ tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
 kp-domain = { path = "../crates/kp-domain" }
-tauri = { version = "2.11.6", features = [] }
+tauri = { version = "2.12.0", features = [] }
 tauri-plugin-shell = "2.3.6"
 tauri-plugin-opener = "2.5.5"
 tauri-plugin-dialog = "2.7.3"
@@ -31,8 +31,10 @@ thiserror = "2.0.21"
 rusqlite = { version = "0.40.2", features = ["bundled"] }   # bundled：避免依赖系统 SQLite（三平台一致）
 r2d2 = "0.8"                                                 # 读连接池
 r2d2_sqlite = "0.35.0"                                       # 与 rusqlite 0.40.x 配套
+# 结构化日志（迁移与连接生命周期）
 tracing = "0.1.44"
-sha2 = "0.11.0"                                              # 索引签名 digest（技术方案 §4.6；注意 0.11 的 finalize() 不实现 LowerHex，需手动 hex）                                           # 结构化日志（迁移与连接生命周期）
+# 索引签名 digest（技术方案 §4.6；注意 0.11 的 finalize() 不实现 LowerHex，需手动 hex）
+sha2 = "0.11.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
