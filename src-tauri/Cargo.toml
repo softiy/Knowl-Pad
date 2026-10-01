@@ -35,6 +35,9 @@ r2d2_sqlite = "0.35.0"                                       # 与 rusqlite 0.40
 tracing = "0.1.44"
 # 索引签名 digest（技术方案 §4.6；注意 0.11 的 finalize() 不实现 LowerHex，需手动 hex）
 sha2 = "0.11.0"
+# 日志（技术方案 §9.5：按日滚动 + 14 天保留）
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-appender = "0.2.5"
 
 [dev-dependencies]
 tempfile = "3.27.0"
