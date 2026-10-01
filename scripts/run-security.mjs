@@ -11,5 +11,7 @@ function run(cmd, args) {
 let failed = 0;
 failed |= run('npx', ['vitest', 'run', 'tests/security']);
 failed |= run('node', ['tests/security/caps-audit.mjs']);
+failed |= run('node', ['tests/security/log-privacy.mjs', '--self-test']);
+failed |= run('node', ['tests/security/log-privacy.mjs']);
 if (failed) { console.error('\n❌ 安全测试集失败'); process.exit(1); }
 console.log('\n✅ 安全测试集全部通过');
