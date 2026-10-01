@@ -6,8 +6,38 @@ pub const INVALID_CHARS: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|
 
 /// Windows 保留设备名；即使在 Linux 上也拒绝，以保证可迁移性。
 pub const RESERVED_NAMES: &[&str] = &[
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+    // Windows 同时把上标数字形式视为设备别名（COM¹/COM²/COM³、LPT¹/LPT²/LPT³），
+    // 以及控制台设备名 CONIN$/CONOUT$——它们都不是合法文件名（NFR-PLAT-04）
+    "COM\u{00b9}",
+    "COM\u{00b2}",
+    "COM\u{00b3}",
+    "LPT\u{00b9}",
+    "LPT\u{00b2}",
+    "LPT\u{00b3}",
+    "CONIN$",
+    "CONOUT$",
 ];
 
 /// 单段文件名校验（FR-FILE-12）。
@@ -39,29 +69,41 @@ pub fn validate_segment(seg: &str) -> Result<(), AppError> {
             "'{stem}' 是 Windows 保留设备名"
         )));
     }
-    // 百分号编码的穿越载荷（AC-SEC-01 明确要求拒绝 %2e%2e%2f 一类输入）
-    if contains_encoded_traversal(seg) {
-        return Err(AppError::PathEscapeDeny);
-    }
     Ok(())
 }
 
-/// 百分号编码穿越检测：先解码再判断是否含路径语义（最多解码 3 层，覆盖双重编码）。
+/// 编码穿越检测（AC-SEC-01）：对**整条相对路径**逐层解码（最多 3 层，覆盖双重编码），
+/// 若解码结果表达了穿越语义（父目录段 / 根 / 盘符 / NUL）则判定为攻击载荷。
 ///
-/// 设计取舍：**不**一刀切拒绝所有百分号——普通文件名允许含 %（例如 100%2e5.md 解码后
-/// 只是 100.5.md，不含任何路径语义）。只有解码结果出现 .. / 分隔符 / NUL 时才判定为攻击载荷。
-fn contains_encoded_traversal(seg: &str) -> bool {
-    let mut current = seg.to_string();
+/// 两个关键设计：
+/// 1. **解码结果绝不用于实际路径解析**——解析始终使用原始字面路径。因此形如
+///    a%2Fb.md 的输入会被接受，并被当作**磁盘上真实存在的单段文件名**处理；
+/// 2. 判定按**组件**而非子串：report%2E%2Emd 解码为 report..md，只是含连续点号的
+///    普通文件名（不是父目录段），必须放行——旧实现按子串判定会误伤真实文件。
+fn decoded_traversal(rel_path: &str) -> bool {
+    let mut current = rel_path.to_string();
     for _ in 0..3 {
         let Some(decoded) = percent_decode(&current) else {
             return false; // 无可解码内容
         };
-        if decoded.contains("..")
-            || decoded.contains('/')
-            || decoded.contains('\\')
-            || decoded.contains('\u{0}')
-        {
+        if decoded.contains('\u{0}') {
             return true;
+        }
+        let normalized = decoded.replace('\\', "/");
+        if normalized.starts_with('/') {
+            return true;
+        }
+        let path = Path::new(&normalized);
+        if path.is_absolute() {
+            return true;
+        }
+        for comp in path.components() {
+            if matches!(
+                comp,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            ) {
+                return true;
+            }
         }
         if decoded == current {
             return false;
@@ -143,6 +185,10 @@ impl PathGuard {
         }
         // 4 NUL 字节
         if rel_path.bytes().any(|byte| byte == 0) {
+            return Err(AppError::PathEscapeDeny);
+        }
+        // 4.5 编码穿越（AC-SEC-01）：判定用解码结果，解析仍用原始字面路径
+        if decoded_traversal(rel_path) {
             return Err(AppError::PathEscapeDeny);
         }
         // 5 逐段检查
@@ -376,8 +422,52 @@ mod tests {
     #[test]
     fn allows_benign_percent_names() {
         // 普通文件名中的百分号不构成穿越，仍应放行
-        validate_segment("100%2e5.md").expect("非穿越语义的编码名应允许");
-        validate_segment("50%off.md").expect("百分号本身合法");
+        let (_d, g) = guard();
+        for name in [
+            "100%2e5.md",
+            "50%off.md",
+            "report%2E%2Emd", // 解码为 report..md：仍是单段普通名（旧实现误伤）
+            "a%2Fb.md",       // 解码为 a/b.md：按原始字面量解析，磁盘上就是这个名字
+        ] {
+            validate_segment(name).unwrap_or_else(|err| panic!("{name} 应合法：{err}"));
+            g.resolve(name)
+                .unwrap_or_else(|err| panic!("{name} 应可解析：{err:?}"));
+        }
+    }
+
+    #[test]
+    fn rejects_encoded_traversal_at_path_level() {
+        let (_d, g) = guard();
+        for payload in [
+            "%2e%2e%2f",
+            "%2e%2e%2fetc",
+            "..%2f..%2fetc",
+            "%2E%2E%5Cwindows",
+            "%252e%252e%252f",
+            "%2e%2e%2f%2e%2e%2fetc",
+        ] {
+            assert_eq!(
+                g.resolve(payload).unwrap_err().code(),
+                "E_PATH_ESCAPE_DENY",
+                "{payload} 必须被拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_win32_reserved_aliases() {
+        for name in [
+            "COM\u{00b9}.md",
+            "COM\u{00b2}",
+            "LPT\u{00b3}.txt",
+            "CONIN$",
+            "CONOUT$.md",
+        ] {
+            assert!(
+                validate_segment(name).is_err(),
+                "{name} 是 Windows 设备别名，必须拒绝"
+            );
+        }
     }
 
     #[cfg(unix)]
