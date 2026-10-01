@@ -23,6 +23,8 @@ pub enum AppError {
     WriteConflict(String),
     #[error("读写失败：{0}")]
     IoFailure(String),
+    #[error("数据库错误：{0}")]
+    DbError(String),
 }
 
 impl AppError {
@@ -37,6 +39,7 @@ impl AppError {
             Self::FileExists(_) => "E_FILE_EXISTS",
             Self::WriteConflict(_) => "E_WRITE_CONFLICT",
             Self::IoFailure(_) => "E_IO_FAILURE",
+            Self::DbError(_) => "E_DB_ERROR",
         }
     }
 }
@@ -76,6 +79,7 @@ mod tests {
             "E_WRITE_CONFLICT"
         );
         assert_eq!(AppError::IoFailure("x".into()).code(), "E_IO_FAILURE");
+        assert_eq!(AppError::DbError("x".into()).code(), "E_DB_ERROR");
     }
 
     #[test]
