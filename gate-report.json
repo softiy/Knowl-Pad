@@ -1,107 +1,107 @@
 {
-  "generatedAt": "2026-10-01T11:54:24.604Z",
+  "generatedAt": "2026-10-01T12:02:22.121Z",
   "results": [
     {
       "id": "1",
       "name": "TypeScript 类型检查",
       "ok": true,
-      "ms": 3661
+      "ms": 3493
     },
     {
       "id": "2",
       "name": "前端 Lint",
       "ok": true,
-      "ms": 6369
+      "ms": 6447
     },
     {
       "id": "14",
       "name": "前端构建 + 完整性（准备 dist）",
       "ok": true,
-      "ms": 913
+      "ms": 895
     },
     {
       "id": "3",
       "name": "Rust Lint (clippy -D warnings)",
       "ok": true,
-      "ms": 1057
+      "ms": 2062
     },
     {
       "id": "4",
       "name": "Rust 格式 (fmt --check)",
       "ok": true,
-      "ms": 247
+      "ms": 225
     },
     {
       "id": "6",
       "name": "Rust 单元/集成测试",
       "ok": true,
-      "ms": 5299
+      "ms": 10936
     },
     {
       "id": "15",
       "name": "Rust domain 覆盖率 ≥ 85%",
       "ok": true,
-      "ms": 4451
+      "ms": 4441
     },
     {
       "id": "5",
       "name": "前端单元/组件测试 + 覆盖率",
       "ok": true,
-      "ms": 3411
+      "ms": 3413
     },
     {
       "id": "7",
       "name": "依赖安全审计（pnpm + cargo）",
       "ok": true,
-      "ms": 8843
+      "ms": 9082
     },
     {
       "id": "8",
       "name": "Lockfile 一致性",
       "ok": true,
-      "ms": 472
+      "ms": 427
     },
     {
       "id": "9",
       "name": "Rust 应用构建（tauri build 的本地等价）",
       "ok": true,
-      "ms": 7460
+      "ms": 4111
     },
     {
       "id": "10",
       "name": "性能基准（P50 回退 ≤ 20%）",
       "ok": true,
-      "ms": 1306
+      "ms": 1375
     },
     {
       "id": "11",
       "name": "安全测试集（AC-SEC）",
       "ok": true,
-      "ms": 3249
+      "ms": 3110
     },
     {
       "id": "12",
       "name": "可靠性测试集（AC-REL）",
       "ok": true,
-      "ms": 2673
+      "ms": 2131
     },
     {
       "id": "13",
       "name": "命名一致性（门禁 13）",
       "ok": true,
-      "ms": 5647
+      "ms": 5481
     },
     {
       "id": "16",
       "name": "路径封装检查（SEC PATH-02）",
       "ok": true,
-      "ms": 1343
+      "ms": 1051
     },
     {
       "id": "17",
       "name": "IPC 契约一致性（TS↔Rust）",
       "ok": true,
-      "ms": 80
+      "ms": 84
     }
   ]
 }
