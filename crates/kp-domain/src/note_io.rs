@@ -45,7 +45,7 @@ pub fn atomic_write(target: &Path, content: &[u8]) -> Result<(), AppError> {
     #[cfg(unix)]
     let prev_perms = fs::metadata(target).ok().map(|m| m.permissions());
 
-    if let Err(err) = replace(&tmp, target) {
+    if let Err(err) = crate::fs_atomic::replace(&tmp, target) {
         let _ = fs::remove_file(&tmp);
         return Err(err);
     }
@@ -72,16 +72,6 @@ fn write_and_sync(tmp: &Path, content: &[u8]) -> Result<(), AppError> {
     file.flush()?;
     file.sync_all()?;
     Ok(())
-}
-
-fn replace(tmp: &Path, target: &Path) -> Result<(), AppError> {
-    match fs::rename(tmp, target) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
-            Err(AppError::FileExists(target.display().to_string()))
-        }
-        Err(err) => Err(AppError::from(err)),
-    }
 }
 
 /// 读取笔记；不存在时返回 E_FILE_NOT_FOUND。
