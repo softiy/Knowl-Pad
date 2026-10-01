@@ -2190,7 +2190,7 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | D-06 | v5 CI 用 `github.*` 变量但声称 Gitee Go | 技术方案 §9 给出 Gitee Go 正确变量映射 | 技术方案 |
 | D-07 | v5 §11.7 与本草稿使用 `update.json` | 统一改为 **`latest.json`**——Tauri 2 updater 的约定文件名（`createUpdaterArtifacts: true` 生成），FR-UPDATE-02/05/09 与验收样例已同步 | 技术方案 §11.5、§12 D-05 |
 | D-08 | M1 的阶段验收写作「AC-VAULT 全通过」，但其中两条在 M1 阶段物理上不可验证 | 修正为可验证口径：AC-VAULT-01 的**解析断言**依赖 M3 解析器与 M4 链接裁决、**AC-VAULT-05** 依赖 M3 索引引擎与 M2 文件树，故 M1 只验收 AC-VAULT-01 的存储相关部分 + AC-VAULT-02/03/04，其余顺延 M3（2026-10-01 确认） | AC-VAULT-01、AC-VAULT-05 |
-| D-07 | v5 §11.3 表格有错行（`feat!` 行损坏）与重复段落 | 技术方案 §9 修正为完整正确的 Conventional Commits 表 | 技术方案 |
+| D-09 | v5 §11.3 表格有错行（`feat!` 行损坏）与重复段落 | 技术方案 §9 修正为完整正确的 Conventional Commits 表 | 技术方案（**编号修正**：本条原误编为 D-07，与上一条重复，2026-10-01 改为 D-09） |
 
 ---
 
