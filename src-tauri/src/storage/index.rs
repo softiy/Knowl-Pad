@@ -157,8 +157,9 @@ fn bootstrap(conn: &mut Connection, expected: &IndexSignature) -> Result<(), App
     if needs_rebuild {
         drop_all(&tx)?;
     }
-    set_meta(&tx, META_REBUILD_IN_PROGRESS, "1")?;
+    // 顺序要紧：必须先建表（含 meta）再写 meta——否则新库上会因 meta 不存在而失败
     create_schema(&tx)?;
+    set_meta(&tx, META_REBUILD_IN_PROGRESS, "1")?;
     write_meta(&tx, expected)?;
     clear_meta(&tx, META_REBUILD_IN_PROGRESS)?;
     tx.commit()
