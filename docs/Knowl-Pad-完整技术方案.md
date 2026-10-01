@@ -1190,21 +1190,37 @@ SQLite 的并发模型是「单写多读」。本项目的读写比极不均衡�
 
 ```rust
 pub struct DbPool {
-    /// 唯一的写连接，由专用线程持有，通过 channel 接收写请求
-    writer: mpsc::Sender<WriteJob>,
-    /// 读连接池（r2d2 或手写 Vec<Connection> + 空闲队列）
-    readers: Arc<Pool<SqliteConnectionManager>>,
+    /// 唯一的写连接：由专用线程独占，全部写任务经 channel 串行送入
+    writer: SyncSender<Job>,
+    /// 读连接池（r2d2，默认 4 条连接）
+    readers: r2d2::Pool<SqliteConnectionManager>,
 }
 
-enum WriteJob {
-    /// 批量索引写入（索引引擎专用）
-    IndexBatch { items: Vec<ParsedNote>, done: oneshot::Sender<Result<usize>> },
-    /// 单条业务写入（偏好、Vault 注册、回收站元数据）
-    Single { sql: SqlOp, done: oneshot::Sender<Result<()>> },
-    /// 事务组（批量改写等需原子性的场景）
-    Transaction { ops: Vec<SqlOp>, done: oneshot::Sender<Result<()>> },
+/// 写任务：持有写连接可变引用的闭包，由调用方通过 `with_writer` 提交
+type Job = Box<dyn FnOnce(&mut Connection) + Send + 'static>;
+
+impl DbPool {
+    /// 打开（或创建）库：应用 PRAGMA → 执行迁移 → 启动写线程；
+    /// **迁移完成前 open 不返回**，失败则直接失败（不留半迁移状态）
+    pub fn open(path: &Path) -> Result<Self, AppError>;
+
+    /// 在唯一写连接上执行闭包（写操作由此串行化，天然满足 NFR-REL-09）
+    pub fn with_writer<T, F>(&self, f: F) -> Result<T, AppError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut Connection) -> Result<T, AppError> + Send + 'static;
+
+    /// 从读连接池取一条连接执行闭包（读操作可并发）
+    pub fn with_reader<T, F>(&self, f: F) -> Result<T, AppError>
+    where
+        F: FnOnce(&Connection) -> Result<T, AppError>;
 }
 ```
+
+> **实现说明（2026-10-01，PR-1）**：早期草稿用 `enum WriteJob { IndexBatch, Single, Transaction }` 枚举写任务类型；
+> 实现改为**闭包式任务**——同样满足「单写连接 + channel 串行化」的核心约束，且避免为每种写场景新增枚举分支。
+> 索引批量写入（`BEGIN IMMEDIATE` + 批量 INSERT）在 M3 落地时通过 `with_writer` 提交事务闭包即可。
+> 实现代码：`src-tauri/src/storage/pool.rs`。
 
 | 设计决策 | 理由 |
 | --- | --- |

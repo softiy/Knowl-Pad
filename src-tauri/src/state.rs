@@ -1,17 +1,32 @@
 use crate::error_wrapper::KpError;
+use crate::storage::pool::DbPool;
 use kp_domain::path_guard::PathGuard;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// 应用状态：当前打开的 Vault 根（M0 仅最小实现，M1 扩展为连接池/队列/取消令牌）。
 #[derive(Default)]
 pub struct AppState {
     vault_root: Mutex<Option<PathBuf>>,
+    /// 全局库连接池（M1 PR-1 接入；打开失败时为 None，应用以默认配置继续，FR-GLOBAL-01）。
+    global_db: Mutex<Option<Arc<DbPool>>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 记录全局库句柄（启动时调用）。
+    pub fn set_global_db(&self, pool: Arc<DbPool>) {
+        if let Ok(mut guard) = self.global_db.lock() {
+            *guard = Some(pool);
+        }
+    }
+
+    /// 全局库句柄（尚未就绪时返回 None）。
+    pub fn global_db(&self) -> Option<Arc<DbPool>> {
+        self.global_db.lock().ok().and_then(|guard| guard.clone())
     }
 
     pub fn set_root(&self, root: Option<PathBuf>) {
