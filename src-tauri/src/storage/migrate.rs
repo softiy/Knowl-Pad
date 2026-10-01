@@ -41,9 +41,10 @@ pub fn schema_version(conn: &Connection) -> Result<i32, AppError> {
         [],
         |row| row.get::<_, String>(0),
     ) {
-        Ok(raw) => raw
-            .parse::<i32>()
-            .map_err(|err| AppError::DbError(format!("schema_version 非法：{raw}（{err}）"))),
+        Ok(raw) => raw.parse::<i32>().map_err(|err| {
+            tracing::warn!(error = %err, "版本号非法");
+            AppError::db("读取数据库版本")
+        }),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
         Err(err) => Err(map_err(err)),
     }
@@ -125,7 +126,8 @@ CREATE TABLE IF NOT EXISTS vault_state (
 "#;
 
 fn map_err(err: rusqlite::Error) -> AppError {
-    AppError::DbError(err.to_string())
+    tracing::warn!(error = %err, "数据库迁移失败");
+    AppError::db("执行数据库迁移")
 }
 
 #[cfg(test)]

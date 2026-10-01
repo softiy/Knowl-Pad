@@ -27,7 +27,9 @@ pub enum AppError {
     FileLocked(String),
     #[error("读写失败：{0}")]
     IoFailure(String),
-    #[error("数据库错误：{0}")]
+    #[error("操作系统拒绝访问：{0}")]
+    PermissionDenied(String),
+    #[error("{0}")]
     DbError(String),
 }
 
@@ -44,6 +46,7 @@ impl AppError {
             Self::FileExists(_) => "E_FILE_EXISTS",
             Self::WriteConflict(_) => "E_WRITE_CONFLICT",
             Self::FileLocked(_) => "E_FILE_LOCKED",
+            Self::PermissionDenied(_) => "E_PERMISSION_DENIED",
             Self::IoFailure(_) => "E_IO_FAILURE",
             Self::DbError(_) => "E_DB_ERROR",
         }
@@ -51,6 +54,16 @@ impl AppError {
 }
 
 impl AppError {
+    /// 存储层失败的统一构造（PRD ERR-02）。
+    ///
+    /// 用户可见 message 必须是**中文、非技术性、含可操作建议**；SQL 原文等技术细节
+    /// 由调用方写日志（kc-domain 不依赖日志框架，故日志在存储层完成），**绝不进 message**。
+    pub fn db(context: &str) -> Self {
+        Self::DbError(format!(
+            "{context}失败。请重试；若持续出现，请检查应用数据目录是否可写，或重启应用。"
+        ))
+    }
+
     /// 变体名（**不含用户数据**）。用于日志的「上下文」字段——SEC-09 禁止在日志中
     /// 记录笔记正文与 Vault 绝对路径，故此处只暴露错误**类别**。
     pub fn kind(&self) -> &'static str {
@@ -66,6 +79,7 @@ impl AppError {
             Self::FileExists(_) => "FileExists",
             Self::WriteConflict(_) => "WriteConflict",
             Self::FileLocked(_) => "FileLocked",
+            Self::PermissionDenied(_) => "PermissionDenied",
             Self::IoFailure(_) => "IoFailure",
             Self::DbError(_) => "DbError",
         }
@@ -74,10 +88,11 @@ impl AppError {
 
 impl From<std::io::Error> for AppError {
     fn from(err: std::io::Error) -> Self {
-        if err.kind() == std::io::ErrorKind::NotFound {
-            Self::FileNotFound(err.to_string())
-        } else {
-            Self::IoFailure(err.to_string())
+        match err.kind() {
+            std::io::ErrorKind::NotFound => Self::FileNotFound(err.to_string()),
+            // PRD §5.2 有独立错误码：前端需要区分「没权限」与「磁盘/读写失败」
+            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied(err.to_string()),
+            _ => Self::IoFailure(err.to_string()),
         }
     }
 }
@@ -118,10 +133,13 @@ mod tests {
     fn io_errors_map_by_kind() {
         let nf = AppError::from(std::io::Error::new(std::io::ErrorKind::NotFound, "gone"));
         assert_eq!(nf.code(), "E_FILE_NOT_FOUND");
-        let other = AppError::from(std::io::Error::new(
+        let denied = AppError::from(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "deny",
         ));
+        // PRD §5.2：权限被拒是独立错误码，前端据此提示「检查文件权限」
+        assert_eq!(denied.code(), "E_PERMISSION_DENIED");
+        let other = AppError::from(std::io::Error::other("disk full"));
         assert_eq!(other.code(), "E_IO_FAILURE");
     }
 }

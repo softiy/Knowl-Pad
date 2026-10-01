@@ -280,7 +280,7 @@ pub async fn vault_register_remove(
     args: VaultIdArgs,
 ) -> Result<(), KpError> {
     let Some(global) = state.global_db() else {
-        return Err(KpError(AppError::DbError("全局库不可用".into())));
+        return Err(KpError(AppError::db("访问知识库注册表")));
     };
     crate::storage::global::remove_vault(&global, args.vault_id).map_err(KpError)?;
     // 若移除的是当前打开的 Vault，则同时关闭（但不触碰磁盘）
@@ -297,7 +297,7 @@ pub async fn vault_rename(
     args: VaultRenameArgs,
 ) -> Result<(), KpError> {
     let Some(global) = state.global_db() else {
-        return Err(KpError(AppError::DbError("全局库不可用".into())));
+        return Err(KpError(AppError::db("访问知识库注册表")));
     };
     crate::storage::global::rename_vault(&global, args.vault_id, &args.display_name)
         .map_err(KpError)?;
