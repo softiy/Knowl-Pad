@@ -5,6 +5,8 @@ use thiserror::Error;
 pub enum AppError {
     #[error("当前没有打开的知识库")]
     VaultNotOpen,
+    #[error("知识库路径不存在或不可访问：{0}")]
+    VaultPathInvalid(String),
     #[error("路径为空")]
     PathEmpty,
     #[error("不接受绝对路径")]
@@ -32,6 +34,7 @@ impl AppError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::VaultNotOpen => "E_VAULT_NOT_OPEN",
+            Self::VaultPathInvalid(_) => "E_VAULT_PATH_INVALID",
             Self::PathEmpty | Self::PathEscapeDeny => "E_PATH_ESCAPE_DENY",
             Self::PathAbsolute | Self::PathOutsideVault => "E_PATH_OUTSIDE_VAULT",
             Self::InvalidFilename(_) => "E_INVALID_FILENAME",
@@ -61,6 +64,10 @@ mod tests {
     #[test]
     fn error_codes_are_stable() {
         assert_eq!(AppError::VaultNotOpen.code(), "E_VAULT_NOT_OPEN");
+        assert_eq!(
+            AppError::VaultPathInvalid("x".into()).code(),
+            "E_VAULT_PATH_INVALID"
+        );
         assert_eq!(AppError::PathEmpty.code(), "E_PATH_ESCAPE_DENY");
         assert_eq!(AppError::PathAbsolute.code(), "E_PATH_OUTSIDE_VAULT");
         assert_eq!(AppError::PathOutsideVault.code(), "E_PATH_OUTSIDE_VAULT");
