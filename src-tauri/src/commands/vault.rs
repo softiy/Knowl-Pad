@@ -153,6 +153,13 @@ pub(crate) fn activate_vault(
     state.set_root(Some(prepared.root.clone()));
     state.set_current_vault_id(vault_id);
 
+    // FR-VAULT-06：记住本次打开的 Vault，供下次启动恢复
+    if let (Some(id), Some(global)) = (vault_id, state.global_db()) {
+        if let Err(err) = crate::storage::global::set_last_vault(&global, id) {
+            tracing::warn!(error = %err, "记录上次打开的 Vault 失败（不影响使用）");
+        }
+    }
+
     Ok(VaultInfo {
         root: abs_path,
         display_name: prepared.display_name,
@@ -163,6 +170,12 @@ pub(crate) fn activate_vault(
 
 /// 关闭当前 Vault：WAL 刷盘 → 释放索引库句柄 → 清空状态（FR-VAULT-05）。
 pub(crate) fn close_current(state: &AppState) {
+    // FR-VAULT-06：用户显式关闭（或切走/移除）后不应再自动恢复
+    if let Some(global) = state.global_db() {
+        if let Err(err) = crate::storage::global::clear_last_vault(&global) {
+            tracing::warn!(error = %err, "清除上次 Vault 记录失败");
+        }
+    }
     if let Some(pool) = state.index_db() {
         if let Err(err) = pool.checkpoint() {
             // 刷盘失败不阻断关闭：数据仍在 WAL 中，下次打开可恢复
@@ -312,6 +325,52 @@ pub async fn vault_relocate(
     info.vault_id = Some(args.vault_id);
     state.set_current_vault_id(Some(args.vault_id));
     Ok(info)
+}
+
+/// 启动恢复（FR-VAULT-06）：尝试重新打开上次的 Vault。
+///
+/// 语义（AC-VAULT-02 前提）：
+/// - 用户已在设置中关闭恢复，或没有记录 → 返回 None，不做任何事；
+/// - 路径已失效（移动硬盘拔出等）→ **不创建任何目录**，仅记录告警并返回 None，
+///   由 UI 引导「重新定位 / 从列表移除」；
+/// - 失败绝不阻断启动。
+pub(crate) fn restore_last_vault(state: &AppState) -> Option<VaultInfo> {
+    let global = state.global_db()?;
+    match crate::storage::global::restore_last_enabled(&global) {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::info!("已关闭「启动恢复上次 Vault」，跳过");
+            return None;
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "读取恢复开关失败，按默认（恢复）处理");
+        }
+    }
+    let row = match crate::storage::global::last_vault(&global) {
+        Ok(Some(row)) => row,
+        Ok(None) => return None,
+        Err(err) => {
+            tracing::warn!(error = %err, "读取上次 Vault 失败");
+            return None;
+        }
+    };
+
+    let path = PathBuf::from(&row.abs_path);
+    if !path.is_dir() {
+        // 不创建目录、不修改注册表——是否「重新定位/移除」由用户决定
+        tracing::warn!(vault_id = row.id, "上次 Vault 路径已失效，跳过自动恢复");
+        return None;
+    }
+    match prepare_vault(&path, false).and_then(|prepared| activate_vault(state, prepared)) {
+        Ok(info) => {
+            tracing::info!(vault_id = row.id, "已恢复上次打开的 Vault");
+            Some(info)
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, vault_id = row.id, "恢复上次 Vault 失败");
+            None
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -500,5 +559,81 @@ mod tests {
         let global = state.global_db().expect("全局库应可用");
         assert!(crate::storage::global::remove_vault(&global, id).expect("移除应成功"));
         assert!(note.exists(), "磁盘文件必须保留");
+    }
+    /// 模拟「进程重启」：仅清空内存态，**不**走 close_current（那是用户显式关闭语义）。
+    fn simulate_restart(state: &AppState) {
+        state.set_index_db(None);
+        state.set_root(None);
+        state.set_current_vault_id(None);
+    }
+
+    #[test]
+    fn restore_reopens_last_vault() {
+        let (_cfg, state) = state_with_global();
+        let base = tempfile::tempdir().expect("临时目录应可创建");
+        let target = base.path().join("vault-restore");
+        let info = activate_vault(&state, prepare_vault(&target, true).expect("准备应成功"))
+            .expect("激活应成功");
+        let id = info.vault_id.expect("应有注册 id");
+
+        simulate_restart(&state);
+        assert!(state.current_root().is_none(), "重启后内存态应为空");
+        let restored = restore_last_vault(&state).expect("应恢复上次 Vault");
+        assert_eq!(restored.vault_id, Some(id), "恢复的应是同一个注册项");
+        assert!(state.current_root().is_some(), "恢复后应处于打开状态");
+    }
+
+    #[test]
+    fn restore_skips_after_user_closed_vault() {
+        let (_cfg, state) = state_with_global();
+        let base = tempfile::tempdir().expect("临时目录应可创建");
+        let target = base.path().join("vault-closed");
+        activate_vault(&state, prepare_vault(&target, true).expect("准备应成功"))
+            .expect("激活应成功");
+        close_current(&state); // 用户显式关闭 → 不应再自动恢复
+        simulate_restart(&state);
+        assert!(
+            restore_last_vault(&state).is_none(),
+            "用户已关闭的 Vault 不应被恢复"
+        );
+    }
+
+    #[test]
+    fn restore_skips_missing_path_without_creating_dirs() {
+        // AC-VAULT-02：路径失效时不得创建空目录，也不得崩溃。
+        // 说明：此处直接构造「注册表指向不存在路径」的记录，而不是删除一个已打开的 Vault
+        // （后者在 Windows 上会因索引库句柄未释放而删不掉——见审查发现 #8，另案修复）。
+        let (_cfg, state) = state_with_global();
+        let base = tempfile::tempdir().expect("临时目录应可创建");
+        let missing = base.path().join("vault-gone");
+        let global = state.global_db().expect("全局库应可用");
+        let id =
+            crate::storage::global::upsert_vault(&global, &missing.to_string_lossy(), "已失效的库")
+                .expect("注册应成功");
+        crate::storage::global::set_last_vault(&global, id).expect("记录应成功");
+        simulate_restart(&state);
+
+        assert!(restore_last_vault(&state).is_none(), "路径失效应放弃恢复");
+        assert!(!missing.exists(), "失效路径上不得创建任何目录");
+        assert!(state.current_root().is_none(), "不得进入打开状态");
+    }
+
+    #[test]
+    fn restore_respects_disabled_setting() {
+        let (_cfg, state) = state_with_global();
+        let base = tempfile::tempdir().expect("临时目录应可创建");
+        let target = base.path().join("vault-nosrestore");
+        activate_vault(&state, prepare_vault(&target, true).expect("准备应成功"))
+            .expect("激活应成功");
+        let global = state.global_db().expect("全局库应可用");
+        crate::storage::global::set_preference(
+            &global,
+            crate::storage::global::PREF_RESTORE_LAST,
+            "false",
+        )
+        .expect("关闭开关应成功");
+
+        simulate_restart(&state);
+        assert!(restore_last_vault(&state).is_none(), "关闭后不应恢复");
     }
 }

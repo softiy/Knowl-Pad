@@ -314,3 +314,151 @@ mod registry_tests {
         assert_eq!(rows[0].abs_path, "/new/path");
     }
 }
+
+/// preference 键：上次打开的 Vault id（FR-VAULT-06）。
+pub const PREF_LAST_VAULT: &str = "vault.last_opened";
+
+/// preference 键：是否在启动时恢复上次的 Vault（FR-VAULT-06「可在设置中关闭」）。
+pub const PREF_RESTORE_LAST: &str = "vault.restore_last";
+
+/// 记录「上次打开的 Vault」（用户主动关闭时由 clear_last_vault 清除）。
+pub fn set_last_vault(pool: &DbPool, vault_id: i64) -> Result<(), AppError> {
+    set_preference(pool, PREF_LAST_VAULT, &vault_id.to_string())
+}
+
+/// 清除「上次打开的 Vault」——用户显式关闭/移除后不应再自动恢复。
+pub fn clear_last_vault(pool: &DbPool) -> Result<(), AppError> {
+    pool.with_writer(|conn| {
+        conn.execute("DELETE FROM preference WHERE key = ?1", [PREF_LAST_VAULT])
+            .map_err(map_err)?;
+        Ok(())
+    })
+}
+
+/// 读取「上次打开的 Vault」对应的注册行（记录不存在或已失效时返回 None）。
+pub fn last_vault(pool: &DbPool) -> Result<Option<VaultRow>, AppError> {
+    let Some(raw) = read_preference(pool, PREF_LAST_VAULT)? else {
+        return Ok(None);
+    };
+    let Ok(id) = raw.trim().parse::<i64>() else {
+        tracing::warn!("上次 Vault 记录格式非法，已忽略");
+        return Ok(None);
+    };
+    pool.with_reader(|conn| {
+        match conn.query_row(
+            "SELECT id, abs_path, display_name, last_opened, pinned, trust_level FROM vault WHERE id = ?1",
+            [id],
+            |row| {
+                Ok(VaultRow {
+                    id: row.get(0)?,
+                    abs_path: row.get(1)?,
+                    display_name: row.get(2)?,
+                    last_opened: row.get(3)?,
+                    pinned: row.get::<_, i64>(4)? != 0,
+                    trust_level: row.get(5)?,
+                })
+            },
+        ) {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(err) => Err(map_err(err)),
+        }
+    })
+}
+
+/// 是否允许启动时恢复上次 Vault（默认允许）。
+pub fn restore_last_enabled(pool: &DbPool) -> Result<bool, AppError> {
+    Ok(read_preference(pool, PREF_RESTORE_LAST)?
+        .map(|raw| raw.trim() != "false" && raw.trim() != "0")
+        .unwrap_or(true))
+}
+
+/// 写入界面偏好（PRD §3.3：preference.value 为 JSON 编码，此处按标量字符串存储）。
+pub fn set_preference(pool: &DbPool, key: &str, value: &str) -> Result<(), AppError> {
+    let key = key.to_string();
+    let value = value.to_string();
+    pool.with_writer(move |conn| {
+        conn.execute(
+            "INSERT OR REPLACE INTO preference(key, value) VALUES(?1, ?2)",
+            rusqlite::params![key, value],
+        )
+        .map_err(map_err)?;
+        Ok(())
+    })
+}
+
+/// 读取界面偏好。
+pub fn read_preference(pool: &DbPool, key: &str) -> Result<Option<String>, AppError> {
+    let key = key.to_string();
+    pool.with_reader(move |conn| {
+        match conn.query_row(
+            "SELECT value FROM preference WHERE key = ?1",
+            [key.as_str()],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(value) => Ok(Some(value)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(err) => Err(map_err(err)),
+        }
+    })
+}
+
+#[cfg(test)]
+mod preference_tests {
+    use super::*;
+
+    fn pool() -> (tempfile::TempDir, DbPool) {
+        let dir = tempfile::tempdir().expect("临时目录应可创建");
+        let pool = open(dir.path()).expect("打开全局库应成功");
+        (dir, pool)
+    }
+
+    #[test]
+    fn last_vault_roundtrip_and_clear() {
+        let (_dir, pool) = pool();
+        let id = upsert_vault(&pool, "/vault/a", "A").expect("注册应成功");
+        assert!(
+            last_vault(&pool).expect("读取应成功").is_none(),
+            "初始无记录"
+        );
+        set_last_vault(&pool, id).expect("写入应成功");
+        let row = last_vault(&pool).expect("读取应成功").expect("应有记录");
+        assert_eq!(row.id, id);
+        clear_last_vault(&pool).expect("清除应成功");
+        assert!(
+            last_vault(&pool).expect("读取应成功").is_none(),
+            "清除后不应再有记录"
+        );
+    }
+
+    #[test]
+    fn restore_flag_defaults_to_true_and_can_be_disabled() {
+        let (_dir, pool) = pool();
+        assert!(
+            restore_last_enabled(&pool).expect("读取应成功"),
+            "默认应允许恢复"
+        );
+        set_preference(&pool, PREF_RESTORE_LAST, "false").expect("写入应成功");
+        assert!(
+            !restore_last_enabled(&pool).expect("读取应成功"),
+            "关闭后不应恢复"
+        );
+    }
+
+    #[test]
+    fn last_vault_tolerates_removed_or_invalid_record() {
+        let (_dir, pool) = pool();
+        let id = upsert_vault(&pool, "/vault/gone", "G").expect("注册应成功");
+        set_last_vault(&pool, id).expect("写入应成功");
+        remove_vault(&pool, id).expect("移除应成功");
+        assert!(
+            last_vault(&pool).expect("读取应成功").is_none(),
+            "记录已删应返回 None"
+        );
+        set_preference(&pool, PREF_LAST_VAULT, "not-a-number").expect("写入应成功");
+        assert!(
+            last_vault(&pool).expect("读取应成功").is_none(),
+            "非法格式应被忽略"
+        );
+    }
+}
