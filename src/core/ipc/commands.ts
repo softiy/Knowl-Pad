@@ -4,7 +4,10 @@ export interface VaultSummary {
   id: number;
   absPath: string;
   displayName: string;
+  /** 最近打开时间（毫秒时间戳） */
   lastOpened?: number;
+  /** 是否置顶 */
+  pinned?: boolean;
 }
 
 export interface WriteResult {
@@ -25,6 +28,10 @@ export const vaultClose = (): Promise<void> => callVoid('vault_close');
 
 export interface VaultInfo {
   root: string;
+  /** 显示名（默认取目录名，可被用户重命名） */
+  displayName: string;
+  /** 全局库中的注册 id（全局库不可用时为 undefined） */
+  vaultId?: number;
   caseInsensitiveFs: boolean;
 }
 
@@ -43,6 +50,25 @@ export interface IndexStatus {
 export const vaultOpen = (absPath: string): Promise<VaultInfo> => call<VaultInfo>('vault_open', { args: { absPath } });
 
 export const indexStatus = (): Promise<IndexStatus> => call<IndexStatus>('index_status');
+
+/** 新建 Vault（目录不存在时创建，并初始化 .knowlpad/ 与空索引库） */
+export const vaultCreate = (absPath: string, name?: string): Promise<VaultInfo> =>
+  call<VaultInfo>('vault_create', { args: { absPath, name } });
+
+/** 当前 Vault（未打开时为 null） */
+export const vaultCurrent = (): Promise<VaultInfo | null> => call<VaultInfo | null>('vault_current');
+
+/** 从列表移除（仅删注册记录，不删磁盘文件） */
+export const vaultRegisterRemove = (vaultId: number): Promise<void> =>
+  callVoid('vault_register_remove', { args: { vaultId } });
+
+/** 修改显示名 */
+export const vaultRename = (vaultId: number, displayName: string): Promise<void> =>
+  callVoid('vault_rename', { args: { vaultId, displayName } });
+
+/** 路径失效后重新定位 */
+export const vaultRelocate = (vaultId: number, newAbsPath: string): Promise<VaultInfo> =>
+  call<VaultInfo>('vault_relocate', { args: { vaultId, newAbsPath } });
 
 export interface SystemInfo {
   platform: string;

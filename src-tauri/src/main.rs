@@ -12,7 +12,10 @@ mod storage;
 
 use commands::note::{note_read, note_write};
 use commands::system::{ping, system_info};
-use commands::vault::{index_status, vault_close, vault_list, vault_open};
+use commands::vault::{
+    index_status, vault_close, vault_create, vault_current, vault_list, vault_open,
+    vault_register_remove, vault_relocate, vault_rename,
+};
 use state::AppState;
 
 fn main() {
@@ -89,7 +92,12 @@ fn main() {
             note_read,
             note_write,
             vault_open,
+            vault_create,
+            vault_current,
             vault_list,
+            vault_register_remove,
+            vault_rename,
+            vault_relocate,
             index_status,
             vault_close
         ])

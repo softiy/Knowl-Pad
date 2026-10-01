@@ -110,6 +110,17 @@ impl DbPool {
             .map_err(|_| AppError::DbError("写线程未返回结果".into()))?
     }
 
+    /// 刷盘：把 WAL 内容写回主库并截断 WAL 文件（关闭 Vault 前调用，FR-VAULT-05）。
+    pub fn checkpoint(&self) -> Result<(), AppError> {
+        self.with_writer(|conn| {
+            conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+                .or_else(|err| match err {
+                    rusqlite::Error::QueryReturnedNoRows => Ok(()),
+                    other => Err(AppError::DbError(other.to_string())),
+                })
+        })
+    }
+
     /// 从读连接池取一条连接执行闭包。
     pub fn with_reader<T, F>(&self, f: F) -> Result<T, AppError>
     where
