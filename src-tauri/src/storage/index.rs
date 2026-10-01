@@ -169,16 +169,13 @@ fn bootstrap(conn: &mut Connection, expected: &IndexSignature) -> Result<(), App
     set_meta(conn, META_REBUILD_IN_PROGRESS, "1")?;
 
     // 阶段 2：丢弃重建 + 建表 + 写 meta，单一事务（中断即整体回滚，不留半建成 schema）
-    let tx = conn
-        .transaction()
-        .map_err(|err| AppError::DbError(err.to_string()))?;
+    let tx = conn.transaction().map_err(map_err)?;
     if needs_rebuild {
         drop_all(&tx)?;
     }
     create_schema(&tx)?;
     write_meta(&tx, expected)?;
-    tx.commit()
-        .map_err(|err| AppError::DbError(err.to_string()))?;
+    tx.commit().map_err(map_err)?;
 
     // 阶段 3：完成后清除标记
     clear_meta(conn, META_REBUILD_IN_PROGRESS)?;
@@ -288,7 +285,8 @@ pub fn table_exists(conn: &Connection, name: &str) -> Result<bool, AppError> {
 }
 
 fn map_err(err: rusqlite::Error) -> AppError {
-    AppError::DbError(err.to_string())
+    tracing::warn!(error = %err, "索引库操作失败");
+    AppError::db("访问索引库")
 }
 
 /// 索引库 DDL。**权威出处：PRD §3.2.1**——此处不得自行增删字段。
@@ -406,7 +404,7 @@ mod tests {
                  VALUES(?1, 'n.md', 'n', 'md', 'note', 10, 1, 1)",
                 [rel_path.as_str()],
             )
-            .map_err(|err| AppError::DbError(err.to_string()))?;
+            .map_err(map_err)?;
             Ok(conn.last_insert_rowid())
         })
         .expect("插入文件应成功")
@@ -415,7 +413,7 @@ mod tests {
     fn count_files(pool: &DbPool) -> i64 {
         pool.with_reader(|conn| {
             conn.query_row("SELECT count(*) FROM file", [], |row| row.get(0))
-                .map_err(|err| AppError::DbError(err.to_string()))
+                .map_err(map_err)
         })
         .expect("统计应成功")
     }
@@ -532,7 +530,7 @@ mod tests {
                 "INSERT INTO note_fts(rowid, plain_text) VALUES(?1, ?2)",
                 rusqlite::params![file_id, "知识管理 markdown 笔记"],
             )
-            .map_err(|err| AppError::DbError(err.to_string()))?;
+            .map_err(map_err)?;
             Ok(())
         })
         .expect("写入 FTS 应成功");
@@ -543,7 +541,7 @@ mod tests {
                     [],
                     |row| row.get(0),
                 )
-                .map_err(|err| AppError::DbError(err.to_string()))
+                .map_err(map_err)
             })
             .expect("MATCH 查询应成功");
         assert_eq!(hits, 1, "FTS5 应能命中并支持 MATCH");
@@ -560,12 +558,12 @@ mod tests {
                  VALUES(?1, 1, '标题', '标题', 0, 0)",
                 [file_id],
             )
-            .map_err(|err| AppError::DbError(err.to_string()))?;
+            .map_err(map_err)?;
             conn.execute("DELETE FROM file WHERE id = ?1", [file_id])
-                .map_err(|err| AppError::DbError(err.to_string()))?;
+                .map_err(map_err)?;
             let left: i64 = conn
                 .query_row("SELECT count(*) FROM heading", [], |row| row.get(0))
-                .map_err(|err| AppError::DbError(err.to_string()))?;
+                .map_err(map_err)?;
             assert_eq!(left, 0, "删除文件应级联清理 heading");
             Ok(())
         })

@@ -46,7 +46,10 @@ impl DbPool {
         let readers = r2d2::Pool::builder()
             .max_size(READER_POOL_SIZE)
             .build(manager)
-            .map_err(|err| AppError::DbError(format!("读连接池创建失败：{err}")))?;
+            .map_err(|err| {
+                tracing::warn!(error = %err, "读连接池创建失败");
+                AppError::db("初始化数据库读连接")
+            })?;
 
         let (writer_tx, writer_rx) = sync_channel::<Job>(64);
         let (ready_tx, ready_rx) = sync_channel::<Result<(), AppError>>(1);
@@ -76,11 +79,15 @@ impl DbPool {
                     job(&mut conn);
                 }
             })
-            .map_err(|err| AppError::DbError(format!("写线程创建失败：{err}")))?;
+            .map_err(|err| {
+                tracing::warn!(error = %err, "写线程创建失败");
+                AppError::db("初始化数据库写线程")
+            })?;
 
-        ready_rx
-            .recv()
-            .map_err(|_| AppError::DbError("写线程未就绪即退出".into()))??;
+        ready_rx.recv().map_err(|_| {
+            tracing::warn!("数据库写线程未就绪即退出");
+            AppError::db("初始化数据库")
+        })??;
 
         Ok(Self {
             path: path.to_path_buf(),
@@ -105,9 +112,14 @@ impl DbPool {
             .send(Box::new(move |conn| {
                 let _ = tx.send(f(conn));
             }))
-            .map_err(|_| AppError::DbError("写线程已退出".into()))?;
-        rx.recv()
-            .map_err(|_| AppError::DbError("写线程未返回结果".into()))?
+            .map_err(|_| {
+                tracing::warn!("数据库写线程已退出");
+                AppError::db("写入数据库")
+            })?;
+        rx.recv().map_err(|_| {
+            tracing::warn!("数据库写线程未返回结果");
+            AppError::db("写入数据库")
+        })?
     }
 
     /// 刷盘：把 WAL 内容写回主库并截断 WAL 文件（关闭 Vault 前调用，FR-VAULT-05）。
@@ -126,10 +138,10 @@ impl DbPool {
     where
         F: FnOnce(&Connection) -> Result<T, AppError>,
     {
-        let conn = self
-            .readers
-            .get()
-            .map_err(|err| AppError::DbError(format!("取读连接失败：{err}")))?;
+        let conn = self.readers.get().map_err(|err| {
+            tracing::warn!(error = %err, "取读连接失败");
+            AppError::db("读取数据库")
+        })?;
         f(&conn)
     }
 }

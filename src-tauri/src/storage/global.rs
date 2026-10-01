@@ -22,21 +22,18 @@ pub fn record_startup(pool: &DbPool) -> Result<(), AppError> {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     pool.with_writer(move |conn| {
-        let tx = conn
-            .transaction()
-            .map_err(|err| AppError::DbError(err.to_string()))?;
+        let tx = conn.transaction().map_err(map_err)?;
         tx.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES('last_startup_version', ?1)",
             [version.as_str()],
         )
-        .map_err(|err| AppError::DbError(err.to_string()))?;
+        .map_err(map_err)?;
         tx.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES('last_startup_at', ?1)",
             [now_ms.to_string().as_str()],
         )
-        .map_err(|err| AppError::DbError(err.to_string()))?;
-        tx.commit()
-            .map_err(|err| AppError::DbError(err.to_string()))?;
+        .map_err(map_err)?;
+        tx.commit().map_err(map_err)?;
         Ok(())
     })
 }
@@ -86,7 +83,7 @@ mod tests {
                     [],
                     |row| row.get(0),
                 )
-                .map_err(|err| AppError::DbError(err.to_string()))
+                .map_err(map_err)
             })
             .expect("读取应成功");
         assert_eq!(version, env!("CARGO_PKG_VERSION"));
@@ -102,7 +99,7 @@ mod tests {
                     "INSERT INTO vault(abs_path, display_name, pinned) VALUES('/tmp/vault', '测试库', 1)",
                     [],
                 )
-                .map_err(|err| AppError::DbError(err.to_string()))?;
+                .map_err(map_err)?;
                 Ok(())
             })
             .expect("写入应成功");
@@ -111,7 +108,7 @@ mod tests {
         let name: String = pool
             .with_reader(|conn| {
                 conn.query_row("SELECT display_name FROM vault", [], |row| row.get(0))
-                    .map_err(|err| AppError::DbError(err.to_string()))
+                    .map_err(map_err)
             })
             .expect("读取应成功");
         assert_eq!(name, "测试库");
@@ -230,7 +227,9 @@ pub fn now_ms() -> i64 {
 }
 
 fn map_err(err: rusqlite::Error) -> AppError {
-    AppError::DbError(err.to_string())
+    // ERR-02：SQL 原文等技术细节只进日志，用户可见 message 走中文可操作文案
+    tracing::warn!(error = %err, "知识库注册表操作失败");
+    AppError::db("访问知识库注册表")
 }
 
 #[cfg(test)]
@@ -258,6 +257,30 @@ mod registry_tests {
             "重开不得覆盖用户改的显示名"
         );
         assert!(rows[0].last_opened.is_some());
+    }
+
+    #[test]
+    fn duplicate_path_error_is_user_facing_chinese() {
+        // ERR-02 回归：relocate 到已被占用的路径会撞 UNIQUE 约束，
+        // 用户可见 message 必须是中文可操作文案，**不得**出现 SQL 原文
+        let (_dir, pool) = pool();
+        upsert_vault(&pool, "/vault/a", "A").expect("注册 A");
+        let b = upsert_vault(&pool, "/vault/b", "B").expect("注册 B");
+        let err = relocate_vault(&pool, b, "/vault/a").expect_err("重复路径必须失败");
+        let message = err.to_string();
+        assert_eq!(err.code(), "E_DB_ERROR");
+        for leak in ["UNIQUE", "constraint", "sqlite", "SQL"] {
+            assert!(
+                !message.contains(leak),
+                "用户可见 message 不得含技术细节 {leak}：{message}"
+            );
+        }
+        assert!(
+            message
+                .chars()
+                .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+            "message 必须是中文：{message}"
+        );
     }
 
     #[test]
