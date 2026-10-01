@@ -60,6 +60,10 @@ fn main() {
                                 }
                                 app.state::<AppState>()
                                     .set_global_db(std::sync::Arc::new(pool));
+                                // FR-VAULT-06：恢复上次打开的 Vault（失败或路径失效都不阻断启动，
+                                // 且绝不创建目录——AC-VAULT-02）
+                                let _ =
+                                    commands::vault::restore_last_vault(&app.state::<AppState>());
                                 tracing::debug!(
                                     ready = app.state::<AppState>().global_db().is_some(),
                                     "全局库句柄已登记"
