@@ -54,14 +54,26 @@ pub fn schema_version(conn: &Connection) -> Result<i32, AppError> {
 /// - 每个迁移**独立事务**（MIG-02）：失败只回滚当前迁移，已完成的保留；
 /// - 库版本高于软件支持时**拒绝**（MIG-03），不静默损坏。
 pub fn migrate(conn: &mut Connection) -> Result<i32, AppError> {
+    let target = latest_version();
+    let applied = migrate_with(conn, MIGRATIONS)?;
+    // 内部一致性：迁移表与 latest_version() 必须描述同一目标版本
+    debug_assert_eq!(applied, target, "迁移表与 latest_version() 不一致");
+    Ok(applied)
+}
+
+/// 用给定的迁移表执行迁移。
+///
+/// 生产路径固定使用 MIGRATIONS；此函数独立出来是为了让「升级路径」可被测试
+/// （用测试专用的第二版迁移验证 V1 → V2 的增量升级与数据保留）。
+pub fn migrate_with(conn: &mut Connection, migrations: &[Migration]) -> Result<i32, AppError> {
     let current = schema_version(conn)?;
-    let latest = latest_version();
+    let latest = migrations.last().map(|m| m.version).unwrap_or(0);
     if current > latest {
         return Err(AppError::DbError(format!(
             "数据库版本 v{current} 高于当前软件支持的 v{latest}，请升级 Knowl Pad"
         )));
     }
-    for migration in MIGRATIONS.iter().filter(|m| m.version > current) {
+    for migration in migrations.iter().filter(|m| m.version > current) {
         let tx = conn.transaction().map_err(map_err)?;
         (migration.up)(&tx)?;
         tx.execute(
@@ -146,6 +158,49 @@ mod tests {
         for t in ["meta", "vault", "preference", "vault_state"] {
             assert!(table_exists(&c, t), "建表后应存在 {t}");
         }
+    }
+
+    #[test]
+    fn upgrade_path_preserves_data() {
+        // 清单 #7：构造旧库 → 迁移 → 断言（V1 → V2 增量升级，既有数据不丢）
+        fn m002_test_only(conn: &Connection) -> Result<(), AppError> {
+            conn.execute_batch("CREATE TABLE IF NOT EXISTS test_only(id INTEGER PRIMARY KEY)")
+                .map_err(map_err)
+        }
+        let mut c = conn();
+        assert_eq!(migrate(&mut c).expect("V1 迁移应成功"), latest_version());
+
+        // 写入 V1 数据，随后用测试专用迁移表升到 V2
+        c.execute(
+            "INSERT INTO vault(abs_path, display_name) VALUES('/tmp/v1', 'V1 库')",
+            [],
+        )
+        .expect("写入应成功");
+        let v2 = [
+            // 字段逐个复制（Migration 非 Copy，不能直接从切片移出）
+            Migration {
+                version: MIGRATIONS[0].version,
+                description: MIGRATIONS[0].description,
+                up: MIGRATIONS[0].up,
+            },
+            Migration {
+                version: 2,
+                description: "测试专用：验证增量升级路径",
+                up: m002_test_only,
+            },
+        ];
+        let version = migrate_with(&mut c, &v2).expect("V2 迁移应成功");
+        assert_eq!(version, 2);
+        assert!(table_exists(&c, "test_only"), "V2 应新建 test_only 表");
+        let name: String = c
+            .query_row(
+                "SELECT display_name FROM vault WHERE abs_path='/tmp/v1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("V1 数据应保留");
+        assert_eq!(name, "V1 库", "升级不得丢失既有数据");
+        assert_eq!(migrate_with(&mut c, &v2).expect("重复迁移应成功"), 2);
     }
 
     #[test]
