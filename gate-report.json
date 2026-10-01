@@ -1,107 +1,107 @@
 {
-  "generatedAt": "2026-10-01T13:56:09.609Z",
+  "generatedAt": "2026-10-01T14:08:01.262Z",
   "results": [
     {
       "id": "1",
       "name": "TypeScript 类型检查",
       "ok": true,
-      "ms": 3455
+      "ms": 2876
     },
     {
       "id": "2",
       "name": "前端 Lint",
       "ok": true,
-      "ms": 14738
+      "ms": 13070
     },
     {
       "id": "14",
       "name": "前端构建 + 完整性（准备 dist）",
       "ok": true,
-      "ms": 1405
+      "ms": 1305
     },
     {
       "id": "3",
       "name": "Rust Lint (clippy -D warnings)",
       "ok": true,
-      "ms": 2178
+      "ms": 2709
     },
     {
       "id": "4",
       "name": "Rust 格式 (fmt --check)",
       "ok": true,
-      "ms": 214
+      "ms": 189
     },
     {
       "id": "6",
       "name": "Rust 单元/集成测试",
       "ok": true,
-      "ms": 8001
+      "ms": 4423
     },
     {
       "id": "15",
       "name": "Rust domain 覆盖率 ≥ 85%",
       "ok": true,
-      "ms": 3879
+      "ms": 4089
     },
     {
       "id": "5",
       "name": "前端单元/组件测试 + 覆盖率",
       "ok": true,
-      "ms": 4749
+      "ms": 3527
     },
     {
       "id": "7",
       "name": "依赖安全审计（pnpm + cargo）",
       "ok": true,
-      "ms": 16204
+      "ms": 15472
     },
     {
       "id": "8",
       "name": "Lockfile 一致性",
       "ok": true,
-      "ms": 588
+      "ms": 532
     },
     {
       "id": "9",
       "name": "Rust 应用构建（tauri build 的本地等价）",
       "ok": true,
-      "ms": 9415
+      "ms": 14518
     },
     {
       "id": "10",
       "name": "性能基准（P50 回退 ≤ 20%）",
       "ok": true,
-      "ms": 971
+      "ms": 974
     },
     {
       "id": "11",
       "name": "安全测试集（AC-SEC）",
       "ok": true,
-      "ms": 6367
+      "ms": 5974
     },
     {
       "id": "12",
       "name": "可靠性测试集（AC-REL）",
       "ok": true,
-      "ms": 3179
+      "ms": 2955
     },
     {
       "id": "13",
       "name": "命名一致性（门禁 13）",
       "ok": true,
-      "ms": 5513
+      "ms": 4748
     },
     {
       "id": "16",
       "name": "路径封装检查（SEC PATH-02）",
       "ok": true,
-      "ms": 942
+      "ms": 923
     },
     {
       "id": "17",
       "name": "IPC 契约一致性（TS↔Rust）",
       "ok": true,
-      "ms": 73
+      "ms": 72
     }
   ]
 }

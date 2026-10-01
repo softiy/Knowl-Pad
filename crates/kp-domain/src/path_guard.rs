@@ -107,7 +107,10 @@ pub struct PathGuard {
 
 impl PathGuard {
     pub fn new(root: &Path) -> Result<Self, AppError> {
-        let canonical_root = std::fs::canonicalize(root).map_err(|err| {
+        // 用 dunce 规范化：Windows 下 std 的 canonicalize 会返回 verbatim 形式
+        // （\\?\C:\...），该前缀若进入 VaultInfo.root 与注册表 abs_path，会导致
+        // 显示不可读、跨工具复制失效（技术方案 §3.5.2 明确指出 dunce 属 M1 依赖；NFR-PLAT-10）。
+        let canonical_root = dunce::canonicalize(root).map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
                 AppError::PathOutsideVault
             } else {
@@ -186,7 +189,8 @@ fn canonicalize_existing(path: &Path) -> Result<PathBuf, AppError> {
     let mut tail: Vec<std::ffi::OsString> = Vec::new();
     let mut cur = path.to_path_buf();
     loop {
-        match std::fs::canonicalize(&cur) {
+        // 与 PathGuard::new 保持一致：dunce 规范化，避免 verbatim 前缀回流
+        match dunce::canonicalize(&cur) {
             Ok(found) => {
                 let mut full = found;
                 for seg in tail.iter().rev() {
@@ -310,6 +314,23 @@ mod tests {
     fn lexical_normalize_removes_dots() {
         let p = lexical_normalize(Path::new("a/./b/../c"));
         assert_eq!(p.to_string_lossy().replace('\\', "/"), "a/c");
+    }
+
+    #[test]
+    fn canonical_root_has_no_verbatim_prefix() {
+        // NFR-PLAT-10 / 技术方案 §3.5.2：进入 VaultInfo.root 与注册表的路径必须是可读形式
+        let (_dir, guard) = guard();
+        let root = guard.canonical_root().to_string_lossy().to_string();
+        assert!(
+            !root.starts_with(r"\\?\"),
+            "规范化根不得带 verbatim 前缀：{root}"
+        );
+        let resolved = guard.resolve("a.md").expect("正常路径应放行");
+        assert!(
+            !resolved.to_string_lossy().starts_with(r"\\?\"),
+            "解析结果不得带 verbatim 前缀：{}",
+            resolved.display()
+        );
     }
 
     #[test]
