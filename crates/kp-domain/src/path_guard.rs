@@ -39,7 +39,64 @@ pub fn validate_segment(seg: &str) -> Result<(), AppError> {
             "'{stem}' 是 Windows 保留设备名"
         )));
     }
+    // 百分号编码的穿越载荷（AC-SEC-01 明确要求拒绝 %2e%2e%2f 一类输入）
+    if contains_encoded_traversal(seg) {
+        return Err(AppError::PathEscapeDeny);
+    }
     Ok(())
+}
+
+/// 百分号编码穿越检测：先解码再判断是否含路径语义（最多解码 3 层，覆盖双重编码）。
+///
+/// 设计取舍：**不**一刀切拒绝所有百分号——普通文件名允许含 %（例如 100%2e5.md 解码后
+/// 只是 100.5.md，不含任何路径语义）。只有解码结果出现 .. / 分隔符 / NUL 时才判定为攻击载荷。
+fn contains_encoded_traversal(seg: &str) -> bool {
+    let mut current = seg.to_string();
+    for _ in 0..3 {
+        let Some(decoded) = percent_decode(&current) else {
+            return false; // 无可解码内容
+        };
+        if decoded.contains("..")
+            || decoded.contains('/')
+            || decoded.contains('\\')
+            || decoded.contains('\u{0}')
+        {
+            return true;
+        }
+        if decoded == current {
+            return false;
+        }
+        current = decoded;
+    }
+    false
+}
+
+/// 解码百分号转义；无 % 或无可解码内容时返回 None。
+fn percent_decode(input: &str) -> Option<String> {
+    if !input.contains('%') {
+        return None;
+    }
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0usize;
+    let mut decoded_any = false;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).ok()?;
+            if let Ok(value) = u8::from_str_radix(hex, 16) {
+                out.push(value);
+                index += 3;
+                decoded_any = true;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    if !decoded_any {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out).into_owned())
 }
 
 /// Vault 根限定的路径校验器（SEC-02 / AC-SEC-01 的七步校验）。
@@ -256,6 +313,31 @@ mod tests {
     fn guard_errors_when_root_missing() {
         let missing = std::env::temp_dir().join("kp-definitely-missing-root-xyz");
         assert!(PathGuard::new(&missing).is_err());
+    }
+
+    #[test]
+    fn rejects_percent_encoded_traversal() {
+        let (_d, g) = guard();
+        // AC-SEC-01 指定的载荷
+        for payload in [
+            "%2e%2e%2f",
+            "%2e%2e%2Fetc",
+            "%2E%2E%5Cwindows",
+            "%252e%252e%252f",
+        ] {
+            assert_eq!(
+                g.resolve(payload).unwrap_err().code(),
+                "E_PATH_ESCAPE_DENY",
+                "{payload} 必须被拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn allows_benign_percent_names() {
+        // 普通文件名中的百分号不构成穿越，仍应放行
+        validate_segment("100%2e5.md").expect("非穿越语义的编码名应允许");
+        validate_segment("50%off.md").expect("百分号本身合法");
     }
 
     #[cfg(unix)]
