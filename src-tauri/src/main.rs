@@ -6,6 +6,7 @@
 
 mod commands;
 mod error_wrapper;
+mod logging;
 mod platform;
 mod state;
 mod storage;
@@ -29,32 +30,47 @@ fn main() {
             {
                 use tauri::Manager;
                 match app.path().app_config_dir() {
-                    Ok(dir) => match storage::global::open(&dir) {
-                        Ok(pool) => {
-                            match storage::diagnostics(&pool) {
-                                Ok(info) => tracing::info!(
-                                    path = %info.path.display(),
-                                    journal_mode = %info.journal_mode,
-                                    foreign_keys = info.foreign_keys,
-                                    fts5 = info.fts5,
-                                    compile_options = info.compile_option_count,
-                                    "全局库已就绪"
-                                ),
-                                Err(err) => tracing::warn!(error = %err, "全局库诊断失败"),
-                            }
-                            if let Err(err) = storage::global::record_startup(&pool) {
-                                tracing::warn!(error = %err, "启动记录写入失败（不影响使用）");
-                            }
-                            app.state::<AppState>()
-                                .set_global_db(std::sync::Arc::new(pool));
-                            tracing::debug!(
-                                ready = app.state::<AppState>().global_db().is_some(),
-                                "全局库句柄已登记"
+                    Ok(dir) => {
+                        // 日志先于存储层初始化，否则迁移与建库日志会丢失（§9.5）。
+                        // 但**日志失败不得阻断存储层**——两者是独立的降级单元。
+                        if let Err(err) = logging::init(&dir.join("logs")) {
+                            eprintln!("日志初始化失败（继续运行）：{err}");
+                        } else if logging::is_initialized() {
+                            tracing::info!(
+                                version = env!("CARGO_PKG_VERSION"),
+                                platform = std::env::consts::OS,
+                                "Knowl Pad 启动"
                             );
                         }
-                        // FR-GLOBAL-01：全局库损坏或不可用时，以默认配置继续启动，不崩溃、不丢笔记
-                        Err(err) => tracing::warn!(error = %err, "全局库不可用，以默认配置继续"),
-                    },
+                        match storage::global::open(&dir) {
+                            Ok(pool) => {
+                                match storage::diagnostics(&pool) {
+                                    Ok(info) => tracing::info!(
+                                        path = %info.path.display(),
+                                        journal_mode = %info.journal_mode,
+                                        foreign_keys = info.foreign_keys,
+                                        fts5 = info.fts5,
+                                        compile_options = info.compile_option_count,
+                                        "全局库已就绪"
+                                    ),
+                                    Err(err) => tracing::warn!(error = %err, "全局库诊断失败"),
+                                }
+                                if let Err(err) = storage::global::record_startup(&pool) {
+                                    tracing::warn!(error = %err, "启动记录写入失败（不影响使用）");
+                                }
+                                app.state::<AppState>()
+                                    .set_global_db(std::sync::Arc::new(pool));
+                                tracing::debug!(
+                                    ready = app.state::<AppState>().global_db().is_some(),
+                                    "全局库句柄已登记"
+                                );
+                            }
+                            // FR-GLOBAL-01：全局库损坏或不可用时，以默认配置继续启动，不崩溃、不丢笔记
+                            Err(err) => {
+                                tracing::warn!(error = %err, "全局库不可用，以默认配置继续")
+                            }
+                        }
+                    }
                     Err(err) => tracing::warn!(error = %err, "无法取得配置目录，跳过全局库"),
                 }
             }
