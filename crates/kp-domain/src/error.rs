@@ -50,6 +50,28 @@ impl AppError {
     }
 }
 
+impl AppError {
+    /// 变体名（**不含用户数据**）。用于日志的「上下文」字段——SEC-09 禁止在日志中
+    /// 记录笔记正文与 Vault 绝对路径，故此处只暴露错误**类别**。
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::VaultNotOpen => "VaultNotOpen",
+            Self::VaultPathInvalid(_) => "VaultPathInvalid",
+            Self::PathEmpty => "PathEmpty",
+            Self::PathAbsolute => "PathAbsolute",
+            Self::PathEscapeDeny => "PathEscapeDeny",
+            Self::PathOutsideVault => "PathOutsideVault",
+            Self::InvalidFilename(_) => "InvalidFilename",
+            Self::FileNotFound(_) => "FileNotFound",
+            Self::FileExists(_) => "FileExists",
+            Self::WriteConflict(_) => "WriteConflict",
+            Self::FileLocked(_) => "FileLocked",
+            Self::IoFailure(_) => "IoFailure",
+            Self::DbError(_) => "DbError",
+        }
+    }
+}
+
 impl From<std::io::Error> for AppError {
     fn from(err: std::io::Error) -> Self {
         if err.kind() == std::io::ErrorKind::NotFound {
