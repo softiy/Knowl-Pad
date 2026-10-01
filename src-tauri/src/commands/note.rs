@@ -1,9 +1,8 @@
+use crate::commands::paths::{resolve_in, root_of};
 use crate::error_wrapper::KpError;
 use crate::state::AppState;
 use kp_domain::note_io;
-use kp_domain::path_guard::PathGuard;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,19 +23,6 @@ pub struct NoteWriteArgs {
 pub struct WriteResult {
     pub rel_path: String,
     pub new_mtime: i64,
-}
-
-/// 取当前 Vault 根；未打开时返回 E_VAULT_NOT_OPEN。
-fn root_of(state: &tauri::State<'_, AppState>) -> Result<PathBuf, KpError> {
-    state
-        .current_root()
-        .ok_or(KpError(kp_domain::error::AppError::VaultNotOpen))
-}
-
-/// 在给定根下做七步路径校验（R-08：IO 与校验都不在 IPC 线程执行）。
-fn resolve_in(root: &Path, rel_path: &str) -> Result<PathBuf, KpError> {
-    let guard = PathGuard::new(root).map_err(KpError)?;
-    guard.resolve(rel_path).map_err(KpError)
 }
 
 fn join_error(err: tauri::Error) -> KpError {
