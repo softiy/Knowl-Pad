@@ -129,12 +129,20 @@ pub fn open(vault_root: &Path) -> Result<DbPool, AppError> {
 /// 全过程在**单一事务**内：中断即整体回滚，不会留下半建成的 schema。
 /// 另按 FR-SIG-03 在库内维护 `rebuild_in_progress` 标记——索引引擎（M3）在重建内容时复用同一语义。
 fn bootstrap(conn: &mut Connection, expected: &IndexSignature) -> Result<(), AppError> {
+    let meta_exists = table_exists(conn, "meta")?;
     let stored = stored_signature(conn)?;
     let in_progress = read_meta(conn, META_REBUILD_IN_PROGRESS)?.is_some();
 
     let needs_rebuild = match &stored {
-        // 新库：直接建 schema
-        None => false,
+        // 真新库（连 meta 表都不存在）：直接建 schema
+        None if !meta_exists => false,
+        // meta 存在但缺 index_signature：**不可信**，必须重建。
+        // FR-SIG-01 的语义是「与 meta.index_signature 比对」——缺失显然不等于一致；
+        // 若不重建，会把当前签名盖到可能已过期的表结构上（静默错误）。
+        None => {
+            tracing::warn!("索引库缺少签名记录，按不可信处理并重建");
+            true
+        }
         // 上次重建被中断：重新开始（FR-SIG-03）
         Some(_) if in_progress => {
             tracing::warn!("检测到未完成的索引重建标记，重新开始");
@@ -151,19 +159,29 @@ fn bootstrap(conn: &mut Connection, expected: &IndexSignature) -> Result<(), App
         Some(_) => false,
     };
 
+    // 阶段 1：确保 meta 存在，使「重建进行中」标记能**独立于重建事务**落盘。
+    // FR-SIG-03 要求崩溃后下次打开能看见「上次重建未完成」；若标记与重建同事务，
+    // 崩溃回滚会一并抹掉标记，该语义即形同虚设（本 MR 前的实现正是如此）。
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    )
+    .map_err(map_err)?;
+    set_meta(conn, META_REBUILD_IN_PROGRESS, "1")?;
+
+    // 阶段 2：丢弃重建 + 建表 + 写 meta，单一事务（中断即整体回滚，不留半建成 schema）
     let tx = conn
         .transaction()
         .map_err(|err| AppError::DbError(err.to_string()))?;
     if needs_rebuild {
         drop_all(&tx)?;
     }
-    // 顺序要紧：必须先建表（含 meta）再写 meta——否则新库上会因 meta 不存在而失败
     create_schema(&tx)?;
-    set_meta(&tx, META_REBUILD_IN_PROGRESS, "1")?;
     write_meta(&tx, expected)?;
-    clear_meta(&tx, META_REBUILD_IN_PROGRESS)?;
     tx.commit()
         .map_err(|err| AppError::DbError(err.to_string()))?;
+
+    // 阶段 3：完成后清除标记
+    clear_meta(conn, META_REBUILD_IN_PROGRESS)?;
     Ok(())
 }
 
@@ -476,6 +494,31 @@ mod tests {
         }
         let pool = open(dir.path()).expect("应重新开始重建");
         assert_eq!(count_files(&pool), 0, "未完成重建必须重来");
+    }
+
+    #[test]
+    fn missing_signature_is_treated_as_untrusted() {
+        // #9 回归：meta 存在但缺 index_signature → 必须重建（缺失 ≠ 一致）
+        let dir = temp_vault();
+        {
+            let pool = open(dir.path()).expect("首次打开应成功");
+            insert_file(&pool, "a.md");
+            pool.with_writer(|conn| clear_meta(conn, "index_signature"))
+                .expect("删除签名应成功");
+        }
+        let pool = open(dir.path()).expect("缺签名时应重建并成功打开");
+        assert_eq!(count_files(&pool), 0, "缺签名的索引库不可信，必须重建");
+    }
+
+    #[test]
+    fn rebuild_marker_is_cleared_after_successful_open() {
+        // FR-SIG-03 的另一半：成功打开后不得留下「重建进行中」标记
+        let dir = temp_vault();
+        let pool = open(dir.path()).expect("打开应成功");
+        let marker = pool
+            .with_reader(|conn| read_meta(conn, META_REBUILD_IN_PROGRESS))
+            .expect("读取标记应成功");
+        assert!(marker.is_none(), "完成后必须清除重建标记");
     }
 
     #[test]
