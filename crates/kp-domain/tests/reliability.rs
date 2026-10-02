@@ -20,11 +20,25 @@ fn concurrent_readers_never_see_partial_content() {
         let b = b.clone();
         std::thread::spawn(move || {
             let mut i = 0usize;
+            let mut failures = 0usize;
             while !stop.load(Ordering::Relaxed) {
                 let data = if i.is_multiple_of(2) { &a } else { &b };
-                atomic_write(&target, data).unwrap();
+                // 写侧允许**偶发**失败并计数：Windows 上 rename 目标被并发打开时
+                // 会返回 E_FILE_LOCKED（正是 fs_atomic 刻意设计的行为，旧内容保持完整），
+                // 属竞争下的预期语义而非缺陷。**读侧不变量仍然严格**（下方断言）。
+                if let Err(err) = atomic_write(&target, data) {
+                    failures += 1;
+                    if failures <= 3 {
+                        eprintln!("写侧偶发失败（第 {failures} 次，属预期竞争语义）：{err}");
+                    }
+                }
                 i += 1;
             }
+            // 失败必须是罕见的：若持续失败说明不是竞争而是缺陷
+            assert!(
+                failures * 20 < i.max(1),
+                "写侧失败过多（{failures}/{i}），疑似真实缺陷而非竞争语义"
+            );
         })
     };
 
