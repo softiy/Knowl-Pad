@@ -9,9 +9,15 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, SyncSender};
+use std::sync::Mutex;
 
 /// 写线程任务：一个持有写连接可变引用的闭包。
 type Job = Box<dyn FnOnce(&mut Connection) + Send + 'static>;
+
+thread_local! {
+    /// 标记「当前线程是数据库写线程」——用于拒绝 with_writer 的嵌套调用（会死锁）。
+    static ON_WRITER_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 /// 读连接池默认大小（技术方案 §4.1：默认 4）。
 const READER_POOL_SIZE: u32 = 4;
@@ -20,6 +26,8 @@ const READER_POOL_SIZE: u32 = 4;
 pub struct DbPool {
     path: PathBuf,
     writer: SyncSender<Job>,
+    /// 写线程句柄：Drop 时用于关闭通道并 join，确保 SQLite 连接与文件句柄被释放
+    writer_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
     readers: r2d2::Pool<SqliteConnectionManager>,
 }
 
@@ -55,7 +63,7 @@ impl DbPool {
         let (ready_tx, ready_rx) = sync_channel::<Result<(), AppError>>(1);
         let path_owned = path.to_path_buf();
 
-        std::thread::Builder::new()
+        let writer_thread = std::thread::Builder::new()
             .name("kp-db-writer".into())
             .spawn(move || {
                 let mut conn = match Connection::open(&path_owned) {
@@ -74,9 +82,19 @@ impl DbPool {
                     return;
                 }
                 let _ = ready_tx.send(Ok(()));
-                // 写连接由本线程独占：任务逐个串行执行，无需再加锁
+                // 写连接由本线程独占：任务逐个串行执行，无需再加锁。
+                // catch_unwind：单个任务 panic 不得让写线程退出——否则该库在整个进程生命周期内
+                // 不可写（无自愈路径）。panic 会被转换为调用侧的 E_DB_ERROR。
                 while let Ok(job) = writer_rx.recv() {
-                    job(&mut conn);
+                    ON_WRITER_THREAD.with(|flag| flag.set(true));
+                    let outcome =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut conn)));
+                    ON_WRITER_THREAD.with(|flag| flag.set(false));
+                    if outcome.is_err() {
+                        tracing::error!(
+                            "数据库写任务 panic，已捕获；该次操作未完成，连接仍可继续使用"
+                        );
+                    }
                 }
             })
             .map_err(|err| {
@@ -92,6 +110,7 @@ impl DbPool {
         Ok(Self {
             path: path.to_path_buf(),
             writer: writer_tx,
+            writer_thread: Mutex::new(Some(writer_thread)),
             readers,
         })
     }
@@ -107,6 +126,11 @@ impl DbPool {
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> Result<T, AppError> + Send + 'static,
     {
+        // 防重入：在写线程内部再次调用 with_writer 会自我等待而永久死锁
+        if ON_WRITER_THREAD.with(|flag| flag.get()) {
+            tracing::error!("检测到写线程内嵌套调用 with_writer，已拒绝以避免死锁");
+            return Err(AppError::db("执行嵌套数据库写入"));
+        }
         let (tx, rx) = sync_channel::<Result<T, AppError>>(1);
         self.writer
             .send(Box::new(move |conn| {
@@ -143,6 +167,26 @@ impl DbPool {
             AppError::db("读取数据库")
         })?;
         f(&conn)
+    }
+}
+
+impl Drop for DbPool {
+    /// 关闭写通道并 join 写线程，确保 SQLite 连接与文件句柄被**确定性**释放。
+    ///
+    /// 缺少此步时：写线程异步退出，Windows 上文件可能仍被占用——M3 删/换 index.db 会失败
+    /// （本仓库在 M1 的测试中就实测到「池释放后目录删不掉」）。
+    fn drop(&mut self) {
+        // 用一个临时 sender 顶替，使原 sender 在此被丢弃 → 写线程 recv() 返回 Err 并退出
+        let (placeholder, _) = sync_channel::<Job>(0);
+        let real = std::mem::replace(&mut self.writer, placeholder);
+        drop(real);
+        if let Ok(mut guard) = self.writer_thread.lock() {
+            if let Some(handle) = guard.take() {
+                if handle.join().is_err() {
+                    tracing::warn!("数据库写线程在退出时 panic");
+                }
+            }
+        }
     }
 }
 
@@ -251,5 +295,67 @@ mod tests {
         for handle in handles {
             handle.join().expect("线程不应 panic");
         }
+    }
+    #[test]
+    fn panicking_write_task_does_not_kill_the_pool() {
+        // #8 回归：单个写任务 panic 不得让写线程退出（否则该库在整个进程内不可写）
+        let (_dir, pool) = temp_pool();
+        let failed = pool.with_writer(|_conn| -> Result<(), AppError> {
+            panic!("模拟写任务 panic");
+        });
+        assert!(failed.is_err(), "panic 的任务应返回错误");
+
+        pool.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO preference(key, value) VALUES('after.panic', 'ok')",
+                [],
+            )
+            .map_err(|err| AppError::DbError(err.to_string()))?;
+            Ok(())
+        })
+        .expect("写线程必须仍然可用（自愈）");
+        let value: String = pool
+            .with_reader(|conn| {
+                conn.query_row(
+                    "SELECT value FROM preference WHERE key = 'after.panic'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|err| AppError::DbError(err.to_string()))
+            })
+            .expect("读取应成功");
+        assert_eq!(value, "ok");
+    }
+
+    #[test]
+    fn nested_with_writer_is_rejected_instead_of_deadlocking() {
+        // #8 回归：写线程内再调 with_writer 会自我等待 → 必须被拒绝而不是挂死
+        let (_dir, pool) = temp_pool();
+        let pool = std::sync::Arc::new(pool);
+        let inner = std::sync::Arc::clone(&pool);
+        let result = pool.with_writer(move |_conn| {
+            inner.with_writer(|_| Ok(())) // 嵌套调用：应立即返回错误
+        });
+        assert!(result.is_err(), "嵌套调用必须被拒绝（否则会死锁）");
+        // 池仍然可用
+        pool.with_writer(|_conn| Ok(())).expect("池应仍然可用");
+    }
+
+    #[test]
+    fn dropping_pool_releases_database_file() {
+        // #8 回归：Drop 必须 join 写线程，否则 Windows 上文件仍被占用、目录删不掉
+        let dir = tempfile::tempdir().expect("临时目录应可创建");
+        let db_path = dir.path().join("global.db");
+        {
+            let pool = DbPool::open(&db_path).expect("打开应成功");
+            pool.with_writer(|conn| {
+                conn.execute("INSERT INTO preference(key, value) VALUES('k', 'v')", [])
+                    .map_err(|err| AppError::DbError(err.to_string()))?;
+                Ok(())
+            })
+            .expect("写入应成功");
+        } // Drop 在此发生
+        assert!(db_path.exists(), "库文件应存在");
+        std::fs::remove_file(&db_path).expect("Drop 之后应可删除库文件（句柄已释放）");
     }
 }
