@@ -2,6 +2,7 @@
 //! （CODE-11：测试位于独立文件，不占用实现文件行数上限）
 
 use super::*;
+use crate::storage::index_rebuild::{ensure_index_db, RebuildOutcome};
 use crate::storage::migrate;
 
 fn temp_vault() -> tempfile::TempDir {
@@ -210,4 +211,101 @@ fn index_db_and_global_db_schemas_are_independent() {
         Ok(())
     })
     .expect("断言应通过");
+}
+
+// ── §4.4 文件级重建机制（M1 落地部分）──────────────────────────────
+
+fn rebuild_path(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join(".knowlpad")
+        .join(crate::storage::index_rebuild::REBUILD_DB_NAME)
+}
+
+fn old_path(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join(".knowlpad")
+        .join(crate::storage::index_rebuild::OLD_DB_NAME)
+}
+
+#[test]
+fn fresh_index_is_built_in_separate_file_then_switched() {
+    let dir = temp_vault();
+    let db = dir.path().join(".knowlpad/index.db");
+    let sig = IndexSignature::current(dir.path());
+    let outcome = ensure_index_db(&db, &sig).expect("建库应成功");
+    assert_eq!(outcome, RebuildOutcome::Fresh);
+    assert!(db.is_file(), "切换后 index.db 应存在");
+    assert!(!rebuild_path(dir.path()).exists(), "不得残留 .rebuild");
+    assert!(!old_path(dir.path()).exists(), "首次建库不应产生 .old");
+}
+
+#[test]
+fn matching_signature_leaves_index_untouched() {
+    let dir = temp_vault();
+    let db = dir.path().join(".knowlpad/index.db");
+    let sig = IndexSignature::current(dir.path());
+    {
+        let pool = open(dir.path()).expect("首次打开应成功");
+        insert_file(&pool, "keep.md");
+    }
+    let outcome = ensure_index_db(&db, &sig).expect("判定应成功");
+    assert_eq!(outcome, RebuildOutcome::Unchanged, "签名一致不得重建");
+    let pool = open(dir.path()).expect("再次打开应成功");
+    assert_eq!(count_files(&pool), 1, "既有数据必须保留");
+}
+
+#[test]
+fn stale_signature_rebuilds_and_reports_reason() {
+    let dir = temp_vault();
+    let db = dir.path().join(".knowlpad/index.db");
+    {
+        let pool = open(dir.path()).expect("首次打开应成功");
+        insert_file(&pool, "gone.md");
+        pool.with_writer(|conn| set_meta(conn, "index_signature", "stale"))
+            .expect("改写签名应成功");
+    }
+    let sig = IndexSignature::current(dir.path());
+    let outcome = ensure_index_db(&db, &sig).expect("重建应成功");
+    match outcome {
+        RebuildOutcome::Rebuilt { reason } => {
+            assert!(reason.contains("schema_version") || !reason.is_empty());
+        }
+        other => panic!("应报告已重建，实得 {other:?}"),
+    }
+    let pool = open(dir.path()).expect("重建后打开应成功");
+    assert_eq!(count_files(&pool), 0, "签名不符必须丢弃既有索引");
+    assert!(!rebuild_path(dir.path()).exists(), "不得残留 .rebuild");
+    assert!(!old_path(dir.path()).exists(), "切换后应删除 .old");
+}
+
+#[test]
+fn interrupted_rebuild_residue_is_discarded_without_touching_index() {
+    // §4.4 步骤 6：残留的 .rebuild 是「上次中断」的证据，应丢弃；**正在服务的 index.db 不受影响**
+    let dir = temp_vault();
+    {
+        let pool = open(dir.path()).expect("首次打开应成功");
+        insert_file(&pool, "keep.md");
+    }
+    let residue = rebuild_path(dir.path());
+    std::fs::write(&residue, b"half-built rebuild artifact").expect("应可写残留");
+    std::fs::write(dir.path().join(".knowlpad/index.db.rebuild-wal"), b"wal").expect("应可写");
+
+    let pool = open(dir.path()).expect("打开应成功");
+    assert!(!residue.exists(), "残留的 .rebuild 必须被丢弃");
+    assert!(
+        !dir.path().join(".knowlpad/index.db.rebuild-wal").exists(),
+        "残留的 -wal 也必须被丢弃"
+    );
+    assert_eq!(count_files(&pool), 1, "签名一致时既有索引必须完好");
+}
+
+#[test]
+fn unreadable_index_is_treated_as_untrusted_and_rebuilt() {
+    // 索引是可丢弃的派生数据：损坏时重建，而不是让 Vault 打不开
+    let dir = temp_vault();
+    let db = dir.path().join(".knowlpad/index.db");
+    std::fs::write(&db, b"this is not a sqlite database at all").expect("应可写坏文件");
+    let pool = open(dir.path()).expect("损坏的索引库应被重建而不是报错");
+    assert_eq!(count_files(&pool), 0);
+    let sig = IndexSignature::current(dir.path());
+    let outcome = ensure_index_db(&db, &sig).expect("判定应成功");
+    assert_eq!(outcome, RebuildOutcome::Unchanged, "重建后签名应一致");
 }

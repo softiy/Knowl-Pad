@@ -122,69 +122,36 @@ pub fn open(vault_root: &Path) -> Result<DbPool, AppError> {
         std::fs::create_dir_all(parent)?;
     }
     let expected = IndexSignature::current(vault_root);
+
+    // §4.4：先做**文件级**的「丢弃重建 + 原子切换」，再打开连接池。
+    // 旧实现是开池后就地 DROP TABLE，那样会先销毁旧索引——FR-SIG-02（重建期旧索引只读可用）
+    // 在其上无法实现。
+    let outcome = super::index_rebuild::ensure_index_db(&db_path, &expected)?;
+    match &outcome {
+        super::index_rebuild::RebuildOutcome::Unchanged => {
+            tracing::debug!("索引签名一致，沿用既有索引")
+        }
+        super::index_rebuild::RebuildOutcome::Fresh => tracing::info!("索引库首次创建"),
+        super::index_rebuild::RebuildOutcome::Rebuilt { reason } => tracing::info!(
+            reason = %reason,
+            "索引库已丢弃重建（M3 将据此发出 kp://index/rebuild-required）"
+        ),
+    }
+
     DbPool::open_with(&db_path, move |conn| bootstrap(conn, &expected))
 }
 
-/// schema 引导：判定是否需要重建 → 建表（幂等）→ 写入 meta。
+/// 连接池就绪后的 schema 兜底（幂等）：建表 + 写 meta。
 ///
-/// 全过程在**单一事务**内：中断即整体回滚，不会留下半建成的 schema。
-/// 另按 FR-SIG-03 在库内维护 `rebuild_in_progress` 标记——索引引擎（M3）在重建内容时复用同一语义。
+/// 重建判定已在 ensure_index_db 中按 §4.4 完成（文件级），此处不再比较签名。
 fn bootstrap(conn: &mut Connection, expected: &IndexSignature) -> Result<(), AppError> {
-    let meta_exists = table_exists(conn, "meta")?;
-    let stored = stored_signature(conn)?;
-    let in_progress = read_meta(conn, META_REBUILD_IN_PROGRESS)?.is_some();
-
-    let needs_rebuild = match &stored {
-        // 真新库（连 meta 表都不存在）：直接建 schema
-        None if !meta_exists => false,
-        // meta 存在但缺 index_signature：**不可信**，必须重建。
-        // FR-SIG-01 的语义是「与 meta.index_signature 比对」——缺失显然不等于一致；
-        // 若不重建，会把当前签名盖到可能已过期的表结构上（静默错误）。
-        None => {
-            tracing::warn!("索引库缺少签名记录，按不可信处理并重建");
-            true
-        }
-        // 上次重建被中断：重新开始（FR-SIG-03）
-        Some(_) if in_progress => {
-            tracing::warn!("检测到未完成的索引重建标记，重新开始");
-            true
-        }
-        // 签名不一致：丢弃重建（FR-SIG-01）
-        Some(old) if old.digest != expected.digest => {
-            tracing::info!(
-                reason = %expected.diff_reason(old),
-                "索引签名不一致，丢弃重建"
-            );
-            true
-        }
-        Some(_) => false,
-    };
-
-    // 阶段 1：确保 meta 存在，使「重建进行中」标记能**独立于重建事务**落盘。
-    // FR-SIG-03 要求崩溃后下次打开能看见「上次重建未完成」；若标记与重建同事务，
-    // 崩溃回滚会一并抹掉标记，该语义即形同虚设（本 MR 前的实现正是如此）。
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
-    )
-    .map_err(map_err)?;
-    set_meta(conn, META_REBUILD_IN_PROGRESS, "1")?;
-
-    // 阶段 2：丢弃重建 + 建表 + 写 meta，单一事务（中断即整体回滚，不留半建成 schema）
-    let tx = conn.transaction().map_err(map_err)?;
-    if needs_rebuild {
-        drop_all(&tx)?;
-    }
-    create_schema(&tx)?;
-    write_meta(&tx, expected)?;
-    tx.commit().map_err(map_err)?;
-
-    // 阶段 3：完成后清除标记
-    clear_meta(conn, META_REBUILD_IN_PROGRESS)?;
+    create_schema(conn)?;
+    write_meta(conn, expected)?;
     Ok(())
 }
 
 /// 从 meta 还原上次写入的签名（用于精确的差异原因）。
-fn stored_signature(conn: &Connection) -> Result<Option<IndexSignature>, AppError> {
+pub(crate) fn stored_signature(conn: &Connection) -> Result<Option<IndexSignature>, AppError> {
     let Some(digest) = read_meta(conn, "index_signature")? else {
         return Ok(None);
     };
@@ -200,28 +167,12 @@ fn stored_signature(conn: &Connection) -> Result<Option<IndexSignature>, AppErro
 }
 
 /// 建表（全部 IF NOT EXISTS，可重复执行）。
-fn create_schema(conn: &Connection) -> Result<(), AppError> {
+pub(crate) fn create_schema(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(DDL_V1).map_err(map_err)
 }
 
-/// 丢弃全部表。顺序遵循外键依赖：先子表后父表；FTS5 影子表随虚拟表一并删除。
-fn drop_all(conn: &Connection) -> Result<(), AppError> {
-    conn.execute_batch(
-        "DROP TABLE IF EXISTS file_tag;
-         DROP TABLE IF EXISTS file_alias;
-         DROP TABLE IF EXISTS link;
-         DROP TABLE IF EXISTS block_id;
-         DROP TABLE IF EXISTS heading;
-         DROP TABLE IF EXISTS tag;
-         DROP TABLE IF EXISTS note_fts;
-         DROP TABLE IF EXISTS file;
-         DROP TABLE IF EXISTS meta;",
-    )
-    .map_err(map_err)
-}
-
 /// 写入签名与元信息（schema_version / index_signature / vault_root / parser_version / built_at）。
-fn write_meta(conn: &Connection, signature: &IndexSignature) -> Result<(), AppError> {
+pub(crate) fn write_meta(conn: &Connection, signature: &IndexSignature) -> Result<(), AppError> {
     let built_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)

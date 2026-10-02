@@ -1307,6 +1307,11 @@ fn rebuild_from_scratch(pool: DbPool, sig: &IndexSignature) -> Result<DbPool> {
 }
 ```
 
+> **实现说明（2026-10-02，M1 收尾）**：上述文件级机制（步骤 1/2/4/5/6：独立文件建库 → 原子切换 → 丢弃残留）**已实现**，见 `src-tauri/src/storage/index_rebuild.rs`；
+> 就绪结果以 `RebuildOutcome`（Fresh / Rebuilt{reason} / Unchanged）返回，供上层决定是否发事件。
+> **明确顺延 M3**：`kp://index/rebuild-required` 事件本体、重建进度上报，以及「重建期间读池只读旧库」的编排
+> （需要索引引擎与 UI 消费方）；步骤 3「全量索引内容」本身即 M3 的索引引擎。
+
 **关键点**：重建在**独立文件** `index.db.rebuild` 中进行，因此旧 `index.db` 全程可读，满足 PRD FR-SIG-02「重建期间可继续使用旧索引只读浏览」；`rebuild_in_progress` 标记必须在**重建完成时**才清除，若进程在重建中被杀，下次启动检测到 `index.db.rebuild` 即丢弃并重新开始（PRD FR-SIG-03、AC-REL-02），绝不会把半索引当作有效索引使用。两次 `rename` 的原子切换保证任何时刻 `index.db` 要么是完整旧库、要么是完整新库。
 
 ### 4.5 全局库迁移：版本化脚本
