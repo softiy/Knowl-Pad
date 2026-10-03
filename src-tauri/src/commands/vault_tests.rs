@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::commands::vault_lifecycle::*;
+use std::path::Path;
 use std::sync::Arc;
 
 /// 建一个带全局库的 AppState（全局库落在独立临时目录）。
@@ -208,4 +209,73 @@ fn restore_respects_disabled_setting() {
 
     simulate_restart(&state);
     assert!(restore_last_vault(&state).is_none(), "关闭后不应恢复");
+}
+
+/// 目录快照：相对路径 → 文件字节（用于逐字节比对）。
+fn snapshot(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("目录应可读").flatten() {
+            let path = entry.path();
+            let file_type = entry.file_type().expect("应可读类型");
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() {
+                let rel = path
+                    .strip_prefix(root)
+                    .expect("应在根内")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                out.insert(rel, std::fs::read(&path).expect("应可读文件"));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn ac_vault_01_third_party_config_dir_is_byte_identical_after_open() {
+    // AC-VAULT-01 的存储部分（PRD D-08 的 M1 口径）：
+    // 「该配置目录内文件数量与内容与打开前**完全一致**（逐字节比对，对应 FR-STORAGE-02）」
+    let base = tempfile::tempdir().expect("临时目录应可创建");
+    let target = base.path().join("third-party-vault");
+    let obsidian = target.join(".obsidian");
+    std::fs::create_dir_all(obsidian.join("plugins/deep")).expect("应可建目录");
+    // 制造"任何误删/误改都会被发现"的内容：多文件、含二进制、含以 .kp-tmp- 开头的名字
+    std::fs::write(obsidian.join("app.json"), br#"{"theme":"dark"}"#).expect("应可写");
+    std::fs::write(obsidian.join("workspace.json"), b"{\"open\":[]}").expect("应可写");
+    std::fs::write(
+        obsidian.join("plugins/deep/binary.bin"),
+        [0u8, 159, 146, 150, 255],
+    )
+    .expect("应可写");
+    std::fs::write(
+        obsidian.join(format!("{}.md", kp_domain::note_io::TEMP_PREFIX)),
+        b"users own file with a temp-like name",
+    )
+    .expect("应可写");
+    std::fs::write(target.join("note-a.md"), b"# A").expect("应可写");
+    std::fs::write(target.join("note-b.md"), b"# B").expect("应可写");
+
+    let before = snapshot(&obsidian);
+    assert_eq!(before.len(), 4, "前置条件：应有 4 个文件");
+
+    // 走**真实打开路径**（建 .knowlpad/、清理临时文件、打开索引库）
+    let prepared = prepare_vault(&target, false).expect("打开应成功");
+    drop(prepared);
+
+    let after = snapshot(&obsidian);
+    assert_eq!(
+        after.keys().collect::<Vec<_>>(),
+        before.keys().collect::<Vec<_>>(),
+        "第三方配置目录的文件集合不得变化（含不得新增/删除）"
+    );
+    for (rel, bytes) in &before {
+        assert_eq!(after.get(rel), Some(bytes), "{rel} 的内容必须逐字节一致");
+    }
+    assert!(
+        target.join(".knowlpad").is_dir(),
+        "同时应正确创建 .knowlpad/"
+    );
 }
