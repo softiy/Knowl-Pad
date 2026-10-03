@@ -4,6 +4,11 @@
 //! 本模块只提供**纯函数判定**，供 M2（文件树）与 M3（索引遍历）复用——判定必须唯一，
 //! 不允许各调用点自行写字符串比较。
 
+/// **零接触目录**：FR-STORAGE-02 要求「不得修改、移动或删除其中任何内容」，
+/// 因此任何遍历/清理都必须**整目录跳过**（连我们自己的临时文件也不在其中清理——
+/// 那同样属于"删除其中内容"）。与 §5.4 的 IGNORED_DIRS 概念一致。
+pub const NEVER_TOUCH_DIRS: &[&str] = &[".obsidian", ".git"];
+
 /// Vault 内部目录名（位于 Vault 根下）。
 pub const INTERNAL_DIR: &str = ".knowlpad";
 
@@ -35,6 +40,17 @@ mod tests {
         ] {
             assert!(is_internal_path(path), "{path} 应被排除");
         }
+    }
+
+    #[test]
+    fn third_party_dirs_are_never_touched() {
+        // FR-STORAGE-02：第三方配置目录必须"零接触"
+        assert!(NEVER_TOUCH_DIRS.contains(&".obsidian"));
+        assert!(NEVER_TOUCH_DIRS.contains(&".git"));
+        assert!(
+            !NEVER_TOUCH_DIRS.contains(&INTERNAL_DIR),
+            ".knowlpad 由软件自管，不在零接触清单"
+        );
     }
 
     #[test]

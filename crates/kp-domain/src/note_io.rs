@@ -103,7 +103,11 @@ pub fn cleanup_temp_files_recursive(root: &Path) -> Result<usize, AppError> {
             }
             if file_type.is_dir() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name == crate::vault_paths::INTERNAL_DIR {
+                // 内部目录无需清理；第三方配置目录/VCS 目录**整目录跳过**（FR-STORAGE-02：
+                // 不得修改、移动或删除其中任何内容——连清理我们自己的临时文件也算"删除其中内容"）
+                if name == crate::vault_paths::INTERNAL_DIR
+                    || crate::vault_paths::NEVER_TOUCH_DIRS.contains(&name.as_str())
+                {
                     continue;
                 }
                 stack.push(path);
