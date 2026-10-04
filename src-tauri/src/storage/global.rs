@@ -250,6 +250,25 @@ pub fn set_preference(pool: &DbPool, key: &str, value: &str) -> Result<(), AppEr
     })
 }
 
+/// 列出全部偏好（按键排序）。
+pub fn list_preferences(pool: &DbPool) -> Result<Vec<(String, String)>, AppError> {
+    pool.with_reader(|conn| {
+        let mut stmt = conn
+            .prepare_cached("SELECT key, value FROM preference ORDER BY key")
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(map_err)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(map_err)?);
+        }
+        Ok(out)
+    })
+}
+
 /// 读取界面偏好。
 pub fn read_preference(pool: &DbPool, key: &str) -> Result<Option<String>, AppError> {
     let key = key.to_string();

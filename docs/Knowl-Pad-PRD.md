@@ -1691,15 +1691,17 @@ interface KpError {
 | `trash_empty` ⚠️ | — | `EmptyResult` | 清空回收站 |
 | `trash_cleanup_expired` ⚠️ | — | `CleanupResult` | 过期清理 |
 
-#### 5.3.9 设置与系统域（3）
+#### 5.3.9 设置与系统域（5）
 
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |
 | `preference_get` | `{ keys? }` | `Record<string, unknown>` | 读取偏好 |
 | `preference_set` ⚠️ | `{ entries }` | `null` | 批量写入偏好 |
+| `vault_state_get` | `{ keys? }` | `Record<string, unknown>` | 读取**当前 Vault** 的界面状态（文件树展开、滚动位置等；**勘误 D-13 补齐**） |
+| `vault_state_set` ⚠️ | `{ entries }` | `null` | 批量写入当前 Vault 的界面状态（界面防抖后调用） |
 | `system_info` | — | `SystemInfo` | 平台、版本、路径信息（关于页） |
 
-> **统计核对**：9 + 14 + 4 + 6 + 9 + 5 + 5 + 5 + 3 = **60** 个 Command（`vault_pin` 为勘误 D-10 补齐项）。其中标注 ⚠️ 的写操作共 **25** 个，分域为：Vault 域 4、文件域 8、链接改写域 3、搜索域 2、链接与图谱域 1、标签域 1、索引域 1、回收站域 4、设置与系统域 1（4+8+3+2+1+1+1+4+1 = 25）。
+> **统计核对**：9 + 14 + 4 + 6 + 9 + 5 + 5 + 5 + 5 = **62** 个 Command（`vault_pin` 为勘误 D-10 补齐项，`vault_state_get/set` 为勘误 D-13 补齐项）。其中标注 ⚠️ 的写操作共 **26** 个，分域为：Vault 域 4、文件域 8、链接改写域 3、搜索域 2、链接与图谱域 1、标签域 1、索引域 1、回收站域 4、设置与系统域 2（4+8+3+2+1+1+1+4+2 = 26）。
 
 ### 5.4 事件清单
 
@@ -2083,7 +2085,7 @@ interface KpError {
 | --- | --- | --- | --- |
 | **单元测试** | Rust `domain/` 纯函数（解析器、分词、链接匹配、路径校验）；前端 `core/utils` 纯函数 | `cargo test` + `cargo llvm-cov` / `vitest` | Rust `domain/` 行覆盖率 ≥ 85%（`cargo llvm-cov`，门禁 6 强制，见技术方案 §11.1/DEBT-10）；前端 `core/utils` ≥ 90%（vitest 目录级阈值，见技术方案 §11.7.6） |
 | **组件测试** | Vue 组件渲染与交互 | `@vue/test-utils` + `vitest` | 核心组件（编辑器、文件树、搜索、反链面板）必测 |
-| **集成测试** | IPC Command 端到端（Rust 侧 + 真实临时 Vault） | `cargo test`（集成测试目录） | 全部 60 个 Command 至少 1 个正向 + 1 个错误用例 |
+| **集成测试** | IPC Command 端到端（Rust 侧 + 真实临时 Vault） | `cargo test`（集成测试目录） | 全部 62 个 Command 至少 1 个正向 + 1 个错误用例 |
 | **契约测试** | 前后端类型一致性（TS interface ↔ Rust struct） | 自动生成的类型比对脚本 | 100% Command 覆盖 |
 | **E2E 测试** | 关键用户旅程（打开 Vault → 编辑 → 链接 → 搜索 → 重命名改写 → 回收站恢复） | `tauri-driver` + `WebDriverIO` | §1.3 全部 10 个核心场景 |
 | **安全测试** | §6.3.3 全部 AC-SEC 用例（路径穿越、XSS、签名、零网络请求） | 自动化脚本 + 网络监控 | 100% 通过为发布门禁 |
@@ -2203,13 +2205,14 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | D-01 | v5 §11.7 称支持 bsdiff **增量更新** | V1.0 限定**全量更新**；Tauri updater 插件不支持二进制差分 | FR-UPDATE-14 说明 |
 | D-02 | v5 §11.7 称更新失败**自动回滚到上一版本** | 修正为「更新失败时保持当前版本不变」；应用二进制无法自动回滚 | FR-UPDATE-08 |
 | D-03 | v5 Cargo.toml 仅锁 4 个 crate | 补充 `jieba-rs`、`notify`、`walkdir`、`sha2`、`thiserror`、`anyhow`、`tokio`、`yaml-rust`/`serde_yaml`、`regex`、`tracing` 等实现必需依赖，**版本待开发前核实**，不臆造 | §3.4, §10.1 RISK-03 |
-| D-04 | v5 未定义任何功能需求 | 本 PRD 补齐 12 个功能模块、60 个 Command（含勘误 D-10 补齐的 `vault_pin`）、13 个事件、完整 DDL 与验收标准 | 全文 |
+| D-04 | v5 未定义任何功能需求 | 本 PRD 补齐 12 个功能模块、62 个 Command（含勘误 D-10 的 `vault_pin` 与 D-13 的 `vault_state_get/set`）、13 个事件、完整 DDL 与验收标准 | 全文 |
 | D-05 | v5 未涉及中文分词 | 明确 jieba-rs 预分词 + FTS5 unicode61 方案 | §3.4 |
 | D-06 | v5 CI 用 `github.*` 变量但声称 Gitee Go | 技术方案 §9 给出 Gitee Go 正确变量映射 | 技术方案 |
 | D-07 | v5 §11.7 与本草稿使用 `update.json` | 统一改为 **`latest.json`**——Tauri 2 updater 的约定文件名（`createUpdaterArtifacts: true` 生成），FR-UPDATE-02/05/09 与验收样例已同步 | 技术方案 §11.5、§12 D-05 |
 | D-08 | M1 的阶段验收写作「AC-VAULT 全通过」，但其中两条在 M1 阶段物理上不可验证 | 修正为可验证口径：AC-VAULT-01 的**解析断言**依赖 M3 解析器与 M4 链接裁决、**AC-VAULT-05** 依赖 M3 索引引擎与 M2 文件树，故 M1 只验收 AC-VAULT-01 的存储相关部分 + AC-VAULT-02/03/04，其余顺延 M3（2026-10-01 确认） | AC-VAULT-01、AC-VAULT-05 |
 | D-10 | FR-VAULT-07（P0）要求 Vault 列表「支持置顶」，但 §5.3.1 的 8 个 vault 命令中**没有任何置顶命令**，全局库 `vault.pinned` 列也无写入入口（2026-10-02 复核发现） | 需求与命令契约不一致：按现状置顶无法实现 | **已于 M2 PR-1 落地**：新增 `vault_pin { vault_id, pinned }`（§5.3.1 已补行；命令总数 59 → 60）；`pinned` 列与列表排序在 M1 已就绪 | FR-VAULT-07 / §5.3.1 |
 | D-11 | §5.3.2 的 10 个文件域命令只给出返回类型**名**（`FileNode`/`NoteContent`/`FileStat`/`ValidationResult`/`RenameResult`/`DeleteResult`），**从未定义字段**；且 `note_read` 的 M0 实现返回裸字符串，与表中 `NoteContent` 不符（2026-10-02 复核发现） | 契约不完整会导致 TS 与 Rust 各自臆造形状而漂移（门禁 17 只校验命令名，不校验结构） | 新增 §5.3.2.1 定义全部返回结构；`note_read` → `NoteContent` 的修正列入 M2 计划 WP2 交付行 | §5.3.2 / §5.3.2.1 |
+| D-13 | §3.3 定义了 `vault_state` 表、FR-FILE-01/FR-EDITOR-37/AC-FILE-08 均要求把界面状态持久化到其中，但 §5.3.9 的命令表**没有任何读写入口**（2026-10-04 M2 复核发现，与 D-10 同类） | 需求要求持久化、契约却无通道：实现只能各自造轮子或静默丢弃状态（AC-FILE-08 无法通过） | 新增 `vault_state_get/set` 两条命令（§5.3.9 已补行，命令总数 60 → 62）并在 M2 落地 | FR-FILE-01 / FR-EDITOR-37 / AC-FILE-08 / §5.3.9 |
 | D-09 | v5 §11.3 表格有错行（`feat!` 行损坏）与重复段落 | 技术方案 §9 修正为完整正确的 Conventional Commits 表 | 技术方案（**编号修正**：本条原误编为 D-07，与上一条重复，2026-10-01 改为 D-09） |
 
 ---

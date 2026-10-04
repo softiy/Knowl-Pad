@@ -10,6 +10,7 @@ pub mod index_schema;
 pub mod migrate;
 pub mod pool;
 pub mod pragma;
+pub mod vault_state;
 
 use kp_domain::error::AppError;
 use std::path::PathBuf;
