@@ -40,6 +40,39 @@ export const fileValidateName = (name: string): Promise<ValidationResult> =>
 export const noteWrite = (relPath: string, content: string, baseMtime?: number): Promise<WriteResult> =>
   call<WriteResult>('note_write', { args: { relPath, content, baseMtime } });
 
+/** 新建笔记（FR-FILE-10/13）；onConflict 缺省为 cancel（最安全，R-07 不静默覆盖） */
+export const noteCreate = (
+  relPath: string,
+  content = '',
+  onConflict?: ConflictPolicy,
+): Promise<WriteResult> => call<WriteResult>('note_create', { args: { relPath, content, onConflict } });
+
+/** 新建文件夹（FR-FILE-11：支持 a/b/c 多级一次创建） */
+export const folderCreate = (relPath: string): Promise<void> =>
+  callVoid('folder_create', { args: { relPath } });
+
+/** 重命名（**不含链接改写**，改写属 M4） */
+export const fileRename = (
+  from: string,
+  to: string,
+  onConflict?: ConflictPolicy,
+): Promise<RenameResult> => call<RenameResult>('file_rename', { args: { from, to, onConflict } });
+
+/** 移动（与重命名同一实现，跨目录即移动） */
+export const fileMove = (
+  from: string,
+  to: string,
+  onConflict?: ConflictPolicy,
+): Promise<RenameResult> => call<RenameResult>('file_move', { args: { from, to, onConflict } });
+
+/** 删除 = 软删除（移入回收站，FR-FILE-30；完整回收站流程属 M7） */
+export const fileDelete = (relPath: string, recursive = false): Promise<DeleteResult> =>
+  call<DeleteResult>('file_delete', { args: { relPath, recursive } });
+
+/** 在系统文件管理器中显示（opener 插件仅 Rust 侧调用） */
+export const fileReveal = (relPath: string): Promise<void> =>
+  callVoid('file_reveal', { args: { relPath } });
+
 export const vaultClose = (): Promise<void> => callVoid('vault_close');
 
 export interface VaultInfo {

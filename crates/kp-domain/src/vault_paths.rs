@@ -11,6 +11,12 @@ pub const NEVER_TOUCH_DIRS: &[&str] = &[".obsidian", ".git"];
 
 /// Vault 内部目录名（位于 Vault 根下）。
 pub const INTERNAL_DIR: &str = ".knowlpad";
+/// 覆盖前备份目录（AC-FILE-04、PRD §6.2.1 步骤 4；保留策略见 NFR-REL-05）。
+pub const BACKUP_DIR: &str = "backup";
+/// 回收站目录（FR-TRASH-02：`.knowlpad/trash/<yyyy-MM>/`）。
+pub const TRASH_DIR: &str = "trash";
+/// 回收站清单（FR-TRASH-02/12：原始相对路径的权威记录）。
+pub const TRASH_MANIFEST: &str = "manifest.json";
 
 /// 判断 Vault 相对路径是否属于内部目录（.knowlpad/**）。
 ///
