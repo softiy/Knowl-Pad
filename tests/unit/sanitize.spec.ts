@@ -11,6 +11,12 @@ describe('sanitizeHtml', () => {
     expect(out).toContain('data-kp-link="x"');
     expect(out).toContain('hi');
   });
+  // 回归：\`[^a-z+.-:]\` 曾被解析成 .–: 范围（含 /），把相对路径整条剥掉
+  it('保留相对 URL：本地附件 src 与相对链接 href', () => {
+    expect(sanitizeHtml('<img src="attachments/a.png">')).toContain('src="attachments/a.png"');
+    expect(sanitizeHtml('<a href="notes/sub/a.md">x</a>')).toContain('href="notes/sub/a.md"');
+    expect(sanitizeHtml('<img src="./a.png">')).toContain('src="./a.png"');
+  });
   it('配置为冻结对象且不含 setConfig 用法', () => expect(Object.isFrozen(SANITIZE_CONFIG)).toBe(true));
   it('自检通过', () => expect(() => { selfTest(); }).not.toThrow());
 });

@@ -65,6 +65,15 @@ function applyImagePolicy(html: string, resolveAsset?: RenderOptions['resolveAss
   const doc = new DOMParser().parseFromString(html, 'text/html');
   for (const img of Array.from(doc.querySelectorAll('img'))) {
     const src = img.getAttribute('src') ?? '';
+    // data: URI 不在允许清单内，但 DOMPurify 对 img 的 DATA_URI_TAGS **默认放行**，
+    // 且 SVG 形态可携带脚本 —— 这里显式阻止：移除 src、留标记（既不加载也不丢信息）。
+    if (/^data:/i.test(src)) {
+      img.removeAttribute('src');
+      img.setAttribute('data-kp-blocked', 'inline');
+      img.setAttribute('referrerpolicy', 'no-referrer');
+      img.setAttribute('loading', 'lazy');
+      continue;
+    }
     if (isRemoteSrc(src)) {
       const placeholder = doc.createElement('span');
       placeholder.className = 'kp-remote-image';

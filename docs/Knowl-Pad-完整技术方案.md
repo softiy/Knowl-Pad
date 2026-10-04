@@ -2360,6 +2360,8 @@ async function save(note: OpenNote): Promise<SaveOutcome> {
    │      （shell:allow-open 的 https 白名单），应用进程保持零网络请求（AC-SEC-03）
    │   本地附件 src 转为 asset:// 协议（需在 tauri.conf.json 配置 assetProtocol 及其 scope）
    │   全部 <img> 设 referrerPolicy="no-referrer"、loading="lazy"
+   │   data: URI 策略：**移除 src** 并标记 \`data-kp-blocked="inline"\`
+   │     （DOMPurify 对 img 的 DATA_URI_TAGS 默认放行 data:；SVG 形态可携带脚本，故显式阻止）
    ▼
 ④ 插入 DOM（v-html 到此才允许使用）
    │
