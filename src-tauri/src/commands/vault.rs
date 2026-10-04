@@ -2,8 +2,8 @@
 
 use super::vault_lifecycle::{activate_vault, close_current, current_vault, prepare_vault};
 use super::vault_types::{
-    IndexStatus, VaultCreateArgs, VaultIdArgs, VaultInfo, VaultOpenArgs, VaultRelocateArgs,
-    VaultRenameArgs, VaultSummary,
+    IndexStatus, VaultCreateArgs, VaultIdArgs, VaultInfo, VaultOpenArgs, VaultPinArgs,
+    VaultRelocateArgs, VaultRenameArgs, VaultSummary,
 };
 use crate::error_wrapper::KpError;
 use crate::state::AppState;
@@ -96,6 +96,19 @@ pub async fn vault_register_remove(
     if state.current_vault_id() == Some(args.vault_id) {
         close_current(&state);
     }
+    Ok(())
+}
+
+/// 置顶 / 取消置顶（FR-VAULT-07；PRD 勘误 D-10 补齐的命令契约）。
+#[tauri::command]
+pub async fn vault_pin(
+    state: tauri::State<'_, AppState>,
+    args: VaultPinArgs,
+) -> Result<(), KpError> {
+    let Some(global) = state.global_db() else {
+        return Err(KpError(AppError::db("访问知识库注册表")));
+    };
+    crate::storage::global::set_pinned(&global, args.vault_id, args.pinned).map_err(KpError)?;
     Ok(())
 }
 

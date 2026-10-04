@@ -50,6 +50,43 @@ fn duplicate_path_error_is_user_facing_chinese() {
 }
 
 #[test]
+fn pin_is_toggleable_and_reorders_list() {
+    // FR-VAULT-07 / PRD 勘误 D-10：置顶写入入口
+    let (_dir, pool) = pool();
+    let a = upsert_vault(&pool, "/vault/a", "A").expect("注册 A");
+    let b = upsert_vault(&pool, "/vault/b", "B").expect("注册 B");
+    // 显式拉开最近打开时间：同一毫秒内创建会让排序退化为 id 序
+    pool.with_writer(move |conn| {
+        conn.execute("UPDATE vault SET last_opened = 100 WHERE id = ?1", [a])
+            .map_err(map_err)?;
+        conn.execute("UPDATE vault SET last_opened = 200 WHERE id = ?1", [b])
+            .map_err(map_err)?;
+        Ok(())
+    })
+    .expect("设置时间戳应成功");
+    assert_eq!(
+        list_vaults(&pool).expect("列表").first().map(|r| r.id),
+        Some(b),
+        "默认按最近打开倒序"
+    );
+
+    assert!(set_pinned(&pool, a, true).expect("置顶应成功"));
+    let rows = list_vaults(&pool).expect("列表应成功");
+    assert_eq!(rows.first().map(|r| r.id), Some(a), "置顶后应排最前");
+    assert!(rows.first().expect("应有一行").pinned, "pinned 应为 true");
+
+    assert!(set_pinned(&pool, a, false).expect("取消置顶应成功"));
+    assert_eq!(
+        list_vaults(&pool).expect("列表").first().map(|r| r.id),
+        Some(b),
+        "取消后恢复默认排序"
+    );
+    assert!(
+        !set_pinned(&pool, 9999, true).expect("不存在的 id 不应报错"),
+        "未命中应返回 false"
+    );
+}
+#[test]
 fn list_orders_pinned_first_then_recent() {
     let (_dir, pool) = pool();
     let a = upsert_vault(&pool, "/vault/a", "A").expect("注册 A");

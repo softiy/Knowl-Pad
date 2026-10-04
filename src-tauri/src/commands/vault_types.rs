@@ -23,6 +23,13 @@ pub struct VaultIdArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct VaultPinArgs {
+    pub vault_id: i64,
+    pub pinned: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VaultRenameArgs {
     pub vault_id: i64,
     pub display_name: String,

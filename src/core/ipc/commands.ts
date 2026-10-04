@@ -62,6 +62,10 @@ export const vaultCurrent = (): Promise<VaultInfo | null> => call<VaultInfo | nu
 export const vaultRegisterRemove = (vaultId: number): Promise<void> =>
   callVoid('vault_register_remove', { args: { vaultId } });
 
+/** 置顶 / 取消置顶（FR-VAULT-07；PRD 勘误 D-10 补齐的命令契约） */
+export const vaultPin = (vaultId: number, pinned: boolean): Promise<void> =>
+  callVoid('vault_pin', { args: { vaultId, pinned } });
+
 /** 修改显示名 */
 export const vaultRename = (vaultId: number, displayName: string): Promise<void> =>
   callVoid('vault_rename', { args: { vaultId, displayName } });
@@ -77,3 +81,60 @@ export interface SystemInfo {
 }
 
 export const systemInfo = (): Promise<SystemInfo> => call<SystemInfo>('system_info');
+
+// ── 文件域契约（M2 目标形状；实现随 PR-2/PR-3 落地）────────────────────────
+// 权威定义见 PRD §5.3.2.1；此处仅冻结 TS 侧形状，**不提供未实现的 invoke 封装**。
+
+/** 文件树节点（**单层**返回，作为虚拟滚动数据源） */
+export interface FileNode {
+  /** Vault 内相对路径，统一 / 分隔 */
+  relPath: string;
+  name: string;
+  isDir: boolean;
+  kind: "note" | "attachment" | "other";
+  sizeBytes?: number;
+  mtimeMs?: number;
+  /** 目录：是否含可见子项（决定展开箭头是否显示） */
+  hasChildren?: boolean;
+}
+
+/** 笔记内容（编辑器加载 + 冲突检测基线） */
+export interface NoteContent {
+  relPath: string;
+  content: string;
+  /** 作为 note_write 的 baseMtime（FR-EDITOR-34 冲突检测） */
+  mtimeMs: number;
+  sizeBytes: number;
+}
+
+/** 文件元信息 */
+export interface FileStat {
+  relPath: string;
+  isDir: boolean;
+  kind: "note" | "attachment" | "other";
+  sizeBytes: number;
+  mtimeMs: number;
+}
+
+/** 文件名合法性（FR-FILE-12；reason 为中文可操作提示，ERR-02） */
+export interface ValidationResult {
+  valid: boolean;
+  reason?: string;
+}
+
+/** 重命名 / 移动结果（不含链接改写，改写属 M4） */
+export interface RenameResult {
+  from: string;
+  to: string;
+  newMtimeMs: number;
+}
+
+/** 删除结果（软删除 → 回收站；FR-FILE-30） */
+export interface DeleteResult {
+  relPath: string;
+  /** 实际移入回收站的条目数（目录递归时 > 1） */
+  trashedCount: number;
+}
+
+/** 重名冲突处理策略（FR-FILE-13：覆盖 / 重命名新建 / 取消） */
+export type ConflictPolicy = "overwrite" | "renameNew" | "cancel";
