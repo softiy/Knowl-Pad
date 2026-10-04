@@ -12,6 +12,9 @@ mod state;
 mod storage;
 
 use commands::file::{file_list_dir, file_stat, file_tree, file_validate_name};
+use commands::file_write::{
+    file_delete, file_move, file_rename, file_reveal, folder_create, note_create,
+};
 use commands::note::{note_read, note_write};
 use commands::system::{ping, system_info};
 use commands::vault::{
@@ -111,6 +114,12 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             ping,
             system_info,
+            note_create,
+            folder_create,
+            file_rename,
+            file_move,
+            file_delete,
+            file_reveal,
             file_tree,
             file_list_dir,
             file_stat,
