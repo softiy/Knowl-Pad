@@ -18,6 +18,17 @@ pub struct NoteWriteArgs {
     pub base_mtime: Option<i64>,
 }
 
+/// 笔记内容（PRD §5.3.2.1）：正文 + 冲突检测基线。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteContent {
+    pub rel_path: String,
+    pub content: String,
+    /// 作为 note_write 的 baseMtime（FR-EDITOR-34 冲突检测）
+    pub mtime_ms: i64,
+    pub size_bytes: u64,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WriteResult {
@@ -31,19 +42,30 @@ fn join_error(err: tauri::Error) -> KpError {
     )))
 }
 
-/// 读取笔记：异步 command + spawn_blocking，避免阻塞 IPC 线程（R-08）。
+/// 读取笔记：返回 `NoteContent`（含 `mtimeMs`，编辑器据此做冲突检测）。异步 command + spawn_blocking（R-08）。
 #[tauri::command]
 pub async fn note_read(
     state: tauri::State<'_, AppState>,
     args: NoteReadArgs,
-) -> Result<String, KpError> {
+) -> Result<NoteContent, KpError> {
     let root = root_of(&state)?;
     let rel_path = args.rel_path;
+    let rel_for_result = rel_path.clone();
     let task = tauri::async_runtime::spawn_blocking(move || {
         let path = resolve_in(&root, &rel_path)?;
         let bytes = note_io::read_note(&path)?;
-        String::from_utf8(bytes)
-            .map_err(|err| KpError(kp_domain::error::AppError::IoFailure(err.to_string())))
+        let content = String::from_utf8(bytes)
+            .map_err(|err| KpError(kp_domain::error::AppError::IoFailure(err.to_string())))?;
+        let mtime_ms = note_io::mtime_ms(&path).map_err(KpError)?;
+        let size_bytes = std::fs::metadata(&path)
+            .map_err(|err| KpError(kp_domain::error::AppError::from(err)))?
+            .len();
+        Ok::<NoteContent, KpError>(NoteContent {
+            rel_path: rel_for_result,
+            content,
+            mtime_ms,
+            size_bytes,
+        })
     });
     task.await.map_err(join_error)?
 }

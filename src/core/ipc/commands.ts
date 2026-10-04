@@ -19,7 +19,23 @@ export const ping = (): Promise<string> => call<string>('ping');
 
 export const vaultList = (): Promise<VaultSummary[]> => call<VaultSummary[]>('vault_list');
 
-export const noteRead = (relPath: string): Promise<string> => call<string>('note_read', { args: { relPath } });
+export const noteRead = (relPath: string): Promise<NoteContent> => call<NoteContent>('note_read', { args: { relPath } });
+
+/** 文件树（**单层**）：parentRelPath 缺省为 Vault 根 */
+export const fileTree = (parentRelPath?: string, includeHidden?: boolean): Promise<FileNode[]> =>
+  call<FileNode[]>('file_tree', { args: { parentRelPath, includeHidden } });
+
+/** 单层目录列表（懒加载；默认不显示隐藏项） */
+export const fileListDir = (relPath: string): Promise<FileNode[]> =>
+  call<FileNode[]>('file_list_dir', { args: { relPath } });
+
+/** 文件/目录元信息 */
+export const fileStat = (relPath: string): Promise<FileStat> =>
+  call<FileStat>('file_stat', { args: { relPath } });
+
+/** 文件名合法性校验（FR-FILE-12） */
+export const fileValidateName = (name: string): Promise<ValidationResult> =>
+  call<ValidationResult>('file_validate_name', { args: { name } });
 
 export const noteWrite = (relPath: string, content: string, baseMtime?: number): Promise<WriteResult> =>
   call<WriteResult>('note_write', { args: { relPath, content, baseMtime } });
