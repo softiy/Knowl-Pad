@@ -162,13 +162,6 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     }
   }
 
-  function reset(): void {
-    rows.value = [];
-    expanded.value = new Set();
-    cache.clear();
-    error.value = null;
-  }
-
   return {
     rows,
     expanded,
@@ -180,6 +173,5 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     setIncludeHidden,
     restoreState,
     persistExpanded,
-    reset,
   };
 });
