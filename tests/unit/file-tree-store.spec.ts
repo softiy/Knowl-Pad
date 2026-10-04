@@ -126,6 +126,14 @@ describe('useFileTreeStore', () => {
     expect(store.rows).toEqual([]);
   });
 
+  it('持久化失败时给出提示而不静默（R-15）', async () => {
+    mStateSet.mockRejectedValue({ code: 'E_IO_FAILURE', message: '界面状态过大，已跳过保存（不影响笔记数据）' });
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    await store.persistExpanded();
+    expect(store.error).toBe('界面状态过大，已跳过保存（不影响笔记数据）');
+  });
+
   it('展开失败时回滚展开标记', async () => {
     const store = useFileTreeStore();
     await store.loadRoot();

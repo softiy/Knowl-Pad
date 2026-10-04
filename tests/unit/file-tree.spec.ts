@@ -46,7 +46,7 @@ vi.mock('@core/ipc/commands', () => ({
   vaultStateSet: vi.fn(),
 }));
 
-import { fileTree, preferenceGet, vaultStateGet, type FileNode } from '@core/ipc/commands';
+import { fileReveal, fileTree, preferenceGet, vaultStateGet, type FileNode } from '@core/ipc/commands';
 import { FileTree } from '@features/files';
 
 const mTree = vi.mocked(fileTree);
@@ -134,6 +134,36 @@ describe('FileTree 组件', () => {
     const fileRow = renderedRows(wrapper).find((r) => r.find('.file-tree__name').text() === 'root.md');
     await fileRow?.trigger('click');
     expect(wrapper.emitted('open')?.[0]).toEqual(['root.md']);
+  });
+
+  it('右键菜单：在文件管理器中显示与复制相对路径（FR-FILE-07）', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const wrapper = mountTree();
+    await flushPromises();
+
+    await renderedRows(wrapper)[0].trigger('contextmenu');
+    const reveal = wrapper.findAll('.kp-menu button').find((b) => b.text() === '在文件管理器中显示');
+    await reveal?.trigger('click');
+    await flushPromises();
+    expect(fileReveal).toHaveBeenCalledWith('dir');
+
+    await renderedRows(wrapper)[0].trigger('contextmenu');
+    const copy = wrapper.findAll('.kp-menu button').find((b) => b.text() === '复制相对路径');
+    await copy?.trigger('click');
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith('dir');
+  });
+
+  it('图标按类型区分：附件与其它文件（FR-FILE-03）', async () => {
+    mTree.mockResolvedValue([
+      { relPath: 'img.png', name: 'img.png', isDir: false, kind: 'attachment' },
+      { relPath: 'data.txt', name: 'data.txt', isDir: false, kind: 'other' },
+    ]);
+    const wrapper = mountTree();
+    await flushPromises();
+    const icons = renderedRows(wrapper).map((r) => r.find('.file-tree__icon').text());
+    expect(icons).toEqual(['📎', '📄']);
   });
 
   it('右键菜单：目录显示新建项，选择后向外抛 action', async () => {
