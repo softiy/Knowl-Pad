@@ -186,6 +186,21 @@ pnpm test:perf -- --baseline .perf-baseline.json           # 性能基准比对
    `check-naming.sh` 与 `check-path-encapsulation.sh` 需要 `rg`。两个脚本都内置了依赖守卫，
    缺失时以**退出码 2 硬性失败**（不会静默通过）。本地安装方式见技术方案 §11.7.8。
 
+4. **环境地雷：宿主时钟回拨会让 node 子进程 abort（本机已取证，2026-10-04）**
+   症状：`Assertion failed: new_time >= loop->time, file src\win\core.c, line 327`，退出码 **`0xC0000409`**
+   （PowerShell 里显示 `-1073740791` 或 `3221226505`）；常见于 `vitest`、以及门禁批量派生 node 的场景，
+   表现为「一批命令在 0.2 秒内集体失败」。
+   根因：本机是虚拟化桌面（`HypervisorPresent: True`），宿主/内核对 guest 校时**含向后跳变**
+   （实例：`2026-10-04 10:02:59` 内核把系统时间**回拨 171 秒**，事件 `Kernel-General` Id=1；
+   `W32Time`/`vmictimesync`/`autotimesvc` 均为 Stopped，校时来自 PID 4 与某个 svchost 组件）。
+   libuv 的单调时钟断言因此失败——**与项目代码无关**；GitHub runner 不受影响，**CI 始终是权威**。
+   判定命令（失败时刻附近若有"时间增量更改"即为本因）：
+   `Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-General'; Id=1} -MaxEvents 10 | ForEach-Object { '{0:MM-dd HH:mm:ss}  {1}' -f $_.TimeCreated, ($_.Message -replace "`r?`n",' ') }`
+   处置：① 本地优先**直连** `node scripts/xxx.mjs`，不经 `cmd.exe`——`scripts/run-gates.mjs` 与
+   `scripts/lib/spawn-tool.mjs` 已内建「优先原生 .exe + pipe 捕获回显 + 崩溃码重试一次」；
+   ② `pnpm test` / `pnpm test:coverage` 走 `scripts/run-with-retry.mjs`，**只对该崩溃码**重试（会打印重试次数）；
+   ③ 看到非零退出码，先判断**是不是崩溃码**再下结论；④ **禁止**为了让本地"变绿"而放宽门禁或覆盖率阈值。
+
 ---
 
 ## 8. 动手前必查的章节索引

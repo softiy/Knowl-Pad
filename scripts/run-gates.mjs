@@ -1,16 +1,9 @@
 #!/usr/bin/env node
 // 本地等价于 PRD §8.4 的 13 项门禁；CI（.github/workflows/ci.yml）按同一顺序执行。
 // 用法：node scripts/run-gates.mjs [--only <id>] [--skip <id,...>]
-import { spawnSync } from 'node:child_process';
-
-/** 为 shell 执行转义单个参数：仅在含空白或 shell 元字符时加引号。 */
-function shellQuote(arg) {
-  const s = String(arg);
-  return /[\s"&|<>^()%!]/.test(s) ? '"' + s.replace(/"/g, '\\"') + '"' : s;
-}
-import { existsSync, writeFileSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { writeFileSync } from 'node:fs';
 import process from 'node:process';
+import { spawnTool } from './lib/spawn-tool.mjs';
 
 const GATES = [
   { id: '1', name: 'TypeScript 类型检查', cmd: ['pnpm', ['typecheck']] },
@@ -36,53 +29,12 @@ const argv = process.argv.slice(2);
 const only = argv.includes('--only') ? argv[argv.indexOf('--only') + 1] : null;
 const skip = (argv.includes('--skip') ? argv[argv.indexOf('--skip') + 1] : '').split(',').filter(Boolean);
 
-/**
- * 解析命令到可执行文件。
- *
- * **Windows 上刻意避免经 cmd.exe**：实测本机经 cmd 启动的 node 会立即以
- * libuv 时钟断言崩溃（退出码 0xC0000409），导致所有门禁"瞬间失败"；
- * 直连 .exe（node 用 process.execPath、pnpm 用 PATH 中的 pnpm.exe）则正常。
- * 仅在只找到 .cmd/.bat 包装器时才回退到 shell。
- */
-function resolveCommand(cmd) {
-  if (process.platform !== 'win32') return { command: cmd, shell: false };
-  if (cmd === 'node') return { command: process.execPath, shell: false };
-  const dirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
-  // 先在**全部** PATH 目录里找原生 .exe（避免同目录的 .cmd 抢先命中而被迫经 cmd.exe），
-  // 找不到才回退到 .cmd/.bat 包装器。
-  for (const dir of dirs) {
-    const candidate = join(dir, cmd + '.exe');
-    if (existsSync(candidate)) return { command: candidate, shell: false };
-  }
-  for (const dir of dirs) {
-    for (const ext of ['.cmd', '.bat']) {
-      const candidate = join(dir, cmd + ext);
-      if (existsSync(candidate)) return { command: candidate, shell: true };
-    }
-  }
-  return { command: cmd, shell: false };
-}
-
 function runStep(cmd, args) {
   const printable = [cmd, ...args].join(' ');
   console.log('\n\u25b6 ' + printable);
-  const started = Date.now();
-  const { command, shell } = resolveCommand(cmd);
-  let res;
-  // 用 pipe 捕获而非 inherit：本机沙箱下「继承控制台句柄的子 node」会**偶发** libuv 时钟断言
-  // 崩溃（退出码 0xC0000409 / -1073740791），pipe 模式稳定（实测 inherit 3 次中崩 1 次）。
-  // 捕获后原样回显，避免丢失输出；崩溃时重试一次。
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    res = shell
-      ? spawnSync([command, ...args].map(shellQuote).join(' '), { encoding: 'utf8', shell: true })
-      : spawnSync(command, args, { encoding: 'utf8' });
-    if (res.stdout) process.stdout.write(res.stdout);
-    if (res.stderr) process.stderr.write(res.stderr);
-    const code = res.status ?? 1;
-    if (code !== 3221226505 && code !== -1073740791) break;
-    console.error('\u26a0\ufe0f 子进程被沙箱崩溃打断（0xC0000409），重试一次…');
-  }
-  return { code: res.status ?? 1, ms: Date.now() - started, printable };
+  // 崩溃码重试一次；输出捕获与回显、不经 cmd.exe 等约束统一在 scripts/lib/spawn-tool.mjs 内
+  const r = spawnTool(cmd, args, { retries: 1 });
+  return { code: r.code, ms: r.ms, printable };
 }
 
 const results = [];
