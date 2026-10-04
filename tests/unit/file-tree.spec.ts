@@ -46,7 +46,15 @@ vi.mock('@core/ipc/commands', () => ({
   vaultStateSet: vi.fn(),
 }));
 
-import { fileReveal, fileTree, preferenceGet, vaultStateGet, type FileNode } from '@core/ipc/commands';
+import {
+  fileReveal,
+  fileTree,
+  preferenceGet,
+  preferenceSet,
+  vaultStateGet,
+  vaultStateSet,
+  type FileNode,
+} from '@core/ipc/commands';
 import { FileTree } from '@features/files';
 
 const mTree = vi.mocked(fileTree);
@@ -71,10 +79,13 @@ const renderedRows = (wrapper: ReturnType<typeof mountTree>) =>
 
 describe('FileTree 组件', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // resetAllMocks：避免上一个用例的 vaultStateGet（展开 'dir'）泄漏到下一个用例
+    vi.resetAllMocks();
     vstate.scrollTop = 0;
     vi.mocked(preferenceGet).mockResolvedValue({ values: {} });
     vi.mocked(vaultStateGet).mockResolvedValue({ values: {} });
+    vi.mocked(vaultStateSet).mockResolvedValue(undefined);
+    vi.mocked(preferenceSet).mockResolvedValue(undefined);
     mTree.mockResolvedValue([dir('dir'), note('root.md')]);
   });
 

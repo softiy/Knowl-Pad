@@ -46,9 +46,13 @@ function stubTree(): void {
 describe('useFileTreeStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
-    vi.clearAllMocks();
+    // 必须用 resetAllMocks：clearAllMocks 不会清掉上一个用例设置的 mockRejectedValue，
+    // 会把「持久化失败」的错误串到后续用例（CI 上真实踩到过）
+    vi.resetAllMocks();
     mPrefGet.mockResolvedValue({ values: {} });
     mStateGet.mockResolvedValue({ values: {} });
+    mStateSet.mockResolvedValue(undefined);
+    mPrefSet.mockResolvedValue(undefined);
     stubTree();
   });
 
