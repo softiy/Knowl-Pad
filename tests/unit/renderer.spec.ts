@@ -48,10 +48,12 @@ describe('renderMarkdown（§7.2 管线）', () => {
     expect(html).toContain('referrerpolicy="no-referrer"');
   });
 
-  it('data: 协议图片不被放行', () => {
+  it('data: 内联图片被阻止（不留 src、不留载荷）', () => {
+    // DOMPurify 对 img 的 DATA_URI_TAGS 默认放行 data:，故由图片策略显式阻止
     const html = renderMarkdown('<img src="data:image/svg+xml,<svg onload=alert(1)>">');
-    expect(html).not.toMatch(/data:image/i);
+    expect(html).not.toMatch(/src="data:/i);
     expect(html).not.toMatch(/onload/i);
+    expect(html).toContain('data-kp-blocked="inline"');
   });
 
   it('相同内容命中缓存（LRU 以 content 哈希为键）', () => {
