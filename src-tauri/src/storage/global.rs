@@ -81,6 +81,21 @@ pub fn upsert_vault(pool: &DbPool, abs_path: &str, display_name: &str) -> Result
     })
 }
 
+/// 置顶/取消置顶（FR-VAULT-07）。返回是否命中记录。
+///
+/// 列表排序已按 pinned 优先（见 list_vaults），M2 仅补写入入口（PRD 勘误 D-10）。
+pub fn set_pinned(pool: &DbPool, vault_id: i64, pinned: bool) -> Result<bool, AppError> {
+    pool.with_writer(move |conn| {
+        let affected = conn
+            .execute(
+                "UPDATE vault SET pinned = ?1 WHERE id = ?2",
+                rusqlite::params![i64::from(pinned), vault_id],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    })
+}
+
 /// 列出全部注册 Vault：置顶优先，其次按最近打开时间倒序（PRD §3.3 / FR-VAULT-07）。
 pub fn list_vaults(pool: &DbPool) -> Result<Vec<VaultRow>, AppError> {
     pool.with_reader(|conn| {

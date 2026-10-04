@@ -28,7 +28,7 @@ const GATES = [
   { id: '12', name: '可靠性测试集（AC-REL）', cmd: ['pnpm', ['test:reliability']] },
   { id: '13', name: '命名一致性与文件长度（门禁 13 + CODE-11）', cmd: [null, null], steps: [['pnpm', ['gate:naming']], ['node', ['scripts/check-file-length.mjs', '--self-test']], ['node', ['scripts/check-file-length.mjs']]] },
   { id: '16', name: '路径封装检查（SEC PATH-02）', cmd: ['pnpm', ['gate:path-encapsulation']] },
-  { id: '17', name: 'IPC 契约一致性（TS↔Rust）', cmd: ['node', ['scripts/verify-ipc-contract.mjs']] },
+  { id: '17', name: 'IPC 契约一致性（TS↔Rust）', cmd: [null, null], steps: [['node', ['scripts/verify-ipc-contract.mjs', '--self-test']], ['node', ['scripts/verify-ipc-contract.mjs']]] },
 ];
 
 const argv = process.argv.slice(2);
