@@ -111,6 +111,27 @@ export const vaultCurrent = (): Promise<VaultInfo | null> => call<VaultInfo | nu
 export const vaultRegisterRemove = (vaultId: number): Promise<void> =>
   callVoid('vault_register_remove', { args: { vaultId } });
 
+/** 设置域读取结果（PRD §5.3.9）：键 → JSON 值 */
+export interface ValuesResult {
+  values: Record<string, unknown>;
+}
+
+/** 读取偏好（全局库；keys 缺省表示全部） */
+export const preferenceGet = (keys?: string[]): Promise<ValuesResult> =>
+  call<ValuesResult>('preference_get', { args: { keys } });
+
+/** 批量写入偏好（全局库） */
+export const preferenceSet = (entries: Record<string, unknown>): Promise<void> =>
+  callVoid('preference_set', { args: { entries } });
+
+/** 读取**当前 Vault** 的界面状态（PRD 勘误 D-13 补齐；AC-FILE-08） */
+export const vaultStateGet = (keys?: string[]): Promise<ValuesResult> =>
+  call<ValuesResult>('vault_state_get', { args: { keys } });
+
+/** 批量写入当前 Vault 的界面状态（界面防抖后调用） */
+export const vaultStateSet = (entries: Record<string, unknown>): Promise<void> =>
+  callVoid('vault_state_set', { args: { entries } });
+
 /** 置顶 / 取消置顶（FR-VAULT-07；PRD 勘误 D-10 补齐的命令契约） */
 export const vaultPin = (vaultId: number, pinned: boolean): Promise<void> =>
   callVoid('vault_pin', { args: { vaultId, pinned } });

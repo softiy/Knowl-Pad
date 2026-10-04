@@ -306,7 +306,7 @@ src/
 ├── core/
 │   ├── ipc/
 │   │   ├── client.ts             #   invoke/event 的类型安全封装
-│   │   ├── commands.ts           #   60 个 Command 的强类型定义（自动生成，§8.3）
+│   │   ├── commands.ts           #   62 个 Command 的强类型定义（自动生成，§8.3）
 │   │   ├── events.ts             #   13 个事件的载荷类型
 │   │   └── errors.ts             #   KpError 与错误码常量
 │   ├── markdown/
@@ -2658,7 +2658,7 @@ impl serde::Serialize for AppError {
 
 ### 8.3 前后端契约同步（防止类型漂移）
 
-60 个 Command × 各自的入参/返回类型，手工维护 TS 与 Rust 两份定义**必然**产生漂移。采用**手写 + CI 契约校验**：
+62 个 Command × 各自的入参/返回类型，手工维护 TS 与 Rust 两份定义**必然**产生漂移。采用**手写 + CI 契约校验**：
 
 ```
 Rust struct（唯一真相源）
@@ -3140,7 +3140,7 @@ pub fn validate_filename(name: &str) -> Result<()> {
 | 层级 | 实现要点 |
 | --- | --- |
 | **Rust 单元测试** | `domain/` 每个模块内嵌 `#[cfg(test)] mod tests`。解析器（`md_parse/`）用 PRD 附录 B 的 25 个用例做数据驱动测试：`#[test] fn b01_simple_wikilink()` ... 每个规则至少一正例一反例（TEST-01）。测试用 `tempfile` 创建临时 Vault，禁止依赖固定路径 |
-| **Rust 集成测试** | `src-tauri/tests/` 目录。构造真实临时 Vault → 调用 domain 函数 → 断言数据库状态。覆盖全部 60 个 Command 的正向 + 错误路径（PRD §8.3） |
+| **Rust 集成测试** | `src-tauri/tests/` 目录。构造真实临时 Vault → 调用 domain 函数 → 断言数据库状态。覆盖全部 62 个 Command 的正向 + 错误路径（PRD §8.3） |
 | **前端单元测试** | `vitest` + `@vue/test-utils` + `jsdom`。`core/utils` 纯函数覆盖率 ≥ 90%；核心组件（编辑器、文件树、搜索、反链面板）必测交互 |
 | **契约测试** | `scripts/verify-ipc-contract.mjs`（§8.3）。CI 门禁，防止 TS/Rust 类型漂移与 Command 数量不符 |
 | **E2E** | `tauri-driver` + `WebDriverIO`。覆盖 PRD §1.3 的 10 个核心场景。**注意**：`tauri-driver` 在 macOS 上支持受限（WebDriver 对 WKWebView 支持不完整），macOS E2E 可能需降级为关键路径人工验证，此限制须在 M0 确认并记录 |

@@ -16,6 +16,7 @@ use commands::file_write::{
     file_delete, file_move, file_rename, file_reveal, folder_create, note_create,
 };
 use commands::note::{note_read, note_write};
+use commands::settings::{preference_get, preference_set, vault_state_get, vault_state_set};
 use commands::system::{ping, system_info};
 use commands::vault::{
     index_status, vault_close, vault_create, vault_current, vault_list, vault_open, vault_pin,
@@ -112,6 +113,10 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
+            preference_get,
+            preference_set,
+            vault_state_get,
+            vault_state_set,
             ping,
             system_info,
             note_create,
