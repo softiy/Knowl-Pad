@@ -27,6 +27,13 @@ export interface EditorBuffer {
 }
 
 /** 自动保存防抖默认值（FR-EDITOR-30：默认 1s，可配 0.5–5s）。 */
+/**
+ * 「基线未知」哨兵：重命名等场景下磁盘 mtime 已变、不能再用旧值做冲突检测。
+ * ⚠️ **绝不能把这个值发给 Rust**——它按 epoch 毫秒比较，Some(-1) 会永远判为冲突（B1）。
+ * 保存时必须以 undefined（即 Rust 的 None）表达「不做基线检测」。
+ */
+export const MTIME_UNKNOWN = -1;
+
 export const AUTOSAVE_DEFAULT_MS = 1000;
 export const AUTOSAVE_MIN_MS = 500;
 export const AUTOSAVE_MAX_MS = 5000;
@@ -130,7 +137,8 @@ export const useEditorStore = defineStore('editor', () => {
     buffer.saving = true;
     buffer.error = null;
     try {
-      const result = await noteWrite(relPath, buffer.content, buffer.mtimeMs);
+      const baseMtime = buffer.mtimeMs >= 0 ? buffer.mtimeMs : undefined;
+      const result = await noteWrite(relPath, buffer.content, baseMtime);
       buffer.mtimeMs = result.newMtime;
       buffer.savedContent = buffer.content;
       buffer.conflict = false;
@@ -184,7 +192,7 @@ export const useEditorStore = defineStore('editor', () => {
     cancelAutosave(oldRelPath);
     buffer.relPath = newRelPath;
     // 重命名后磁盘 mtime 变化，基线置空由下次保存刷新（内容与 dirty 状态保持不变）
-    buffer.mtimeMs = -1;
+    buffer.mtimeMs = MTIME_UNKNOWN;
     if (activeRelPath.value === oldRelPath) activeRelPath.value = newRelPath;
   }
 

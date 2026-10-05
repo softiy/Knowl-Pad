@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { asKpError } from '@core/ipc/errors';
 import { bindShortcuts } from '@core/shortcut';
 import { createEditorAdapter, type KpEditorAdapter } from '../adapter';
 import { AUTOSAVE_DEFAULT_MS, useEditorStore, type ConflictChoice, type EditorMode } from '../stores/editor';
@@ -35,6 +36,7 @@ const caseSensitive = ref(false);
 const wholeWord = ref(false);
 const useRegex = ref(false);
 const matchCount = ref<number | null>(null);
+const findError = ref<string | null>(null);
 
 function currentFindOptions(): { caseSensitive: boolean; wholeWord: boolean; regex: boolean } {
   return { caseSensitive: caseSensitive.value, wholeWord: wholeWord.value, regex: useRegex.value };
@@ -45,9 +47,17 @@ function runFind(): void {
   if (!adapter) return;
   if (!query.value) {
     matchCount.value = null;
+    findError.value = null;
     return;
   }
-  matchCount.value = adapter.find(query.value, currentFindOptions()).length;
+  try {
+    matchCount.value = adapter.find(query.value, currentFindOptions()).length;
+    findError.value = null;
+  } catch (err) {
+    // 无效正则等输入错误：给出可见提示，绝不让面板静默失效
+    matchCount.value = null;
+    findError.value = asKpError(err).message;
+  }
 }
 
 /** 全部替换（FR-EDITOR-09 允许「逐条确认或全部替换」，此处实现全部替换并回显剩余命中数）。 */
@@ -157,6 +167,7 @@ function resolveConflict(choice: ConflictChoice): void {
       <button type="button" data-testid="find-run" @click="runFind">查找</button>
       <button type="button" data-testid="replace-all" :disabled="!query" @click="replaceAll">全部替换</button>
       <span class="kp-editor__hint" data-testid="find-count">{{ matchCount === null ? '—' : matchCount }} 处</span>
+      <span v-if="findError" class="kp-editor__error" data-testid="find-error">{{ findError }}</span>
     </div>
 
     <ConflictDialog
@@ -177,7 +188,7 @@ function resolveConflict(choice: ConflictChoice): void {
       <div v-show="store.mode !== 'edit'" class="kp-editor__preview" data-testid="editor-preview">
         <MarkdownView
           v-if="active"
-          :source="store.mode === 'read' ? (active.content ?? '') : (active.content ?? '')"
+          :source="active.content ?? ''"
           :cache-scope="active.relPath"
         />
       </div>

@@ -108,7 +108,9 @@ describe('useEditorStore', () => {
     expect(store.buffers[0].content).toBe('未保存的编辑');
     expect(store.isDirty('dir/b.md')).toBe(true);
     await store.save('dir/b.md');
-    expect(mWrite).toHaveBeenLastCalledWith('dir/b.md', '未保存的编辑', -1);
+    // B1 回归：重命名后基线未知，**必须发 undefined**（Rust 侧 None = 不做基线检测）；
+    // 发 -1 会与 epoch 毫秒比较而永远判为写冲突。
+    expect(mWrite).toHaveBeenLastCalledWith('dir/b.md', '未保存的编辑', undefined);
   });
 
   it('FR-EDITOR-35：标签重排（越界索引忽略）', async () => {

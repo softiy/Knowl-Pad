@@ -118,6 +118,22 @@ describe('EditorView', () => {
     expect(mWrite).toHaveBeenCalledWith('a.md', '需要保存的修改', 100);
     expect(store.buffers).toHaveLength(0);
   });
+  it('R-07：保存失败时「保存并关闭」必须保留标签并提示', async () => {
+    const { wrapper, store } = await mountView();
+    await store.openNote('a.md');
+    await flushPromises();
+    store.updateContent('a.md', '写不进去的内容');
+    mWrite.mockRejectedValueOnce({ code: 'E_PERMISSION_DENIED', message: '没有写入权限' });
+    await flushPromises();
+    await wrapper.find('[data-testid="tab-close"]').trigger('click');
+    const saveAndClose = wrapper
+      .findAll('[data-testid="close-confirm"] button')
+      .find((b) => b.text() === '保存并关闭');
+    await saveAndClose?.trigger('click');
+    await flushPromises();
+    expect(store.buffers).toHaveLength(1);
+    expect(wrapper.find('[data-testid="close-save-failed"]').exists()).toBe(true);
+  });
   it('FR-EDITOR-34：冲突时展示三选项并回调 store', async () => {
     const { wrapper, store } = await mountView();
     await store.openNote('a.md');
@@ -230,6 +246,20 @@ describe('EditorView', () => {
     expect(hoisted.adapter.setValue).toHaveBeenCalledWith('外部版本');
   });
 
+  it('无效正则给出可见提示，面板不静默失效', async () => {
+    const { wrapper, store } = await mountView();
+    await store.openNote('a.md');
+    await flushPromises();
+    hoisted.adapter.find.mockImplementationOnce(() => {
+      throw { code: 'E_INVALID_INPUT', message: '正则表达式无效：未闭合的字符类' };
+    });
+    await wrapper.find('[data-testid="find-toggle"]').trigger('click');
+    await wrapper.find('[data-testid="find-query"]').setValue('[');
+    await flushPromises();
+    const err = wrapper.find('[data-testid="find-error"]');
+    expect(err.exists()).toBe(true);
+    expect(err.text()).toContain('正则表达式无效');
+  });
   it('AC-EDITOR-06（结构保证）：保存不会重置内核内容，撤销栈不会被清空', async () => {
     const { store } = await mountView();
     await store.openNote('a.md');

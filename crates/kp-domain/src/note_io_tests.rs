@@ -190,3 +190,28 @@ fn recursive_cleanup_on_missing_dir_is_zero() {
         0
     );
 }
+
+/// B1 回归：**负数不是通配符**——Rust 侧按 epoch 毫秒比较，Some(-1) 必然冲突。
+/// 这正是「基线未知」必须以 None 表达的原因（前端曾把 -1 当哨兵发送）。
+#[test]
+fn base_mtime_negative_is_not_wildcard() {
+    let d = dir();
+    let target = d.path().join("a.md");
+    write_note(&target, b"one", None).unwrap();
+    let err = write_note(&target, b"two", Some(-1)).unwrap_err();
+    assert_eq!(err.code(), "E_WRITE_CONFLICT");
+    assert_eq!(read_note(&target).unwrap(), b"one");
+}
+
+/// None = 不做基线检测：文件被外部改过也必须能写入（重命名后的首次保存走这条路）。
+#[test]
+fn base_mtime_none_skips_conflict_check() {
+    let d = dir();
+    let target = d.path().join("a.md");
+    write_note(&target, b"one", None).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    write_note(&target, b"external", None).unwrap();
+    let new_mtime = write_note(&target, b"mine", None).unwrap();
+    assert!(new_mtime > 0);
+    assert_eq!(read_note(&target).unwrap(), b"mine");
+}

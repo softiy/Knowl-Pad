@@ -114,7 +114,18 @@ fn append_trash_manifest(
         deleted_at_ms,
         json_escape(trash_rel_path),
     );
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    // ⚠️ 读失败**绝不能**当作空清单：否则下一次写入会把整个历史条目清空（FR-TRASH-12 的清单是权威来源）。
+    let existing = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(_err) => {
+            // kp-domain 不依赖日志框架（见 error.rs）：细节由存储/命令层记录，这里只给用户可操作文案
+            return Err(AppError::IoFailure(
+                "回收站清单无法读取，已中止删除以免历史记录丢失；请检查 .knowlpad 目录权限后重试"
+                    .to_string(),
+            ));
+        }
+    };
     let trimmed = existing.trim_end();
     let next = if trimmed.is_empty() {
         format!("[\n{entry}\n]\n")
@@ -126,9 +137,8 @@ fn append_trash_manifest(
             "回收站清单格式异常，已中止删除以避免记录丢失".to_string(),
         ));
     };
-    let mut file = std::fs::File::create(&path)?;
-    file.write_all(next.as_bytes())?;
-    file.sync_all()?;
+    // R-06：清单是权威数据，必须原子写（临时文件 + rename），避免中途失败留下半截 JSON
+    crate::note_io::atomic_write(&path, next.as_bytes())?;
     Ok(())
 }
 
@@ -150,7 +160,7 @@ fn json_escape(input: &str) -> String {
     out
 }
 
-/// 为已存在的目标找一个不冲突的同级名字：`name.md` → `name 1.md`（FR-ATTACH-05 的命名习惯）。
+/// 当前时间戳（毫秒）。回收站清单的 `deletedAtMs` 用它。
 pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

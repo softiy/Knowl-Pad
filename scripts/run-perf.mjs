@@ -80,7 +80,12 @@ function loadBaseline(raw) {
 }
 
 const baseline = loadBaseline(existsSync(BASELINE) ? await readFile(BASELINE, 'utf8') : null);
-const update = !existsSync(BASELINE) || argv.includes('--update-baseline');
+const update = argv.includes('--update-baseline');
+if (!existsSync(BASELINE) && !update) {
+  // 门禁不得"自愈"：基线缺失时写一份新的并放行，等于把性能门禁变成永真（删文件即可绕过）。
+  console.error('❌ 缺少性能基线 ' + BASELINE + '。首次建立请显式执行：pnpm test:perf -- --update-baseline');
+  process.exit(2);
+}
 let failed = false;
 
 // 预热（丢弃）
@@ -90,13 +95,18 @@ for (const metric of METRICS) {
   const current = metric.run();
   const stored = baseline.metrics[metric.key];
   console.log(metric.label + '：min(批次中位数) = ' + current + ' ms');
-  if (update || !stored) {
+  if (update) {
     baseline.metrics[metric.key] = { value: current, docBytes: metric.docBytes, updatedAt: new Date().toISOString() };
     console.log('  ✓ 基线已' + (stored ? '更新' : '写入'));
     continue;
   }
   if (metric.budgetMs && current > metric.budgetMs) {
     console.error('  ❌ 超出预算 ' + metric.budgetMs + ' ms（实测 ' + current + ' ms）');
+    failed = true;
+    continue;
+  }
+  if (!stored) {
+    console.error('  ❌ 基线中没有该指标（新增指标需在本次提交内用 --update-baseline 建立基线）');
     failed = true;
     continue;
   }

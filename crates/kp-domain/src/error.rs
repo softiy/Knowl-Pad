@@ -64,6 +64,18 @@ impl AppError {
         ))
     }
 
+    /// 带「路径上下文」的 io 错误构造（ERR-02）：message 里出现的是**相对路径**，不是 io 原文。
+    pub fn io_at(rel_path: &str, err: &std::io::Error) -> Self {
+        match err.kind() {
+            std::io::ErrorKind::NotFound => Self::FileNotFound(rel_path.to_string()),
+            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied(rel_path.to_string()),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::ResourceBusy => {
+                Self::FileLocked(rel_path.to_string())
+            }
+            _ => Self::IoFailure(rel_path.to_string()),
+        }
+    }
+
     /// 变体名（**不含用户数据**）。用于日志的「上下文」字段——SEC-09 禁止在日志中
     /// 记录笔记正文与 Vault 绝对路径，故此处只暴露错误**类别**。
     pub fn kind(&self) -> &'static str {
@@ -87,13 +99,58 @@ impl AppError {
 }
 
 impl From<std::io::Error> for AppError {
+    /// ERR-02：用户可见文案必须**中文、可操作**——**绝不把 io 原文（英文 + os error 码）放进 message**。
+    ///
+    /// 这些变体的载荷会直接插进 message，因此这里放的是「给用户的处置建议」；
+    /// 原始 io 细节由调用方写日志（ERR-04），需要路径上下文时用 [`AppError::io_at`]。
     fn from(err: std::io::Error) -> Self {
         match err.kind() {
-            std::io::ErrorKind::NotFound => Self::FileNotFound(err.to_string()),
+            std::io::ErrorKind::NotFound => {
+                Self::FileNotFound("文件可能已被移动或删除，请刷新后重试".to_string())
+            }
             // PRD §5.2 有独立错误码：前端需要区分「没权限」与「磁盘/读写失败」
-            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied(err.to_string()),
-            _ => Self::IoFailure(err.to_string()),
+            std::io::ErrorKind::PermissionDenied => {
+                Self::PermissionDenied("请检查文件或目录权限后重试".to_string())
+            }
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::ResourceBusy => {
+                Self::FileLocked("请关闭占用该文件的程序后重试".to_string())
+            }
+            _ => Self::IoFailure("请确认磁盘空间充足、文件未被占用，然后重试".to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod err02_tests {
+    use super::*;
+
+    /// ERR-02 回归：由 io::Error 派生的用户可见文案必须是中文，且**不含 io 原文**
+    /// （曾出现「文件不存在：No such file or directory (os error 2)」）。
+    #[test]
+    fn io_errors_are_chinese() {
+        let cases = [
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            std::io::Error::new(std::io::ErrorKind::Other, "disk exploded"),
+        ];
+        for err in cases {
+            let message = AppError::from(err).to_string();
+            assert!(
+                message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+                "用户可见文案必须含中文：{message}"
+            );
+            assert!(!message.contains("os error"), "不得出现 io 原文：{message}");
+            assert!(!message.contains("disk exploded"), "不得出现 io 原文：{message}");
+        }
+    }
+
+    /// 带路径上下文时，message 里出现的是**相对路径**，仍然不出现 io 原文。
+    #[test]
+    fn io_at_uses_relative_path_as_context() {
+        let err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let message = AppError::io_at("dir/a.md", &err).to_string();
+        assert!(message.contains("dir/a.md"));
+        assert!(!message.contains("Permission denied"));
     }
 }
 

@@ -43,7 +43,7 @@ const title = computed(() => (ops.dialog ? titles[ops.dialog.mode] : ''));
       </p>
 
       <div v-if="ops.dialog.conflict" class="kp-fileops__conflict" data-testid="fileops-conflict">
-        <p>目标已存在。覆盖前会**自动备份原文件**，请选择处理方式：</p>
+        <p>目标已存在。覆盖前会<strong>自动备份原文件</strong>，请选择处理方式：</p>
         <button type="button" data-testid="conflict-overwrite" @click="ops.resolveConflict('overwrite')">覆盖</button>
         <button type="button" data-testid="conflict-rename-new" @click="ops.resolveConflict('renameNew')">重命名新建</button>
         <button type="button" data-testid="conflict-cancel" @click="ops.resolveConflict('cancel')">取消</button>
