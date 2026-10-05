@@ -55,10 +55,11 @@ check '"/(Users|home|root)/'          '前端出现 Unix 绝对路径字面量�
 #    是合法且普遍写法，若不排除会导致门禁全量误报。
 #    实现方式：先用 rg 粗筛出含 ../ 的行，再用 grep -v 剔除导入语句。
 #    不用 `rg -P`（PCRE2）：部分发行版打包的 ripgrep 未启用该特性，会直接报错。
+# 仅排除「模块说明符」中的 ../：静态 from '...'、bare import '...'、require('...')、动态 import('...')。
+# ⚠️ 不能因为一行以 import/export 开头就整行排除——那会放过形如
+#    「export const p = base + '../x'」的真实运行时路径拼接（2026-10-05 实测漏报后修正）。
 traversal_hits=$(rg_scan --regexp '\.\.[\\/]' \
-  | grep -Ev '^[^:]+:[0-9]+:\s*(import|export)\b' \
-  | grep -Ev '\bfrom\s+['"'"'"]' \
-  | grep -Ev '\brequire\s*\(' \
+  | grep -Ev '\b(from|import|require)\s*\(?\s*['"'"'"][^'"'"'"]*\.\.[\\/]' \
   || true)
 if [[ -n "$traversal_hits" ]]; then
   echo "❌ 路径封装违规：前端出现路径回溯片段（路径穿越风险，SEC-02）"
