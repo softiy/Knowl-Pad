@@ -8,7 +8,6 @@
 use crate::error::AppError;
 use crate::path_guard::PathGuard;
 use crate::vault_paths::{BACKUP_DIR, INTERNAL_DIR, TRASH_DIR, TRASH_MANIFEST};
-use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 

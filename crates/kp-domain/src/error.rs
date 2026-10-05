@@ -131,16 +131,21 @@ mod err02_tests {
         let cases = [
             std::io::Error::from(std::io::ErrorKind::NotFound),
             std::io::Error::from(std::io::ErrorKind::PermissionDenied),
-            std::io::Error::new(std::io::ErrorKind::Other, "disk exploded"),
+            std::io::Error::other("disk exploded"),
         ];
         for err in cases {
             let message = AppError::from(err).to_string();
             assert!(
-                message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+                message
+                    .chars()
+                    .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
                 "用户可见文案必须含中文：{message}"
             );
             assert!(!message.contains("os error"), "不得出现 io 原文：{message}");
-            assert!(!message.contains("disk exploded"), "不得出现 io 原文：{message}");
+            assert!(
+                !message.contains("disk exploded"),
+                "不得出现 io 原文：{message}"
+            );
         }
     }
 
