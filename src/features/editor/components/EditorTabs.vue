@@ -8,6 +8,8 @@ const store = useEditorStore();
 const pendingClose = ref<string[] | null>(null);
 const dragIndex = ref<number | null>(null);
 const menu = ref<{ x: number; y: number; relPath: string } | null>(null);
+/** 保存失败而未能关闭的标签（R-07：留在界面上，由编辑器面板展示错误） */
+const saveFailed = ref<string[]>([]);
 
 const pendingNames = computed(() => (pendingClose.value ?? []).map((p) => baseName(p)).join('、'));
 
@@ -38,7 +40,12 @@ function confirmClose(mode: 'save' | 'discard'): void {
     return;
   }
   void Promise.all(targets.filter((p) => store.isDirty(p)).map((p) => store.save(p))).then(() => {
-    applyClose(targets);
+    // R-07：**保存失败的标签必须保持打开**——save() 内部吞掉错误（写冲突/权限）后 promise 仍会 resolve，
+    // 因此以「是否还脏」判定是否真的保存成功，绝不静默丢弃内容。
+    const closable = targets.filter((p) => !store.isDirty(p));
+    const blocked = targets.filter((p) => store.isDirty(p));
+    if (blocked.length > 0) saveFailed.value = blocked;
+    if (closable.length > 0) applyClose(closable);
   });
 }
 
@@ -125,6 +132,11 @@ function onDrop(index: number): void {
       <button type="button" @click="runMenuAction('copyPath')">复制相对路径</button>
     </div>
 
+    <div v-if="saveFailed.length > 0" class="kp-tabs__failed" data-testid="close-save-failed">
+      <span>「{{ saveFailed.join('、') }}」保存失败，标签已保留（请处理后重试）</span>
+      <button type="button" @click="saveFailed = []">知道了</button>
+    </div>
+
     <div v-if="pendingClose" class="kp-tabs__confirm" data-testid="close-confirm">
       <span>「{{ pendingNames }}」有未保存的修改：</span>
       <button type="button" @click="confirmClose('save')">保存并关闭</button>
@@ -145,5 +157,6 @@ function onDrop(index: number): void {
 .kp-tabs__menu { position: fixed; z-index: 100; display: flex; flex-direction: column; min-width: 140px; padding: 4px; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 4px 12px rgb(0 0 0 / 15%); }
 .kp-tabs__menu button { text-align: left; padding: 4px 8px; background: none; border: 0; cursor: pointer; font-size: 13px; }
 .kp-tabs__menu button:hover { background: #f2f2f2; }
+.kp-tabs__failed { display: flex; gap: 8px; align-items: center; padding: 4px 8px; background: #ffeaea; color: #b00020; font-size: 12px; }
 .kp-tabs__confirm { display: flex; gap: 8px; align-items: center; padding: 4px 8px; background: #fff8e1; font-size: 12px; }
 </style>

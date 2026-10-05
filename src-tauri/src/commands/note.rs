@@ -54,8 +54,14 @@ pub async fn note_read(
     let task = tauri::async_runtime::spawn_blocking(move || {
         let path = resolve_in(&root, &rel_path)?;
         let bytes = note_io::read_note(&path)?;
-        let content = String::from_utf8(bytes)
-            .map_err(|err| KpError(kp_domain::error::AppError::IoFailure(err.to_string())))?;
+        let content = String::from_utf8(bytes).map_err(|err| {
+            // ERR-02：不把 io/编码库的英文原文透给用户
+            tracing::warn!(error = %err, "笔记不是有效 UTF-8");
+            KpError(kp_domain::error::AppError::IoFailure(
+                "该文件不是有效的 UTF-8 文本，可能不是 Markdown 笔记或已损坏；请用外部编辑器确认编码"
+                    .to_string(),
+            ))
+        })?;
         let mtime_ms = note_io::mtime_ms(&path).map_err(KpError)?;
         let size_bytes = std::fs::metadata(&path)
             .map_err(|err| KpError(kp_domain::error::AppError::from(err)))?

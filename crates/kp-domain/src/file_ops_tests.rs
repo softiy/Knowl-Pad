@@ -290,3 +290,20 @@ fn conflict_policy_parse_roundtrip() {
     );
     assert!(ConflictPolicy::parse("nope").is_err());
 }
+
+/// M3 回归：清单**不可读**时必须报错中止删除，绝不能当作空清单再覆盖写
+/// （否则下一次删除会把全部历史条目清空，而清单是 FR-TRASH-12 的权威来源）。
+#[test]
+fn delete_path_aborts_when_manifest_unreadable() {
+    let (_d, root) = vault();
+    create_note(&root, "a.md", "# 内容", ConflictPolicy::Cancel).expect("新建应成功");
+    let manifest = root.join(".knowlpad").join("trash").join("manifest.json");
+    fs::create_dir_all(manifest.parent().expect("父目录")).expect("建目录");
+    fs::write(&manifest, [0xff, 0xfe, 0x00]).expect("写坏清单");
+    let before = fs::read(&manifest).expect("读回");
+
+    let err = delete_path(&root, "a.md", false).unwrap_err();
+    assert_eq!(err.code(), "E_IO_FAILURE");
+    assert_eq!(fs::read(&manifest).expect("读回"), before, "清单不得被覆盖");
+    assert!(root.join("a.md").exists(), "删除中止后原文件必须仍在");
+}

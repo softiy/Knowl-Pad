@@ -77,7 +77,6 @@ describe('WorkspaceLayout（M2 接线）', () => {
       ['newFolder', 'dir', true],
       ['delete', 'dir/a.md', false],
     ] as const) {
-      wrapper.find('[data-testid="fileops-cancel"]').exists();
       tree.vm.$emit('action', { type, relPath, isDir });
       await flushPromises();
       expect(wrapper.find('[data-testid="fileops-dialog"]').exists()).toBe(true);

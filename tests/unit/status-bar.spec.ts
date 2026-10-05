@@ -102,6 +102,27 @@ describe('StatusBar（FR-VAULT-11/12、FR-STORAGE-03）', () => {
     expect(wrapper.find('[data-testid="git-hint"]').exists()).toBe(false);
   });
 
+  it('M9：切换 Vault 后重新计算状态与提示（不是只读一次）', async () => {
+    mIndex.mockResolvedValue({ indexDir: 'd', indexDb: 'db', ready: true });
+    mTree.mockResolvedValue([{ relPath: '.git', name: '.git', isDir: true, kind: 'other' }]);
+    const wrapper = mountBar();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="git-hint"]').exists()).toBe(true);
+    // 切到一个非 Git 仓库：提示必须消失
+    mTree.mockResolvedValue([{ relPath: 'a.md', name: 'a.md', isDir: false, kind: 'note' }]);
+    await wrapper.setProps({ vault: { ...VAULT, root: 'C:/other', displayName: '另一个库' } });
+    await flushPromises();
+    expect(wrapper.find('[data-testid="status-vault"]').text()).toBe('另一个库');
+    expect(wrapper.find('[data-testid="git-hint"]').exists()).toBe(false);
+  });
+
+  it('R-15：Git 检测失败可见，不伪装成「没有 Git 仓库」', async () => {
+    mIndex.mockResolvedValue({ indexDir: 'd', indexDb: 'db', ready: true });
+    mTree.mockRejectedValueOnce({ code: 'E_IO_FAILURE', message: '目录不可读' });
+    const wrapper = mountBar();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="git-check-failed"]').exists()).toBe(true);
+  });
   it('已关闭过提示则不再显示', async () => {
     vi.mocked(preferenceGet).mockResolvedValue({ values: { 'ui.gitHintDismissed': true } });
     mIndex.mockResolvedValue({ indexDir: 'd', indexDb: 'db', ready: true });
