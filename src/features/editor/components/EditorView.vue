@@ -27,6 +27,46 @@ const modes: { value: EditorMode; label: string }[] = [
 ];
 const autosaveOptions = [500, AUTOSAVE_DEFAULT_MS, 2000, 3000, 5000];
 
+/** 文件内查找替换（FR-EDITOR-09）：查找/替换都通过适配器，换内核（M8）不外溢。 */
+const findOpen = ref(false);
+const query = ref('');
+const replacement = ref('');
+const caseSensitive = ref(false);
+const wholeWord = ref(false);
+const useRegex = ref(false);
+const matchCount = ref<number | null>(null);
+
+function currentFindOptions(): { caseSensitive: boolean; wholeWord: boolean; regex: boolean } {
+  return { caseSensitive: caseSensitive.value, wholeWord: wholeWord.value, regex: useRegex.value };
+}
+
+/** 执行查找并更新命中数（空查询不视为错误，只清空计数）。 */
+function runFind(): void {
+  if (!adapter) return;
+  if (!query.value) {
+    matchCount.value = null;
+    return;
+  }
+  matchCount.value = adapter.find(query.value, currentFindOptions()).length;
+}
+
+/** 全部替换（FR-EDITOR-09 允许「逐条确认或全部替换」，此处实现全部替换并回显剩余命中数）。 */
+function replaceAll(): void {
+  if (!adapter || !query.value) return;
+  const matches = adapter.find(query.value, currentFindOptions());
+  if (matches.length === 0) {
+    matchCount.value = 0;
+    return;
+  }
+  adapter.replace(matches, replacement.value);
+  matchCount.value = adapter.find(query.value, currentFindOptions()).length;
+}
+
+function toggleFind(): void {
+  findOpen.value = !findOpen.value;
+  if (findOpen.value) runFind();
+}
+
 onMounted(() => {
   adapter = createEditorAdapter();
   if (hostRef.value) {
@@ -55,12 +95,12 @@ watch(
     adapter?.setValue(active.value?.content ?? '');
   },
 );
-// 内容被 store 侧改动（如「加载外部版本」）：同步进内核
+// **只在 store 侧整体替换**时回灌内核（如「加载外部版本」）。
+// 刻意不监听 content：内核自身产生的编辑也会改变 content，回灌会清空内核的撤销栈（AC-EDITOR-06）。
 watch(
-  () => active.value?.content,
-  (next) => {
-    if (next === undefined || !adapter) return;
-    if (adapter.getValue() !== next) adapter.setValue(next);
+  () => active.value?.replacedAt,
+  () => {
+    adapter?.setValue(active.value?.content ?? '');
   },
 );
 
@@ -101,11 +141,23 @@ function resolveConflict(choice: ConflictChoice): void {
           <option v-for="ms in autosaveOptions" :key="ms" :value="ms">{{ ms / 1000 }} 秒</option>
         </select>
       </label>
+      <button type="button" data-testid="find-toggle" @click="toggleFind">查找替换</button>
       <span v-if="active?.saving" class="kp-editor__hint" data-testid="saving">保存中…</span>
       <span v-else-if="active && store.isDirty(active.relPath)" class="kp-editor__hint">未保存</span>
     </header>
 
     <EditorTabs />
+
+    <div v-if="findOpen" class="kp-editor__find" data-testid="find-panel">
+      <input v-model="query" data-testid="find-query" placeholder="查找" @input="runFind">
+      <input v-model="replacement" data-testid="find-replacement" placeholder="替换为">
+      <label><input v-model="caseSensitive" type="checkbox" @change="runFind">区分大小写</label>
+      <label><input v-model="wholeWord" type="checkbox" @change="runFind">全字匹配</label>
+      <label><input v-model="useRegex" type="checkbox" @change="runFind">正则</label>
+      <button type="button" data-testid="find-run" @click="runFind">查找</button>
+      <button type="button" data-testid="replace-all" :disabled="!query" @click="replaceAll">全部替换</button>
+      <span class="kp-editor__hint" data-testid="find-count">{{ matchCount === null ? '—' : matchCount }} 处</span>
+    </div>
 
     <ConflictDialog
       v-if="active?.conflict"
@@ -141,6 +193,8 @@ function resolveConflict(choice: ConflictChoice): void {
 .kp-editor__hint { color: #b26a00; }
 .kp-editor__error { margin: 0; padding: 6px 8px; color: #b00020; font-size: 12px; }
 .kp-editor__empty { margin: 0; padding: 12px; color: #666; }
+.kp-editor__find { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--kp-border, #ddd); font-size: 12px; }
+.kp-editor__find input[type='text'], .kp-editor__find input:not([type]) { min-width: 120px; }
 .kp-editor__body { flex: 1; display: flex; min-height: 0; }
 .kp-editor__host { flex: 1; min-width: 0; overflow: auto; }
 .kp-editor__preview { flex: 1; min-width: 0; overflow: auto; padding: 8px 12px; border-left: 1px solid var(--kp-border, #ddd); }

@@ -19,6 +19,9 @@ export interface EditorBuffer {
   error: string | null;
   /** 磁盘文件在打开期间被外部修改（FR-EDITOR-34） */
   conflict: boolean;
+  /** 计数器：仅当 **store 侧整体替换**了内容时递增（如「加载外部版本」）。
+   *  视图据此显式回灌内核——**不能**监听 content 本身，否则内核自己的编辑会被回灌并清空其撤销栈（AC-EDITOR-06）。 */
+  replacedAt: number;
   /** 「查看差异」的结果（仅在与外部版本比较后填充） */
   diff: DiffLine[] | null;
 }
@@ -37,6 +40,7 @@ function toBuffer(relPath: string, content: string, mtimeMs: number): EditorBuff
     saving: false,
     error: null,
     conflict: false,
+    replacedAt: 0,
     diff: null,
   };
 }
@@ -157,6 +161,7 @@ export const useEditorStore = defineStore('editor', () => {
       buffer.mtimeMs = note.mtimeMs;
       buffer.conflict = false;
       buffer.error = null;
+      buffer.replacedAt += 1; // 显式通知视图回灌内核
       return;
     }
     if (choice === 'keepMine') {
@@ -181,6 +186,42 @@ export const useEditorStore = defineStore('editor', () => {
     // 重命名后磁盘 mtime 变化，基线置空由下次保存刷新（内容与 dirty 状态保持不变）
     buffer.mtimeMs = -1;
     if (activeRelPath.value === oldRelPath) activeRelPath.value = newRelPath;
+  }
+
+  /** 标签重排（FR-EDITOR-35 的拖拽排序）：越界索引忽略，不做部分移动。 */
+  function reorderTab(fromIndex: number, toIndex: number): void {
+    const list = [...buffers.value];
+    if (fromIndex === toIndex) return;
+    if (fromIndex < 0 || fromIndex >= list.length || toIndex < 0 || toIndex >= list.length) return;
+    const [moved] = list.splice(fromIndex, 1);
+    list.splice(toIndex, 0, moved);
+    buffers.value = list;
+  }
+
+  /** 关闭其他标签（FR-EDITOR-35）；未保存内容由调用方先确认。 */
+  function closeOthers(relPath: string): void {
+    if (!find(relPath)) return;
+    for (const buffer of buffers.value) {
+      if (buffer.relPath !== relPath) cancelAutosave(buffer.relPath);
+    }
+    buffers.value = buffers.value.filter((b) => b.relPath === relPath);
+    activeRelPath.value = relPath;
+  }
+
+  /** 关闭右侧标签（FR-EDITOR-35）；未保存内容由调用方先确认。 */
+  function closeToTheRight(relPath: string): void {
+    const index = buffers.value.findIndex((b) => b.relPath === relPath);
+    if (index < 0) return;
+    for (const buffer of buffers.value.slice(index + 1)) cancelAutosave(buffer.relPath);
+    buffers.value = buffers.value.slice(0, index + 1);
+    if (!buffers.value.some((b) => b.relPath === activeRelPath.value)) {
+      activeRelPath.value = relPath;
+    }
+  }
+
+  /** 给定标签集合里的未保存项（供批量关闭前一次性确认，FR-EDITOR-32）。 */
+  function dirtyAmong(relPaths: string[]): string[] {
+    return relPaths.filter((relPath) => isDirty(relPath));
   }
 
   /** 自动保存防抖时长（FR-EDITOR-30：0.5–5s，越界即夹取）。 */
@@ -215,6 +256,10 @@ export const useEditorStore = defineStore('editor', () => {
     saveAll,
     resolveConflict,
     followRename,
+    reorderTab,
+    closeOthers,
+    closeToTheRight,
+    dirtyAmong,
     setAutosaveDelay,
     setMode,
   };

@@ -1,6 +1,15 @@
 {
-  "metric": "markdownRenderMinBatchMedianMs",
-  "docBytes": 67160,
-  "value": 7.482,
-  "updatedAt": "2026-09-27T13:21:19.601Z"
+  "version": 2,
+  "metrics": {
+    "markdownRenderSmall": {
+      "value": 4.344,
+      "docBytes": 67160,
+      "updatedAt": "2026-10-05T04:00:23.602Z"
+    },
+    "markdownRenderLarge": {
+      "value": 165.3,
+      "docBytes": 2499560,
+      "updatedAt": "2026-10-05T04:00:25.180Z"
+    }
+  }
 }
