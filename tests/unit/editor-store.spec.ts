@@ -111,6 +111,38 @@ describe('useEditorStore', () => {
     expect(mWrite).toHaveBeenLastCalledWith('dir/b.md', '未保存的编辑', -1);
   });
 
+  it('FR-EDITOR-35：标签重排（越界索引忽略）', async () => {
+    const store = useEditorStore();
+    await store.openNote('a.md');
+    await store.openNote('b.md');
+    await store.openNote('c.md');
+    store.reorderTab(0, 2);
+    expect(store.buffers.map((b) => b.relPath)).toEqual(['b.md', 'c.md', 'a.md']);
+    store.reorderTab(2, 0);
+    expect(store.buffers.map((b) => b.relPath)).toEqual(['a.md', 'b.md', 'c.md']);
+    store.reorderTab(0, 9);
+    expect(store.buffers.map((b) => b.relPath)).toEqual(['a.md', 'b.md', 'c.md']);
+  });
+
+  it('FR-EDITOR-35：关闭其他 / 关闭右侧，并清理其自动保存定时器', async () => {
+    const store = useEditorStore();
+    await store.openNote('a.md');
+    await store.openNote('b.md');
+    await store.openNote('c.md');
+    store.updateContent('b.md', 'B2');
+    store.updateContent('c.md', 'C2');
+    expect(store.dirtyAmong(['b.md', 'c.md'])).toEqual(['b.md', 'c.md']);
+
+    store.closeToTheRight('a.md');
+    expect(store.buffers.map((x) => x.relPath)).toEqual(['a.md']);
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEFAULT_MS * 3);
+    expect(mWrite).not.toHaveBeenCalled();
+
+    await store.openNote('b.md');
+    store.closeOthers('b.md');
+    expect(store.buffers.map((x) => x.relPath)).toEqual(['b.md']);
+    expect(store.activeRelPath).toBe('b.md');
+  });
   it('防抖时长夹取在 0.5–5 秒（FR-EDITOR-30）', () => {
     const store = useEditorStore();
     store.setAutosaveDelay(100);
