@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@core/ipc/commands', () => ({
   vaultCurrent: vi.fn(),
+  indexStatus: vi.fn(async () => ({ indexDir: 'd', indexDb: 'db', ready: true })),
   fileTree: vi.fn(async () => []),
   noteRead: vi.fn(),
   noteWrite: vi.fn(),
@@ -49,19 +50,14 @@ describe('WorkspaceLayout（M2 接线）', () => {
   });
 
   it('已打开 Vault 时展示文件树与编辑器', async () => {
-    vi.mocked(vaultCurrent).mockResolvedValue({
-      id: 1,
-      displayName: '库',
-      absPath: 'C:/v',
-      status: 'ready',
-    } as never);
+    vi.mocked(vaultCurrent).mockResolvedValue({ root: 'C:/v', displayName: '库', vaultId: 1, caseInsensitiveFs: true } as never);
     const wrapper = mountLayout();
     await flushPromises();
     expect(wrapper.find('[data-testid="tree-stub"]').exists()).toBe(true);
   });
 
   it('文件树打开笔记 → 编辑器打开（FR-FILE-10 的进入编辑态）', async () => {
-    vi.mocked(vaultCurrent).mockResolvedValue({ id: 1, displayName: '库', absPath: 'C:/v' } as never);
+    vi.mocked(vaultCurrent).mockResolvedValue({ root: 'C:/v', displayName: '库', vaultId: 1, caseInsensitiveFs: true } as never);
     const { noteRead } = await import('@core/ipc/commands');
     vi.mocked(noteRead).mockResolvedValue({ relPath: 'a.md', content: 'x', mtimeMs: 1, sizeBytes: 1 });
     const wrapper = mountLayout();
@@ -72,7 +68,7 @@ describe('WorkspaceLayout（M2 接线）', () => {
   });
 
   it('右键动作覆盖新建笔记/文件夹/删除（含文件→取其所在目录）', async () => {
-    vi.mocked(vaultCurrent).mockResolvedValue({ id: 1, displayName: '库', absPath: 'C:/v' } as never);
+    vi.mocked(vaultCurrent).mockResolvedValue({ root: 'C:/v', displayName: '库', vaultId: 1, caseInsensitiveFs: true } as never);
     const wrapper = mountLayout();
     await flushPromises();
     const tree = wrapper.findComponent(FileTreeStub);
@@ -90,7 +86,7 @@ describe('WorkspaceLayout（M2 接线）', () => {
     }
   });
   it('文件树右键动作 → 打开对应文件操作对话框', async () => {
-    vi.mocked(vaultCurrent).mockResolvedValue({ id: 1, displayName: '库', absPath: 'C:/v' } as never);
+    vi.mocked(vaultCurrent).mockResolvedValue({ root: 'C:/v', displayName: '库', vaultId: 1, caseInsensitiveFs: true } as never);
     const wrapper = mountLayout();
     await flushPromises();
     wrapper.findComponent(FileTreeStub).vm.$emit('action', { type: 'rename', relPath: 'dir/a.md', isDir: false });
