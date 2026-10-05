@@ -121,6 +121,22 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     await persistExpanded();
   }
 
+  /** 重新加载（文件操作后刷新树）：清缓存 → 重载根 → 恢复原有展开层级。 */
+  async function refresh(): Promise<void> {
+    const keep = [...expanded.value];
+    cache.clear();
+    error.value = null;
+    try {
+      await loadChildren(ROOT);
+      for (const path of keep) {
+        await expandPath(path);
+      }
+      rows.value = flatten();
+    } catch (err) {
+      error.value = asKpError(err).message;
+    }
+  }
+
   /** 切换「显示隐藏文件」（FR-FILE-05）：清缓存 → 重载 → 尽力恢复原有展开层级。 */
   async function setIncludeHidden(value: boolean): Promise<void> {
     includeHidden.value = value;
@@ -172,6 +188,7 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     toggle,
     setIncludeHidden,
     restoreState,
+    refresh,
     persistExpanded,
   };
 });

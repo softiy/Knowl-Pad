@@ -55,7 +55,7 @@ import {
   vaultStateSet,
   type FileNode,
 } from '@core/ipc/commands';
-import { FileTree } from '@features/files';
+import { FileTree } from '@features/file-tree';
 
 const mTree = vi.mocked(fileTree);
 const vstate = (globalThis as unknown as { __treeVirtualState: { scrollTop: number; viewport: number } })

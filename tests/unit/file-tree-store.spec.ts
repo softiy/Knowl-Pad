@@ -17,8 +17,8 @@ import {
   vaultStateSet,
   type FileNode,
 } from '@core/ipc/commands';
-import { useFileTreeStore } from '@features/files';
-import { PREF_SHOW_HIDDEN, STATE_KEY_TREE_EXPANDED } from '@features/files';
+import { useFileTreeStore } from '@features/file-tree';
+import { PREF_SHOW_HIDDEN, STATE_KEY_TREE_EXPANDED } from '@features/file-tree';
 
 const mTree = vi.mocked(fileTree);
 const mPrefGet = vi.mocked(preferenceGet);
