@@ -3148,7 +3148,7 @@ pub fn validate_filename(name: &str) -> Result<()> {
 | **E2E** | `tauri-driver` + `WebDriverIO`。覆盖 PRD §1.3 的 10 个核心场景。**注意**：`tauri-driver` 在 macOS 上支持受限（WebDriver 对 WKWebView 支持不完整），macOS E2E 可能需降级为关键路径人工验证，此限制须在 M0 确认并记录 |
 | **安全测试** | `tests/security/`。① 路径穿越：对 §6.2 的六类恶意载荷逐一断言被拦截（AC-SEC-01）② XSS：用 §9.3 的 probe 集断言净化生效（AC-EDITOR-01）③ 零网络请求：mitmproxy 透明代理 + 流量断言（AC-SEC-03）④ Capabilities 审计：解析 `default.json` 断言不含宽权限（AC-SEC-02） |
 | **可靠性测试** | `tests/reliability/`。故障注入：用脚本在写入过程中随机 `kill -9`，重启后断言文件完整性（AC-REL-01，1000 次循环）；索引中断恢复（AC-REL-02）；索引重建一致性（AC-REL-03） |
-| **性能基准** | `tests/perf/`。用 `scripts/gen-fixture-vault.mjs` 生成标准/大/压力三档数据集，对 PRD §6.1.2 的 16 项指标逐项测量，结果写入 JSON 供 CI 趋势比对（回退 > 20% 阻断，PERF-08） |
+| **性能基准** | `tests/perf/`。用 `scripts/gen-fixture-vault.mjs` 生成标准/大/压力三档数据集，对 PRD §6.1.2 的 16 项指标逐项测量，结果写入 JSON 供 CI 趋势比对（超绝对预算或回退 > 2× 阻断，PERF-08 与勘误 D-15） |
 | **扩展语法解析测试** | `tests/fixtures/syntax-compat/`。夹具为**依据 PRD §3.1 规则条款预先固化的结构化断言**（推导流程见 PRD 附录 B），比对「解析器输出 vs 夹具」，断言解析准确率 ≥ 99%（SJ-04）。**不依赖任何外部软件**，同时满足 PRD TEST-05 |
 
 **基准数据集生成**（保证可复现，不入库大文件）：
@@ -3436,7 +3436,7 @@ git tag vx.y.z && git push --follow-tags   # 触发 release.yml
 | 2 | 三平台 × 20 项跨平台验收清单逐项通过 | PRD §6.4.1 |
 | 3 | 安全测试集全通过（AC-SEC-01~05） | 发布门禁 |
 | 4 | 可靠性测试集全通过（AC-REL-01~04） | 发布门禁 |
-| 5 | 性能基准无 > 20% 回退 | PERF-08 |
+| 5 | 性能基准在绝对预算内且无 > 2× 回退 | PERF-08、勘误 D-15 |
 | 6 | 扩展语法解析准确率 ≥ 99% | SJ-04 |
 | 7 | 四处版本号一致 | §11.2 |
 | 8 | CHANGELOG 已生成且内容准确 | §11.5 |
@@ -4112,7 +4112,13 @@ echo "✅ 路径封装检查通过"
 | `DEBT-13` | **AC-EDITOR-05 的内核侧指标尚未在真机验证**（2026-10-05 M2 PR-7 登记）：`md-editor-v3` 的 2MB 打开耗时、输入延迟（<50ms）、滚动帧率（≥50FPS）、内存（<500MB）依赖真实 WebView，Node/jsdom 测不到 | 大文件编辑体验未经验证；M2 只覆盖了**我们这一侧**（§7.2 解析+渲染：**2.4MB ≈ 165ms**，见门禁 10 的 `markdownRenderLarge` 指标） | **M8 换 CodeMirror 6 时做正式验证**（真机 + NFR-PERF-07 口径）；若届时输入延迟不达标，按 M2 计划 §5③ 的口径继续顺延并在 M8 报告实测值（相关需求：AC-EDITOR-05 / NFR-PERF-07） |
 | `DEBT-14` | **Rust 命令层没有运行时测试床**（2026-10-05 M2 独立审查登记）：28 个命令（M2 净增 15）只有结构序列化断言，无 `tokio::test` / `tauri::test` 测试床；门禁 15 的 85% 只覆盖 `kp-domain` | PRD §8.3 要求「每个 Command 至少 1 正向 + 1 错误用例」；**B1（跟随重命名假冲突）正是长在这条缝里**——跨 TS/Rust 的契约错误三轮自检都没发现 | **M3 建立命令层测试床**（`tauri::test::mock_app` 或把命令体抽成可注入状态的服务函数），并把它接入门禁 15 的覆盖面（相关需求：PRD §8.3 / AC-EDITOR-05） |
 | `DEBT-15` | **「显示隐藏文件」的作用域与 PRD 不一致**（2026-10-05 M2 独立审查登记）：PRD 定为 **Vault 作用域**（FR-SET-04、§4.11.3），实现写进**全局** preference，切换 Vault 会串设置 | 跨 Vault 体验不一致；不涉及数据安全 | 改存 `vault_state`（已是每 Vault 作用域）或按 vault 分键；随 **M3/M5** 的设置面一起做（相关需求：FR-SET-04 / PRD §4.11.3） |
-| `DEBT-16` | **写路径未拒 `.knowlpad/**`**（2026-10-05 M2 独立审查登记）：`is_internal_path` 在生产代码**零调用**，用户可构造 `.knowlpad/...` 的相对路径进入写命令 | 可能破坏内部目录（索引/回收站/备份） | 在 `PathGuard::resolve` 统一拒绝首段为 `.knowlpad` 的用户路径（内部写入器不经 resolve，故安全）；随 **M3** 的存储面一起做并补 AC-SEC 用例（相关需求：FR-STORAGE-04 / SEC） |
+| `DEBT-16` | **写路径未拒 `.knowlpad/**`**（2026-10-05 M2 独立审查登记）：`is_internal_path` 在生产代码**零调用**，用户可构造 `.knowlpad/...` 的相对路径进入写命令 | 可能破坏内部目录（索引/回收站/备份） | 在 `PathGuard::resolve` 统一拒绝首段为 `.knowlpad` 的用户路径（内部写入器不经 resolve，故安全）；随 **M3** 的存储面一起做并补 AC-SEC 用例（相关需求：FR-STORAGE-04 / SEC）；`DEBT-17`；**本地附件图片未接线**（2026-10-05 M2 复核）：`EditorView` 未传 `resolveAsset`，全仓无 `convertFileSrc`，`tauri.conf.json` 无 `security.assetProtocol`，CSP 只放行 `https://asset.localhost`（Windows 实际用 `http://asset.localhost`）；阅读态本地图片是破图（FR-EDITOR-43 未达成）；**M6（附件域）**：三处联动（assetProtocol 作用域 + CSP 双形态 + resolveAsset），届时补 AC-ATTACH 用例；FR-EDITOR-43、SEC-08 |
+| `DEBT-18` | **渲染态代码块高亮未实现**（FR-EDITOR-44 P0 / FR-EDITOR-03）：技术方案 §2.2 规划的 `core/markdown/highlight.ts` 不存在，渲染管线零高亮（ED-06：不得引入独立高亮库，须纯文本 → 带 class 的 span） | 阅读态代码块无高亮 | **M5**（与设置/主题同期，纯前端）；FR-EDITOR-44、ED-06 |
+| `DEBT-19` | **命令齐但用户不可达 / P0 文件交互缺口**（2026-10-05 复核）：`file_move` 无 UI 入口（UI 无法移动文件），`file_list_dir`/`file_stat`/`system_info`/`ping` 等亦无消费方；FR-FILE-02 的时间/类型排序选项、FR-FILE-07 的「复制 Wikilink」、FR-FILE-10 的「聚焦标题行」未实现 | 已封装能力用户触达不到；P0 文件交互有缺口 | **M3/M5**：随搜索/标签面补 UI 与排序选项；FR-FILE-26 拖拽移动（P1）归 **M5**；FR-FILE-02/07/10/26；`DEBT-20`；**FR-GLOBAL-01（P0）只有部分容错**（2026-10-05 复核）：`global.rs` 仅声明「调用方失败时以默认配置继续启动」的前提，storage 层**无**「全局库损坏/丢失后仍可启动并引导重选」的测试与编排；全局库损坏时用户体验未定义；**M5**：补编排 + 测试（可复用 DEBT-14 的命令层测试床）；FR-GLOBAL-01 |
+| `DEBT-21` | **门禁面的窄化**（2026-10-05 两轮复核汇总）：门禁 5 是全局平均阈值（`src/core/ipc/**` 被 exclude，单模块可被平均值掩盖）；门禁 15 只覆盖 `kp-domain`（28 个命令零覆盖）；门禁 16 显式排除 `src/core/ipc/**` 且只做字符串匹配；门禁 17 只校验命令名（不校验参数/返回形状，也不覆盖 13 个事件）；门禁 13 的 200–350 警告永不阻断；`check-file-length.mjs` 的 `catch { return [] }` 静默跳过且无文件数下限；`run-security.mjs` 用 `npx vitest`（缺依赖会联网自解析） | 多处「有门禁之名、无门禁之实」 | **M3**：逐项收窄（形状校验、按目录阈值、文件数下限、本地 vitest 直调），并把 13 个 `kp://` 事件的里程碑映射写进计划；AGENTS §6、PRD §8.4 |
+| `DEBT-22` | **FR-TRASH-02 的实现与需求不一致**（2026-10-05 复核）：需求要求清单「追加写 + fsync、损坏时逐条降级解析」，实现是**整表原子重写**且读失败/格式异常即**永久中止**（文案还把内容损坏说成权限问题） | 单条损坏会阻塞后续删除；与需求语义不符 | **M7**：改追加写 + 逐条降级解析并补 AC-TRASH 用例；FR-TRASH-02 |
+| `DEBT-23` | **`.kp-tmp-*` 清理范围过宽**（2026-10-05 M1 复核）：实现按前缀**递归删除 Vault 内任意同名文件**，而计划只允许 `.knowlpad/` 内的残留；根目录用户文件被误删的分支无测试 | 极小概率误删用户文件 | **M3**：收敛为精确文件名模式（或仅清理 `.knowlpad/`）并补回归；计划 WP5、AC-VAULT-01 |
+| `DEBT-24` | **M1 遗留三处未登记项**（2026-10-05 M1 复核）：① 迁移前自动备份 `global.db` 的承诺未实现（`migrate.rs` 无备份，V1→V2 用测试专用迁移表）；② **SEC-15** 的 Windows ACL 未实现（仅 unix 0700）；③ FR-GLOBAL-02 偏好防抖批量提交未实现（逐键写） | 迁移安全性与平台权限口径未达标 | ① **M3**；② **M9**（发布前补 Windows ACL 或登记 PRD 口径）；③ **M5**；计划 §6、SEC-15、FR-GLOBAL-02 |
 
 > `DEBT-07` 是本文档编写过程中发现的 **PRD 缺项**，已在此显式登记。它必须在 M3 开始前补入 PRD，否则别名匹配（MD-WL-02、AC-EDITOR-04）无法实现。
 
@@ -4195,7 +4201,7 @@ PRD §6.1.2 定义 16 项指标（`NFR-PERF-01`~`16`），基准数据集见 PRD
 1. **统计口径**：延迟类指标（04/05/06/07/08/09/10）取 **P95** 而非平均值——平均值会掩盖卡顿长尾，而用户感知的是最差体验。每项**连续采样 ≥ 30 次**（07 项 ≥ 100 次）。
 2. **预热**：所有测量前需完成一次预热运行并丢弃其结果，避免 JIT/缓存冷启动污染数据。
 3. **基准数据集生成器**：三档夹具由 `scripts/gen-fixture-vault.mjs` 确定性生成（固定随机种子），保证每次运行的库结构完全一致，否则指标不可比。
-4. **回归判定**：结果写入 `.perf-result.json`，与仓库中的 `.perf-baseline.json` 比对；**任一指标回退 > 20% 则 CI 失败**（PERF-08、门禁 10）。基线文件在每次有意优化后由维护者更新并提交。
+4. **回归判定**：结果写入 `.perf-result.json`，与仓库中的 `.perf-baseline.json` 比对；**任一指标超出绝对预算、或相对基线回退 > 2× 则 CI 失败**（PERF-08、门禁 10、勘误 D-15）。基线文件在每次有意优化后由维护者更新并提交。
 5. **环境隔离**：CI 中运行性能测试的机器负载不可控，故 CI **只做回退比对**，绝对值达标判定（PRD §6.1.1 的基准环境）在发布前于专用机器上人工执行（§11.6 检查项 5）。
 
 ## 附录 C：风险登记册（技术视角）
@@ -4311,7 +4317,7 @@ knowl-pad/（仓库根）
 | 9 依赖审计 | ✅ | `pnpm audit --audit-level=high` + `cargo audit`（0 漏洞） |
 | 10 Lockfile | ✅ | `pnpm install --frozen-lockfile --dry-run` |
 | 11 Rust 应用构建 | ✅ | `cargo build` 成功（tauri 2.12.0 + shell/opener/dialog/process） |
-| 12 性能基准 | ✅ | 渲染 P50 相对基线无回退 |
+| 12 性能基准 | ✅ | 渲染 min(批次中位数) 在预算内且无 > 2× 回退 |
 | 13 安全测试集 | ✅ | 10 条 XSS 探针 + 启动自检 + Capabilities/CSP 审计 |
 | 14 可靠性测试集 | ✅ | 并发读取一致性 + 临时文件清理（2 用例），通过 |
 | 15 命名一致性 | ✅ | 通过（含 AGENTS.md 豁免） |
