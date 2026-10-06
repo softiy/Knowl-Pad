@@ -121,6 +121,7 @@ function iconOf(row: TreeRow): string {
       :x="menu.x"
       :y="menu.y"
       :is-dir="menu.row.isDir"
+      :name="menu.row.name"
       @select="onMenuSelect"
       @close="menu.visible = false"
     />

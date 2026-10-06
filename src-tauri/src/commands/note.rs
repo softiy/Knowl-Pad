@@ -37,9 +37,11 @@ pub struct WriteResult {
 }
 
 fn join_error(err: tauri::Error) -> KpError {
-    KpError(kp_domain::error::AppError::IoFailure(format!(
-        "后台任务失败：{err}"
-    )))
+    // ERR-02：用户可见文案必须中文可操作；io/运行时的英文原文只进日志（ERR-04）
+    tracing::error!(error = %err, "后台任务失败");
+    KpError(kp_domain::error::AppError::IoFailure(
+        "操作未能完成，后台任务异常。请重试；若持续出现，请重启应用。".to_string(),
+    ))
 }
 
 /// 读取笔记：返回 `NoteContent`（含 `mtimeMs`，编辑器据此做冲突检测）。异步 command + spawn_blocking（R-08）。

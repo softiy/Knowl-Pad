@@ -49,6 +49,8 @@ export const useFileOpsStore = defineStore('fileOps', () => {
   const dialog = ref<FileOpDialog | null>(null);
   /** 上一次操作的结果提示（成功类，供界面短暂展示） */
   const notice = ref<string | null>(null);
+  /** 删除前需要确认（该路径下仍有打开的标签；含未保存的必须先问，R-07） */
+  const pendingDelete = ref<{ target: string; open: string[]; dirty: string[] } | null>(null);
 
   function openNewNote(parentDir: string): void {
     dialog.value = {
@@ -119,6 +121,38 @@ export const useFileOpsStore = defineStore('fileOps', () => {
     return result.valid;
   }
 
+  /** 真正执行删除（软删除 + 关闭该子树下的全部标签 + 刷新树）。 */
+  async function performDelete(target: string): Promise<void> {
+    const editorStore = useEditorStore();
+    const result = await fileDelete(target, true);
+    // 关闭该路径及其**子树**下的标签：否则这些标签的自动保存会把已删除的文件写回来
+    editorStore.closeUnder(target);
+    await refreshTree();
+    notice.value = `已移入回收站（${result.trashedCount} 项）`;
+  }
+
+  /** 用户在「未保存」确认条上的选择：save=保存后删除 / discard=直接删除 / cancel=取消。 */
+  async function resolveDelete(choice: 'save' | 'discard' | 'cancel'): Promise<void> {
+    const pending = pendingDelete.value;
+    pendingDelete.value = null;
+    if (!pending || choice === 'cancel') return;
+    const editorStore = useEditorStore();
+    if (choice === 'save') {
+      await Promise.all(pending.dirty.map((p) => editorStore.save(p)));
+      // 保存仍失败（写冲突/权限）时不得继续删除，避免静默丢内容
+      if (editorStore.dirtyAmong(pending.dirty).length > 0) {
+        notice.value = '仍有未保存内容未能写入，已取消删除';
+        return;
+      }
+    }
+    try {
+      await performDelete(pending.target);
+    } catch (err) {
+      notice.value = asKpError(err).message;
+    }
+    dialog.value = null;
+  }
+
   async function refreshTree(): Promise<void> {
     await useFileTreeStore().refresh();
   }
@@ -153,11 +187,20 @@ export const useFileOpsStore = defineStore('fileOps', () => {
         await refreshTree();
         notice.value = `已重命名为 ${result.to}`;
       } else {
-        const result = await fileDelete(current.target, true);
-        // 文件已移入回收站：关闭对应编辑器标签（避免标签指向不存在的文件）
-        useEditorStore().closeNote(current.target);
-        await refreshTree();
-        notice.value = `已移入回收站（${result.trashedCount} 项）`;
+        const editorStore = useEditorStore();
+        const prefix = current.target + '/';
+        const open = editorStore.buffers
+          .map((b) => b.relPath)
+          .filter((p) => p === current.target || p.startsWith(prefix));
+        const dirty = editorStore.dirtyAmong(open);
+        // R-07：删除会关闭该路径及其子树下的标签——有未保存内容时**必须先问**
+        if (dirty.length > 0) {
+          pendingDelete.value = { target: current.target, open, dirty };
+          current.busy = false;
+          return;
+        }
+        await performDelete(current.target);
+        return;
       }
       dialog.value = null;
     } catch (err) {
@@ -193,6 +236,8 @@ export const useFileOpsStore = defineStore('fileOps', () => {
     validateValue,
     submit,
     resolveConflict,
+    pendingDelete,
+    resolveDelete,
     close,
   };
 });

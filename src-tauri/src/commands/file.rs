@@ -95,7 +95,12 @@ pub async fn file_tree(
         file_tree::list_dir(&root, &rel, include_hidden)
     })
     .await
-    .map_err(|err| KpError(AppError::IoFailure(format!("后台任务失败：{err}"))))?
+    .map_err(|err| {
+        tracing::error!(error = %err, "后台任务失败");
+        KpError(AppError::IoFailure(
+            "操作未能完成，后台任务异常。请重试；若持续出现，请重启应用。".to_string(),
+        ))
+    })?
     .map_err(KpError)?;
     Ok(entries.into_iter().map(FileNode::from).collect())
 }
@@ -111,7 +116,12 @@ pub async fn file_list_dir(
     let entries =
         tauri::async_runtime::spawn_blocking(move || file_tree::list_dir(&root, &rel, false))
             .await
-            .map_err(|err| KpError(AppError::IoFailure(format!("后台任务失败：{err}"))))?
+            .map_err(|err| {
+                tracing::error!(error = %err, "后台任务失败");
+                KpError(AppError::IoFailure(
+                    "操作未能完成，后台任务异常。请重试；若持续出现，请重启应用。".to_string(),
+                ))
+            })?
             .map_err(KpError)?;
     Ok(entries.into_iter().map(FileNode::from).collect())
 }
@@ -126,7 +136,12 @@ pub async fn file_stat(
     let rel = args.rel_path;
     let entry = tauri::async_runtime::spawn_blocking(move || file_tree::stat(&root, &rel))
         .await
-        .map_err(|err| KpError(AppError::IoFailure(format!("后台任务失败：{err}"))))?
+        .map_err(|err| {
+            tracing::error!(error = %err, "后台任务失败");
+            KpError(AppError::IoFailure(
+                "操作未能完成，后台任务异常。请重试；若持续出现，请重启应用。".to_string(),
+            ))
+        })?
         .map_err(KpError)?;
     Ok(FileStat {
         rel_path: entry.rel_path,

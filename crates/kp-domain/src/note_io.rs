@@ -132,6 +132,13 @@ pub fn read_note(target: &Path) -> Result<Vec<u8>, AppError> {
 
 /// 写入笔记：先做 base_mtime 冲突检测（FR-EDITOR-34），再原子写入，返回新 mtime。
 pub fn write_note(target: &Path, content: &[u8], base_mtime: Option<i64>) -> Result<i64, AppError> {
+    // 保存**不得**创建父目录：文件或所在目录被删除后，自动保存不能让它"复活"
+    // （否则回收站清单与磁盘状态不一致；新建走 create_note，那条路径允许创建）。
+    if let Some(parent) = target.parent() {
+        if !parent.is_dir() {
+            return Err(AppError::FileNotFound(target.display().to_string()));
+        }
+    }
     if let Some(base) = base_mtime {
         if target.exists() {
             let actual = mtime_ms(target)?;

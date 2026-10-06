@@ -196,6 +196,16 @@ export const useEditorStore = defineStore('editor', () => {
     if (activeRelPath.value === oldRelPath) activeRelPath.value = newRelPath;
   }
 
+  /** 关闭某个路径及其**子树**下的全部标签（删除文件夹时用，M1/M2 复核）。 */
+  function closeUnder(relPath: string): number {
+    const prefix = relPath + '/';
+    const targets = buffers.value
+      .filter((b) => b.relPath === relPath || b.relPath.startsWith(prefix))
+      .map((b) => b.relPath);
+    for (const p of targets) closeNote(p);
+    return targets.length;
+  }
+
   /** 标签重排（FR-EDITOR-35 的拖拽排序）：越界索引忽略，不做部分移动。 */
   function reorderTab(fromIndex: number, toIndex: number): void {
     const list = [...buffers.value];
@@ -265,6 +275,7 @@ export const useEditorStore = defineStore('editor', () => {
     resolveConflict,
     followRename,
     reorderTab,
+    closeUnder,
     closeOthers,
     closeToTheRight,
     dirtyAmong,

@@ -21,7 +21,12 @@ pub async fn vault_open(
     let path = PathBuf::from(&args.abs_path);
     let prepared = tauri::async_runtime::spawn_blocking(move || prepare_vault(&path, false))
         .await
-        .map_err(|err| KpError(AppError::IoFailure(format!("后台任务失败：{err}"))))?
+        .map_err(|err| {
+            tracing::error!(error = %err, "后台任务失败");
+            KpError(AppError::IoFailure(
+                "操作未能完成，后台任务异常。请重试；若持续出现，请重启应用。".to_string(),
+            ))
+        })?
         .map_err(KpError)?;
     activate_vault(&state, prepared).map_err(KpError)
 }
@@ -35,7 +40,12 @@ pub async fn vault_create(
     let path = PathBuf::from(&args.abs_path);
     let prepared = tauri::async_runtime::spawn_blocking(move || prepare_vault(&path, true))
         .await
-        .map_err(|err| KpError(AppError::IoFailure(format!("后台任务失败：{err}"))))?
+        .map_err(|err| {
+            tracing::error!(error = %err, "后台任务失败");
+            KpError(AppError::IoFailure(
+                "操作未能完成，后台任务异常。请重试；若持续出现，请重启应用。".to_string(),
+            ))
+        })?
         .map_err(KpError)?;
     let info = activate_vault(&state, prepared).map_err(KpError)?;
     if let (Some(name), Some(id), Some(global)) = (args.name, info.vault_id, state.global_db()) {
@@ -135,7 +145,12 @@ pub async fn vault_relocate(
     let path = PathBuf::from(&args.new_abs_path);
     let prepared = tauri::async_runtime::spawn_blocking(move || prepare_vault(&path, false))
         .await
-        .map_err(|err| KpError(AppError::IoFailure(format!("后台任务失败：{err}"))))?
+        .map_err(|err| {
+            tracing::error!(error = %err, "后台任务失败");
+            KpError(AppError::IoFailure(
+                "操作未能完成，后台任务异常。请重试；若持续出现，请重启应用。".to_string(),
+            ))
+        })?
         .map_err(KpError)?;
 
     let abs_path = prepared.root.to_string_lossy().to_string();
