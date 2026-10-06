@@ -17,7 +17,7 @@ const GATES = [
   { id: '7', name: '依赖安全审计（pnpm + cargo）', cmd: [null, null], steps: [['pnpm', ['audit', '--audit-level=high']], ['cargo', ['audit', '--file', 'Cargo.lock']]] },
   { id: '8', name: 'Lockfile 一致性', cmd: ['pnpm', ['gate:lockfile']] },
   { id: '9', name: 'Rust 应用构建（tauri build 的本地等价）', cmd: ['cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--locked']] },
-  { id: '10', name: '性能基准（P50 回退 ≤ 20%）', cmd: ['pnpm', ['test:perf']] },
+  { id: '10', name: '性能基准（预算 + 回退 ≤ 2×）', cmd: ['pnpm', ['test:perf']] },
   { id: '11', name: '安全测试集（AC-SEC）', cmd: ['pnpm', ['test:security']] },
   { id: '12', name: '可靠性测试集（AC-REL）', cmd: ['pnpm', ['test:reliability']] },
   { id: '13', name: '命名一致性与文件长度（门禁 13 + CODE-11）', cmd: [null, null], steps: [['pnpm', ['gate:naming']], ['node', ['scripts/check-file-length.mjs', '--self-test']], ['node', ['scripts/check-file-length.mjs']]] },

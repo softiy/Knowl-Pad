@@ -1,101 +1,101 @@
 {
-  "generatedAt": "2026-10-06T00:32:42.021Z",
+  "generatedAt": "2026-10-06T00:43:27.131Z",
   "results": [
     {
       "id": "1",
       "name": "TypeScript 类型检查",
       "ok": true,
-      "ms": 5725
+      "ms": 5524
     },
     {
       "id": "2",
       "name": "前端 Lint",
       "ok": true,
-      "ms": 9458
+      "ms": 9273
     },
     {
       "id": "14",
       "name": "前端构建 + 完整性（准备 dist）",
       "ok": true,
-      "ms": 3493
+      "ms": 1485
     },
     {
       "id": "3",
       "name": "Rust Lint (clippy -D warnings)",
       "ok": true,
-      "ms": 1139
+      "ms": 2524
     },
     {
       "id": "4",
       "name": "Rust 格式 (fmt --check)",
       "ok": true,
-      "ms": 278
+      "ms": 266
     },
     {
       "id": "6",
       "name": "Rust 单元/集成测试",
       "ok": true,
-      "ms": 5883
+      "ms": 8606
     },
     {
       "id": "15",
       "name": "Rust domain 覆盖率 ≥ 85%",
       "ok": true,
-      "ms": 4647
+      "ms": 4648
     },
     {
       "id": "5",
       "name": "前端单元/组件测试 + 覆盖率",
       "ok": true,
-      "ms": 6001
+      "ms": 6042
     },
     {
       "id": "7",
       "name": "依赖安全审计（pnpm + cargo）",
       "ok": true,
-      "ms": 11600
+      "ms": 7156
     },
     {
       "id": "8",
       "name": "Lockfile 一致性",
       "ok": true,
-      "ms": 519
+      "ms": 457
     },
     {
       "id": "9",
       "name": "Rust 应用构建（tauri build 的本地等价）",
       "ok": true,
-      "ms": 15930
+      "ms": 4325
     },
     {
       "id": "10",
-      "name": "性能基准（P50 回退 ≤ 20%）",
+      "name": "性能基准（预算 + 回退 ≤ 2×）",
       "ok": true,
-      "ms": 3743
+      "ms": 3491
     },
     {
       "id": "11",
       "name": "安全测试集（AC-SEC）",
       "ok": true,
-      "ms": 8429
+      "ms": 3609
     },
     {
       "id": "12",
       "name": "可靠性测试集（AC-REL）",
       "ok": true,
-      "ms": 2465
+      "ms": 3966
     },
     {
       "id": "13",
       "name": "命名一致性与文件长度（门禁 13 + CODE-11）",
       "ok": true,
-      "ms": 6301
+      "ms": 5578
     },
     {
       "id": "16",
       "name": "路径封装检查（SEC PATH-02）",
       "ok": true,
-      "ms": 1201
+      "ms": 1065
     },
     {
       "id": "17",
