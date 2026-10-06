@@ -99,6 +99,40 @@ export interface IndexStatus {
 export const vaultOpen = (absPath: string): Promise<VaultInfo> => call<VaultInfo>('vault_open', { args: { absPath } });
 
 export const indexStatus = (): Promise<IndexStatus> => call<IndexStatus>('index_status');
+/** 签名字段视图（PRD §5.3.7 的 SignatureInfo）。 */
+export interface SignatureParts {
+  schemaVersion: number;
+  parserVersion: number;
+  tokenizerVersion: string;
+  tokenizerDictHash: string;
+  vaultRoot: string;
+  digest: string;
+}
+
+export interface SignatureInfo {
+  expected: SignatureParts;
+  /** 未建库/未写过时为 null */
+  stored: SignatureParts | null;
+  matched: boolean;
+  reason: string | null;
+}
+
+/** 各类实体计数（设置页展示用）。 */
+export interface IndexStats {
+  files: number;
+  deletedFiles: number;
+  links: number;
+  tags: number;
+  headings: number;
+  blockIds: number;
+  ftsRows: number;
+}
+
+/** 当前索引签名与磁盘记录的对比（诊断用，FR-SIG-01）。 */
+export const indexSignatureGet = (): Promise<SignatureInfo> => call<SignatureInfo>('index_signature_get');
+
+/** 各表实体计数。 */
+export const indexStats = (): Promise<IndexStats> => call<IndexStats>('index_stats');
 
 /** 新建 Vault（目录不存在时创建，并初始化 .knowlpad/ 与空索引库） */
 export const vaultCreate = (absPath: string, name?: string): Promise<VaultInfo> =>
