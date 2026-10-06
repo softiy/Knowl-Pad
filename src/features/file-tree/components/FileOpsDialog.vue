@@ -42,6 +42,16 @@ const title = computed(() => (ops.dialog ? titles[ops.dialog.mode] : ''));
         {{ ops.dialog.error }}
       </p>
 
+      <div v-if="ops.pendingDelete" class="kp-fileops__conflict" data-testid="delete-confirm">
+        <p>
+          「{{ ops.pendingDelete.target }}」下有 {{ ops.pendingDelete.open.length }} 个打开的标签（其中
+          {{ ops.pendingDelete.dirty.length }} 个未保存）。删除会一并关闭它们：
+        </p>
+        <button type="button" data-testid="delete-save" @click="ops.resolveDelete('save')">保存后删除</button>
+        <button type="button" data-testid="delete-discard" @click="ops.resolveDelete('discard')">直接删除</button>
+        <button type="button" data-testid="delete-cancel" @click="ops.resolveDelete('cancel')">取消</button>
+      </div>
+
       <div v-if="ops.dialog.conflict" class="kp-fileops__conflict" data-testid="fileops-conflict">
         <p>目标已存在。覆盖前会<strong>自动备份原文件</strong>，请选择处理方式：</p>
         <button type="button" data-testid="conflict-overwrite" @click="ops.resolveConflict('overwrite')">覆盖</button>

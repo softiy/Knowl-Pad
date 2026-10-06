@@ -13,6 +13,7 @@ const hoisted = vi.hoisted(() => ({
   refresh: vi.fn(async () => {}),
   openNote: vi.fn(async () => {}),
   closeNote: vi.fn(),
+  closeUnder: vi.fn(),
   followRename: vi.fn(),
 }));
 
@@ -22,9 +23,12 @@ vi.mock('@features/file-tree/stores/fileTree', () => ({
 
 vi.mock('@features/editor', () => ({
   useEditorStore: () => ({
+    buffers: [],
     openNote: hoisted.openNote,
     closeNote: hoisted.closeNote,
+    closeUnder: hoisted.closeUnder,
     followRename: hoisted.followRename,
+    dirtyAmong: () => [],
   }),
 }));
 
@@ -128,10 +132,33 @@ describe('useFileOpsStore（AC-FILE-03/04/05）', () => {
     ops.openDelete('dir');
     await ops.submit();
     expect(mDelete).toHaveBeenCalledWith('dir', true);
-    expect(hoisted.closeNote).toHaveBeenCalledWith('dir');
+    // 删除按**子树**关闭标签（否则子笔记的自动保存会把已删目录写回来）
+    expect(hoisted.closeUnder).toHaveBeenCalledWith('dir');
     expect(ops.notice).toContain('3');
   });
 
+  it('R-07：删除含未保存标签的路径前必须先确认', async () => {
+    const ops = useFileOpsStore();
+    ops.openDelete('dir');
+    // 替身默认 buffers 为空；这里模拟「该路径下有脏标签」
+    const editorMod = await import('@features/editor');
+    const spy = vi.spyOn(editorMod, 'useEditorStore').mockReturnValue({
+      buffers: [{ relPath: 'dir/a.md' }],
+      dirtyAmong: () => ['dir/a.md'],
+      closeUnder: hoisted.closeUnder,
+      save: vi.fn(async () => {}),
+      openNote: hoisted.openNote,
+      closeNote: hoisted.closeNote,
+      followRename: hoisted.followRename,
+    } as never);
+    await ops.submit();
+    expect(ops.pendingDelete?.target).toBe('dir');
+    expect(mDelete).not.toHaveBeenCalled();
+
+    await ops.resolveDelete('discard');
+    expect(mDelete).toHaveBeenCalledWith('dir', true);
+    spy.mockRestore();
+  });
   it('其它错误只提示不进入冲突态', async () => {
     mFolder.mockRejectedValueOnce({ code: 'E_PERMISSION_DENIED', message: '没有权限创建文件夹' });
     const ops = useFileOpsStore();

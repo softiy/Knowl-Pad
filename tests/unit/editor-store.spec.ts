@@ -166,6 +166,15 @@ describe('useEditorStore', () => {
     expect(store.activeRelPath).toBeNull();
   });
 
+  it('closeUnder：按子树关闭标签（删除文件夹时用）', async () => {
+    const store = useEditorStore();
+    mRead.mockResolvedValue(note('x'));
+    await store.openNote('dir/a.md');
+    await store.openNote('dir/sub/b.md');
+    await store.openNote('other.md');
+    expect(store.closeUnder('dir')).toBe(2);
+    expect(store.buffers.map((b) => b.relPath)).toEqual(['other.md']);
+  });
   it('saveAll 保存所有脏缓冲区', async () => {
     const store = useEditorStore();
     mRead.mockResolvedValueOnce(note('x'));

@@ -15,6 +15,9 @@ pub enum AppError {
     PathEscapeDeny,
     #[error("路径越界")]
     PathOutsideVault,
+    /// FR-STORAGE-02：第三方软件配置目录（.obsidian/.git）与应用内部目录（.knowlpad）**不得被修改**
+    #[error("这是第三方软件或应用内部目录（{0}），Knowl Pad 不会修改它的内容")]
+    ProtectedDir(String),
     #[error("文件名不合法：{0}")]
     InvalidFilename(String),
     #[error("文件不存在：{0}")]
@@ -41,6 +44,8 @@ impl AppError {
             Self::VaultPathInvalid(_) => "E_VAULT_PATH_INVALID",
             Self::PathEmpty | Self::PathEscapeDeny => "E_PATH_ESCAPE_DENY",
             Self::PathAbsolute | Self::PathOutsideVault => "E_PATH_OUTSIDE_VAULT",
+            // 复用既有错误码，避免改动 PRD §5.2 的契约表
+            Self::ProtectedDir(_) => "E_PATH_ESCAPE_DENY",
             Self::InvalidFilename(_) => "E_INVALID_FILENAME",
             Self::FileNotFound(_) => "E_FILE_NOT_FOUND",
             Self::FileExists(_) => "E_FILE_EXISTS",
@@ -86,6 +91,7 @@ impl AppError {
             Self::PathAbsolute => "PathAbsolute",
             Self::PathEscapeDeny => "PathEscapeDeny",
             Self::PathOutsideVault => "PathOutsideVault",
+            Self::ProtectedDir(_) => "ProtectedDir",
             Self::InvalidFilename(_) => "InvalidFilename",
             Self::FileNotFound(_) => "FileNotFound",
             Self::FileExists(_) => "FileExists",

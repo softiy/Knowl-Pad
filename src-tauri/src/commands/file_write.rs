@@ -76,7 +76,12 @@ fn policy_of(value: Option<String>) -> Result<ConflictPolicy, KpError> {
 }
 
 fn join_error(err: tauri::Error) -> KpError {
-    KpError(AppError::IoFailure(format!("后台任务失败：{err}")))
+    {
+        tracing::error!(error = %err, "后台任务失败");
+        KpError(AppError::IoFailure(
+            "操作未能完成，后台任务异常。请重试；若持续出现，请重启应用。".to_string(),
+        ))
+    }
 }
 
 /// 新建笔记（FR-FILE-10/13）。
@@ -201,6 +206,7 @@ pub async fn file_reveal(
     .map_err(join_error)?
     .map_err(KpError)?;
     tauri_plugin_opener::reveal_item_in_dir(&abs).map_err(|err| {
+        tracing::warn!(error = %err, "在文件管理器中显示失败");
         KpError(AppError::IoFailure(format!(
             "无法在文件管理器中显示：{err}"
         )))

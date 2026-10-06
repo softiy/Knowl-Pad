@@ -307,3 +307,57 @@ fn delete_path_aborts_when_manifest_unreadable() {
     assert_eq!(fs::read(&manifest).expect("读回"), before, "清单不得被覆盖");
     assert!(root.join("a.md").exists(), "删除中止后原文件必须仍在");
 }
+
+/// FR-STORAGE-02（P0）：第三方配置目录与应用内部目录**不得被写、改、删**
+/// —— 但读（列目录/打开）不受限，AC-FILE-09 要求它们可见。
+#[test]
+fn protected_dirs_reject_writes() {
+    let (_d, root) = vault();
+    fs::create_dir_all(root.join(".obsidian")).expect("造第三方目录");
+    fs::write(root.join(".obsidian").join("app.json"), "{}").expect("第三方文件");
+    fs::create_dir_all(root.join(".knowlpad")).expect("造内部目录");
+
+    for rel in [".obsidian/new.md", ".git/config", ".knowlpad/x.md"] {
+        let err = create_note(&root, rel, "x", ConflictPolicy::Cancel).unwrap_err();
+        assert_eq!(err.code(), "E_PATH_ESCAPE_DENY", "{rel} 必须被拒");
+        assert!(
+            err.to_string().contains("不会修改"),
+            "文案需说明原因：{err}"
+        );
+    }
+    assert_eq!(
+        delete_path(&root, ".obsidian", true).unwrap_err().code(),
+        "E_PATH_ESCAPE_DENY"
+    );
+    assert_eq!(
+        rename_path(&root, ".obsidian", "moved", ConflictPolicy::Cancel)
+            .unwrap_err()
+            .code(),
+        "E_PATH_ESCAPE_DENY"
+    );
+    assert_eq!(
+        create_folder(&root, ".git/sub").unwrap_err().code(),
+        "E_PATH_ESCAPE_DENY"
+    );
+    // 第三方目录内容逐字节不变
+    assert_eq!(
+        fs::read_to_string(root.join(".obsidian").join("app.json")).unwrap(),
+        "{}"
+    );
+}
+
+/// 保存**不得**让已删除的文件复活（回收站清单与磁盘必须一致）。
+#[test]
+fn save_does_not_resurrect_deleted_note() {
+    let (_d, root) = vault();
+    create_folder(&root, "dir").expect("建目录");
+    create_note(&root, "dir/a.md", "# 内容", ConflictPolicy::Cancel).expect("新建");
+    let target = root.join("dir").join("a.md");
+    delete_path(&root, "dir", true).expect("删除目录");
+    assert!(!target.exists());
+
+    // 模拟"标签仍打开时的自动保存"：直接对已删除路径写入
+    let err = crate::note_io::write_note(&target, b"resurrect", None).unwrap_err();
+    assert_eq!(err.code(), "E_FILE_NOT_FOUND");
+    assert!(!target.exists(), "已删除的文件不得被写回");
+}

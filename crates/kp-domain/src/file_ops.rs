@@ -65,12 +65,31 @@ pub struct DeleteOutcome {
 }
 
 /// 新建笔记（FR-FILE-10/13）。目标已存在时按 `policy` 处理。
+/// FR-STORAGE-02 / FR-STORAGE-04：**用户写操作**不得进入受保护目录。
+///
+/// 读操作（文件树列目录、打开笔记）**不受限**——AC-FILE-09 要求 `.obsidian/`/`.git/` 在
+/// 开启「显示隐藏文件」后可见；这里只拦写、改、删、移。
+fn ensure_writable(rel_path: &str) -> Result<(), AppError> {
+    let normalized = rel_path.replace('\\', "/");
+    if let Some(first) = normalized.split('/').find(|seg| !seg.is_empty()) {
+        let is_internal = crate::vault_paths::is_internal_path(first);
+        let is_third_party = crate::vault_paths::NEVER_TOUCH_DIRS
+            .iter()
+            .any(|dir| first.eq_ignore_ascii_case(dir));
+        if is_internal || is_third_party {
+            return Err(AppError::ProtectedDir(first.to_string()));
+        }
+    }
+    Ok(())
+}
+
 pub fn create_note(
     root: &Path,
     rel_path: &str,
     content: &str,
     policy: ConflictPolicy,
 ) -> Result<WriteOutcome, AppError> {
+    ensure_writable(rel_path)?;
     let guard = PathGuard::new(root)?;
     let abs = guard.resolve(rel_path)?;
     let mut backed_up_to = None;
@@ -107,6 +126,7 @@ pub fn create_note(
 
 /// 新建文件夹（FR-FILE-11：支持 `a/b/c` 多级一次创建）。已存在同名目录时幂等返回。
 pub fn create_folder(root: &Path, rel_path: &str) -> Result<(), AppError> {
+    ensure_writable(rel_path)?;
     let guard = PathGuard::new(root)?;
     let abs = guard.resolve(rel_path)?;
     if abs.exists() {
@@ -128,6 +148,7 @@ pub fn rename_path(
     to: &str,
     policy: ConflictPolicy,
 ) -> Result<RenameOutcome, AppError> {
+    ensure_writable(from)?;
     let guard = PathGuard::new(root)?;
     let src = guard.resolve(from)?;
     if !src.exists() {
@@ -191,6 +212,7 @@ pub fn delete_path(
     rel_path: &str,
     recursive: bool,
 ) -> Result<DeleteOutcome, AppError> {
+    ensure_writable(rel_path)?;
     let guard = PathGuard::new(root)?;
     let abs = guard.resolve(rel_path)?;
     if !abs.exists() {
