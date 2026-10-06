@@ -15,6 +15,7 @@ use commands::file::{file_list_dir, file_stat, file_tree, file_validate_name};
 use commands::file_write::{
     file_delete, file_move, file_rename, file_reveal, folder_create, note_create,
 };
+use commands::index::{index_signature_get, index_stats};
 use commands::note::{note_read, note_write};
 use commands::settings::{preference_get, preference_set, vault_state_get, vault_state_set};
 use commands::system::{ping, system_info};
@@ -140,6 +141,8 @@ fn main() {
             vault_rename,
             vault_relocate,
             index_status,
+            index_signature_get,
+            index_stats,
             vault_close
         ])
         .run(tauri::generate_context!())
