@@ -6,3 +6,15 @@ packages:
 allowBuilds:
   esbuild: true
 strictDepBuilds: false
+# ── 安全覆盖（2026-10-05）────────────────────────────────────────────
+# tinypool 新披露 critical 漏洞（GHSA-5gmw-xhrv-c9v3「原型污染 → RCE」，受影响 <=2.1.0 /
+# <2.1.2，修复版 >=2.1.2）。它是 vitest 的传递依赖，而 vitest 3.2.7 仍锁 tinypool ^1.1.1，
+# 因此在设置层强制提升。**移除条件**：vitest 自身升级到依赖 tinypool >= 2.1.2 的版本后，
+# 删掉本节并跑一次 pnpm install 使其回到自然解析（见 DEBT-25）。
+overrides:
+  tinypool: ^2.1.2
+  # source-map-js high 公告（GHSA-68fv-2mgg-jv7q「按索引 section 偏移导致事件循环 DoS」，
+  # 受影响 >=1.0.0 <1.2.2）——补丁级提升，来自 @vue/compiler-sfc 的传递依赖。
+  source-map-js: ^1.2.2
+  # PostCSS 选择器解析的二次复杂度导致 CPU 耗尽（GHSA-rj75-hqrm-r3gf，<7.1.6）——补丁级提升。
+  postcss-selector-parser: ^7.1.6
