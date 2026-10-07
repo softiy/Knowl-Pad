@@ -12,3 +12,6 @@ dunce = "1.0.5"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+# 仅测试用：读取附录 B 的结构化夹具（tests/fixtures/syntax-compat/expected.json）
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
