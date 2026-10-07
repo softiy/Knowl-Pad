@@ -163,6 +163,8 @@ fn main() {
 }
 
 #[cfg(test)]
+mod appendix_b_tests;
+#[cfg(test)]
 mod m0_stub_tests {
     use super::*;
 

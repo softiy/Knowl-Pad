@@ -2239,6 +2239,7 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | D-21 | 解析器实现路径不一致：§2.5/§3.1.5/§9.3 的 TEST-01 写 `domain/md_parse.rs`（**单文件**），技术方案 §5.1 写 `domain/md_parse/`（**目录**，含 frontmatter/wikilink/tag/heading/block_id/code_fence 七个文件） | 以**技术方案（目录）**为准（单文件放不下 27 条规则且不利于 CODE-11）；本行登记口径，实现按目录落地 | §2.5、§3.1.5、§9.3 TEST-01、技术方案 §5.1 |
 | D-22 | ~~事件表只有 13 个事件，技术方案会 emit `kp://note/updated`/`kp://link/changed` 而 PRD 未定义~~ **本条经复核为误判，已撤回（2026-10-05）**：这两个事件**本就在 §5.4 的事件表中**（事件表共 13 条，M3 复核时的抽取只列了其中与索引相关的 8 条，被错误推广为「PRD 未定义」） | **无需改动**；保留本行作为记录，并提示：**只列子集的抽取结果不能当作全集使用**（教训已写入 M3 计划 §8） | §5.4 事件表 |
 | D-23 | **三处事件载荷口径不一致**（2026-10-05 M3 复核，逐条核对 §5.4 的 13 条事件表后发现）：① `kp://index/failed`——技术方案写有 `detail`（inotify 耗尽的 sysctl 建议），PRD 只有 `code/message/failed_files`；② `kp://note/updated`——PRD 为 `{ rel_path }`，技术方案为 `{ rel_path, mtime_ms }`；③ `kp://link/changed`——PRD 为 `{ affected_files }`，技术方案为 `{ rel_path }` | 以 **PRD 为准**（EVT-03 要求载荷只含路径与元信息，且前端契约以 PRD 定义为准）：`index/failed` 的 sysctl 建议并入 `message`、`note/updated` 不带 `mtime_ms`、`link/changed` 用 `affected_files`；**技术方案侧需同步标注**，实现时不得引入 PRD 未定义的字段 | §5.4 事件表、EVT-03、技术方案 §5.4 |
+| D-24 | 附录 B 的 **B-25**（远程图片 `![](https://…)` 不自动加载、显示占位符）在 M3 无法落地：它依赖附件域（SEC-08 / FR-ATTACH-11） | 正式**顺延至 M6（附件域）**；M3 的准确率分母仍按附录 B 的 **25 条**计（清点测试 `appendix_b_inventory_has_no_gap` 对着本表数满 25 条：21 条解析夹具 + 3 条索引层用例 + 1 条本顺延），**不得**用"实际夹具条数"当分母 | 附录 B、§9.1 M3 行 |
 
 ---
 

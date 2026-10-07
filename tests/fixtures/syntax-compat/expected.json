@@ -1,6 +1,6 @@
 {
   "note": "期望值由 PRD §3.1 的规则条款推导得出（附录 B 的固化流程）；不以任何外部软件运行时行为为基准。",
-  "accuracyRule": "准确率 = 通过项 / 总项；本切片 10 项 ⇒ 需 10/10（99% × 10 = 9.9）。",
+  "accuracyRule": "分母 = 附录 B 的 25 条（PRD 表格为准）。本文件覆盖解析层用例；索引层用例（B-19/B-20/B-22）见 src-tauri/src/appendix_b_tests.rs；B-25（远程图片占位）属 M6 附件域，已在 PRD 勘误中正式顺延。清点测试会断言 25 条全部有着落 —— 夹具少几条不会让\"准确率\"变高。",
   "cases": [
     {
       "id": "B-01",
@@ -215,6 +215,37 @@
           "text": "标题"
         }
       ]
+    },
+    {
+      "id": "B-04",
+      "file": "B-04.md",
+      "rule": "MD-WL-01/MD-BID-01",
+      "links": [
+        {
+          "target": "Note",
+          "anchor": "^abc123",
+          "kind": "link"
+        }
+      ]
+    },
+    {
+      "id": "B-07",
+      "file": "B-07.md",
+      "rule": "MD-WL-07",
+      "links": [
+        {
+          "target": "Note",
+          "anchor": "标题",
+          "kind": "embed"
+        }
+      ]
+    }
+  ],
+  "deferred": [
+    {
+      "id": "B-25",
+      "reason": "远程图片占位属 M6 附件域（SEC-08/FR-ATTACH-11）",
+      "ledger": "PRD 勘误"
     }
   ]
 }
