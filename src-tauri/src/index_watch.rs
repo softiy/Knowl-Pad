@@ -36,6 +36,17 @@ pub enum Change {
     Renamed(String, String),
 }
 
+/// 读取某文件真实 mtime（毫秒）；读不到返回 0。供 kp://fs/modified 载荷使用（PRD §5.4：
+/// FR-EDITOR-34 的冲突检测依赖它，独立审查指出此前恒为 0）。
+fn mtime_of(root: &Path, rel: &str) -> i64 {
+    std::fs::metadata(root.join(rel))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 pub(crate) fn is_markdown(rel: &str) -> bool {
     rel.to_lowercase().ends_with(".md")
 }
@@ -119,15 +130,6 @@ pub fn apply_changes<F: Fn(&[Change])>(
     }
     on_event(changes);
     // 单篇变更也会影响链接裁决与标签计数；这里统一重算（十万文件规模实测约 2.4s，可接受）
-    let _ = pool.with_writer(|conn| {
-        conn.execute_batch("BEGIN IMMEDIATE")
-            .map_err(|_| AppError::db("开启裁决事务"))?;
-        crate::index_resolve::resolve_links(conn)?;
-        crate::index_resolve::recount_tags(conn)?;
-        conn.execute_batch("COMMIT")
-            .map_err(|_| AppError::db("提交裁决事务"))?;
-        Ok(())
-    });
 }
 
 /// 监听句柄：持有 debouncer；调用 [`WatcherHandle::stop`] 或 drop 即停止。
@@ -214,6 +216,7 @@ pub fn start_watcher(
     app: AppHandle,
 ) -> Result<WatcherHandle, AppError> {
     let error_app = app.clone();
+    let root_for_events = root.clone();
     start_watcher_with(
         pool,
         root,
@@ -238,7 +241,7 @@ pub fn start_watcher(
                             "kp://fs/modified",
                             FsModified {
                                 rel_path: rel.clone(),
-                                mtime_ms: 0,
+                                mtime_ms: mtime_of(&root_for_events, rel),
                             },
                         );
                     }
