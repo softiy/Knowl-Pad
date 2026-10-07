@@ -69,7 +69,11 @@ fn concurrent_readers_never_see_partial_content() {
 #[test]
 fn cleanup_removes_leftovers() {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join(format!("{TEMP_PREFIX}deadbeef")), b"junk").unwrap();
+    fs::write(
+        dir.path().join(format!("{TEMP_PREFIX}123-456-789")),
+        b"junk",
+    )
+    .unwrap();
     fs::write(dir.path().join("keep.md"), b"data").unwrap();
     assert_eq!(cleanup_temp_files(dir.path()).unwrap(), 1);
     assert!(dir.path().join("keep.md").exists());

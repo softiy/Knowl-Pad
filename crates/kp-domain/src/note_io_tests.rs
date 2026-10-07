@@ -76,7 +76,7 @@ fn mtime_missing_file_errors() {
 #[test]
 fn cleanup_removes_leftover_temp_files() {
     let d = dir();
-    fs::write(d.path().join(format!("{TEMP_PREFIX}123-abc")), b"junk").unwrap();
+    fs::write(d.path().join(format!("{TEMP_PREFIX}123-456-789")), b"junk").unwrap();
     fs::write(d.path().join("keep.md"), b"data").unwrap();
     assert_eq!(cleanup_temp_files(d.path()).unwrap(), 1);
     assert!(d.path().join("keep.md").exists());
@@ -154,8 +154,12 @@ fn recursive_cleanup_removes_nested_leftovers_only() {
     let nested = dir.path().join("a/b/c");
     fs::create_dir_all(&nested).expect("应可建目录");
     fs::create_dir_all(dir.path().join(".knowlpad")).expect("应可建内部目录");
-    fs::write(dir.path().join(format!("{TEMP_PREFIX}root")), b"junk").expect("应可写");
-    fs::write(nested.join(format!("{TEMP_PREFIX}deep")), b"junk").expect("应可写");
+    fs::write(
+        dir.path().join(format!("{TEMP_PREFIX}111-222-333")),
+        b"junk",
+    )
+    .expect("应可写");
+    fs::write(nested.join(format!("{TEMP_PREFIX}444-555-666")), b"junk").expect("应可写");
     fs::write(dir.path().join(".knowlpad/index.db-wal"), b"keep").expect("应可写");
     fs::write(dir.path().join("real.md"), b"keep").expect("应可写");
 
@@ -172,7 +176,7 @@ fn recursive_cleanup_removes_nested_leftovers_only() {
 #[test]
 fn recursive_cleanup_does_not_follow_symlinks() {
     let outside = tempfile::tempdir().expect("外部目录应可创建");
-    let victim = outside.path().join(format!("{TEMP_PREFIX}victim"));
+    let victim = outside.path().join(format!("{TEMP_PREFIX}777-888-999"));
     fs::write(&victim, b"must survive").expect("应可写");
     let dir = tempfile::tempdir().expect("临时目录应可创建");
     std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).expect("应可建软链");
@@ -214,4 +218,17 @@ fn base_mtime_none_skips_conflict_check() {
     let new_mtime = write_note(&target, b"mine", None).unwrap();
     assert!(new_mtime > 0);
     assert_eq!(read_note(&target).unwrap(), b"mine");
+}
+/// **DEBT-23 回归**：用户自己建的「看起来像临时文件」不能被清理误删。
+#[test]
+fn debt_23_user_file_with_temp_prefix_survives() {
+    let d = tempfile::tempdir().expect("临时目录");
+    let user_file = d.path().join(format!("{TEMP_PREFIX}notes.md"));
+    fs::write(&user_file, b"user content").expect("应可写");
+    let real_tmp = d.path().join(format!("{TEMP_PREFIX}1234-5678-9"));
+    fs::write(&real_tmp, b"junk").expect("应可写");
+    let removed = cleanup_temp_files_recursive(d.path()).expect("清理应成功");
+    assert_eq!(removed, 1, "只有真正形态的临时文件该被删");
+    assert!(user_file.exists(), "用户的 .kp-tmp-notes.md 必须保留");
+    assert!(!real_tmp.exists(), "我们自己写的临时文件应被清理");
 }
