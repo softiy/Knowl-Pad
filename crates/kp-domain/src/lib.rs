@@ -10,4 +10,6 @@ pub mod fs_atomic;
 pub mod md_parse;
 pub mod note_io;
 pub mod path_guard;
+pub mod search;
+pub mod tokenize;
 pub mod vault_paths;

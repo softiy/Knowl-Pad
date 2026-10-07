@@ -19,10 +19,16 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub const PARSER_VERSION: u32 = 0;
 
 /// 分词器版本：M3 引入 jieba-rs 后填写其 crate 版本。
-pub const TOKENIZER_VERSION: &str = "pending-m3";
+pub const TOKENIZER_VERSION: &str = kp_domain::tokenize::TOKENIZER_VERSION;
 
 /// 词典指纹：M3 由 build.rs 对内嵌词典计算 SHA-256 前 16 位（技术方案 §4.6）。
-pub const TOKENIZER_DICT_HASH: &str = "pending-m3";
+/// 词典哈希（进索引签名）。
+///
+/// jieba-rs 的词典**编译期内嵌**于二进制、运行时没有可哈希的词典文件，因此这里用
+/// **版本 + 特性 + 内置词典标识**的 FNV-1a 64 十六进制作为「变化检测」指纹：
+/// 任何一项变化都会让签名变化 → 触发全量重建（正确性优先于性能的刻意取舍）。
+/// 复现方式：FNV-1a64("jieba-rs|<version>|default-dict")。
+pub const TOKENIZER_DICT_HASH: &str = "5d5182e208a4a8a0";
 
 /// meta 中的重建标记键：重建开始时置位，完成后清除（FR-SIG-03 / NFR-REL-07）。
 pub const META_REBUILD_IN_PROGRESS: &str = "rebuild_in_progress";

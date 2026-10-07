@@ -105,14 +105,35 @@ pub fn parse(bytes: &[u8]) -> ParsedNote {
 
 /// 去掉代码区间与 frontmatter 区间后的正文（MD-FM-06；完整清洗随后续切片完善）。
 fn plain_text(text: &str, code: &CodeRanges, skip: Option<std::ops::Range<usize>>) -> String {
-    let mut out = String::with_capacity(text.len());
+    let mut raw = String::with_capacity(text.len());
     for (i, ch) in text.char_indices() {
         let skipped = skip.as_ref().is_some_and(|r| r.contains(&i));
         if !skipped && !code.contains(i) {
-            out.push(ch);
+            raw.push(ch);
         }
     }
-    out
+    clean_markdown(&raw)
+}
+
+/// 全文索引用的清洗：`[[目标|别名]]` → `别名`、`[[目标]]` → `目标`，再剥离行内标记。
+/// 目的：让 FTS 的 `plain_text` 是「可被检索的自然语言」，而不是 Markdown 源码。
+fn clean_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("[[") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 2..];
+        let Some(j) = after.find("]]") else {
+            out.push_str(&rest[i..]);
+            rest = "";
+            break;
+        };
+        let inner = &after[..j];
+        out.push_str(inner.split('|').next_back().unwrap_or(inner));
+        rest = &after[j + 2..];
+    }
+    out.push_str(rest);
+    heading::strip_markers(&out)
 }
 
 #[cfg(test)]
@@ -203,5 +224,29 @@ mod tests {
         assert_eq!(note.headings[0].text, "真标题");
         assert!(note.tags.is_empty(), "代码块内的 #tag 不算标签");
         assert_eq!(note.block_ids.len(), 1);
+    }
+    #[test]
+    fn plain_text_unwraps_wikilinks_and_strips_markers() {
+        let note = parse("见 [[目标|别名]] 与 [[纯目标]]，另有 **粗体** 与 `代码`\n".as_bytes());
+        assert!(
+            note.plain_text.contains("别名"),
+            "带别名时取别名：{}",
+            note.plain_text
+        );
+        assert!(
+            note.plain_text.contains("纯目标"),
+            "无别名时取目标：{}",
+            note.plain_text
+        );
+        assert!(note.plain_text.contains("粗体"));
+        assert!(!note.plain_text.contains("**"), "行内标记应被剥离");
+        assert!(!note.plain_text.contains("[[") && !note.plain_text.contains("]]"));
+    }
+
+    #[test]
+    fn index_text_from_plain_text_contains_chinese_words() {
+        let note = parse("知识图谱的力导向布局\n".as_bytes());
+        let indexed = crate::tokenize::for_index(&note.plain_text);
+        assert!(indexed.contains("知识"), "plain_text 应能被分词：{indexed}");
     }
 }

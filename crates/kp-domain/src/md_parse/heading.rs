@@ -20,7 +20,7 @@ pub struct Heading {
 }
 
 /// 剥离行内 Markdown 标记（MD-H-02 的近似实现：成对/单独的分隔符一律移除）。
-fn strip_markers(raw: &str) -> String {
+pub(crate) fn strip_markers(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {

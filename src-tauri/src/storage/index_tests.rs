@@ -309,3 +309,67 @@ fn unreadable_index_is_treated_as_untrusted_and_rebuilt() {
     let outcome = ensure_index_db(&db, &sig).expect("判定应成功");
     assert_eq!(outcome, RebuildOutcome::Unchanged, "重建后签名应一致");
 }
+
+/// WP3 的核心验证：**中文短语**经 jieba 预分词写入 FTS5（unicode61）后能被 MATCH 命中，
+/// 且不相干的词不命中（AC-SEARCH-01 的最小版）。
+#[test]
+fn fts_roundtrip_matches_chinese_phrase_after_tokenization() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let pool = crate::storage::index::open(dir.path()).expect("建索引库");
+    let text = kp_domain::tokenize::for_index("知识图谱的力导向布局");
+    assert!(!text.is_empty(), "分词结果不应为空");
+    pool.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO note_fts(rowid, plain_text) VALUES (1, ?1)",
+            rusqlite::params![text],
+        )
+        .map(|_| ())
+        .map_err(|_| kp_domain::error::AppError::db("插入 FTS 行"))
+    })
+    .expect("写入 FTS");
+
+    let hit_expr =
+        kp_domain::search::build_match_expr("力导向布局", kp_domain::search::MatchMode::All);
+    let hits: i64 = pool
+        .with_reader(|conn| {
+            conn.query_row(
+                "SELECT count(*) FROM note_fts WHERE note_fts MATCH ?1",
+                rusqlite::params![hit_expr],
+                |row| row.get(0),
+            )
+            .map_err(|_| kp_domain::error::AppError::db("查询 FTS"))
+        })
+        .expect("查询 FTS");
+    assert!(hits >= 1, "中文短语应命中（expr = {hit_expr}）");
+
+    let miss_expr =
+        kp_domain::search::build_match_expr("量子纠缠退相干", kp_domain::search::MatchMode::All);
+    let misses: i64 = pool
+        .with_reader(|conn| {
+            conn.query_row(
+                "SELECT count(*) FROM note_fts WHERE note_fts MATCH ?1",
+                rusqlite::params![miss_expr],
+                |row| row.get(0),
+            )
+            .map_err(|_| kp_domain::error::AppError::db("查询 FTS"))
+        })
+        .expect("查询 FTS");
+    assert_eq!(misses, 0, "不相干的词不应命中（expr = {miss_expr}）");
+}
+
+/// 含 FTS5 元字符的输入不得造成语法错误（escape_fts 的作用）。
+#[test]
+fn fts_special_characters_do_not_error() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let pool = crate::storage::index::open(dir.path()).expect("建索引库");
+    let expr = kp_domain::search::build_match_expr("a*b (c) ^d", kp_domain::search::MatchMode::All);
+    let res: Result<i64, _> = pool.with_reader(|conn| {
+        conn.query_row(
+            "SELECT count(*) FROM note_fts WHERE note_fts MATCH ?1",
+            rusqlite::params![expr],
+            |row| row.get(0),
+        )
+        .map_err(|_| kp_domain::error::AppError::db("查询 FTS"))
+    });
+    assert!(res.is_ok(), "元字符输入不得导致 SQL 错误：{res:?}");
+}
