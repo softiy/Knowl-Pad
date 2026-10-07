@@ -18,6 +18,8 @@ path = "src/main.rs"
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
+# 全量索引遍历（技术方案 §3.5.2 矩阵：walkdir 2.5.0，引入阶段 M3）
+walkdir = "2.5.0"
 kp-domain = { path = "../crates/kp-domain" }
 tauri = { version = "2.12.0", features = [] }
 tauri-plugin-shell = "2.3.6"
