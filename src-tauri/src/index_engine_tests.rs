@@ -62,8 +62,8 @@ fn full_index_writes_all_entity_tables() {
         outcome.indexed, 5,
         "四篇笔记 + 一个附件（PR-6：附件也要进文件树）"
     );
+    let c = counts(&pool);
     assert_eq!(c[0], 5, "file 行数（四篇笔记 + note.txt 附件）");
-    assert_eq!(c[0], 4, "file 行数（四篇笔记；附件由附件用例覆盖）");
     assert_eq!(c[1], 4, "note_fts 只对笔记建行");
     assert!(c[2] >= 4, "标题应入库：{c:?}");
     assert_eq!(c[3], 1, "一个块 ID");
