@@ -6,16 +6,79 @@ use super::vault_types::{
     VaultRelocateArgs, VaultRenameArgs, VaultSummary,
 };
 use crate::error_wrapper::KpError;
+use crate::index_engine::{full_index_cancellable, IndexMode};
+use crate::index_watch::start_watcher;
 use crate::state::AppState;
 use kp_domain::error::AppError;
 use std::path::PathBuf;
+use tauri::{AppHandle, Emitter, Manager};
 
+/// 打开/新建 Vault 后的后台任务：**先做 mtime 对账**（跳过未变更），**再启动文件监听**。
+///
+/// 之所以放在后台：对账要遍历整库（可能上万文件），不能阻塞 open 命令返回。
+/// 监听启动失败（如 inotify watch 耗尽）则退化为 5s 轮询对账（NFR-PLAT-09）。
+fn spawn_reconcile_and_watch(
+    app: AppHandle,
+    root: PathBuf,
+    pool: std::sync::Arc<crate::storage::pool::DbPool>,
+) {
+    tauri::async_runtime::spawn(async move {
+        match full_index_cancellable(&pool, &root, |_, _| {}, IndexMode::SkipUnchanged, || false) {
+            Ok(outcome) => {
+                let _ = app.emit(
+                    "kp://index/completed",
+                    crate::commands::index::IndexCompleted {
+                        stats: crate::commands::index::IndexStatsPayload {
+                            indexed: outcome.indexed,
+                            skipped: outcome.skipped,
+                            cancelled: outcome.cancelled,
+                        },
+                        duration_ms: outcome.duration_ms,
+                    },
+                );
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "打开 Vault 后的对账失败");
+                let _ = app.emit(
+                    "kp://index/failed",
+                    crate::commands::index::IndexFailed {
+                        code: err.code().to_string(),
+                        message: err.to_string(),
+                        failed_files: Vec::new(),
+                    },
+                );
+            }
+        }
+        let state = app.state::<AppState>();
+        if !state.has_watcher() {
+            match start_watcher(pool.clone(), root.clone(), app.clone()) {
+                Ok(handle) => state.set_watcher(handle),
+                Err(err) => {
+                    tracing::warn!(error = %err, "文件监听启动失败，退化为轮询对账");
+                    crate::index_watch::start_polling_fallback(pool.clone(), root.clone());
+                }
+            }
+        }
+    });
+}
+
+/// 从状态里取根与索引库；两者齐备才启动后台任务。
+fn reconcile_after_open(state: &AppState, app: &AppHandle) {
+    let Ok(root) = super::paths::root_of(state) else {
+        return;
+    };
+    let Some(pool) = state.index_db() else {
+        return;
+    };
+    spawn_reconcile_and_watch(app.clone(), root, pool);
+}
 // ── 命令（薄壳，RS-01）────────────────────────────────────────────
 
 /// 打开已有文件夹为 Vault（路径必须存在；否则 E_VAULT_PATH_INVALID 且不创建目录）。
 #[tauri::command]
 pub async fn vault_open(
     state: tauri::State<'_, AppState>,
+    app: AppHandle,
     args: VaultOpenArgs,
 ) -> Result<VaultInfo, KpError> {
     let path = PathBuf::from(&args.abs_path);
@@ -28,13 +91,16 @@ pub async fn vault_open(
             ))
         })?
         .map_err(KpError)?;
-    activate_vault(&state, prepared).map_err(KpError)
+    let info = activate_vault(&state, prepared).map_err(KpError)?;
+    reconcile_after_open(&state, &app);
+    Ok(info)
 }
 
 /// 新建 Vault：路径不存在时创建目录，并在其中初始化 .knowlpad/ 与空索引库。
 #[tauri::command]
 pub async fn vault_create(
     state: tauri::State<'_, AppState>,
+    app: AppHandle,
     args: VaultCreateArgs,
 ) -> Result<VaultInfo, KpError> {
     let path = PathBuf::from(&args.abs_path);
@@ -48,6 +114,7 @@ pub async fn vault_create(
         })?
         .map_err(KpError)?;
     let info = activate_vault(&state, prepared).map_err(KpError)?;
+    reconcile_after_open(&state, &app);
     if let (Some(name), Some(id), Some(global)) = (args.name, info.vault_id, state.global_db()) {
         crate::storage::global::rename_vault(&global, id, &name).map_err(KpError)?;
         return Ok(VaultInfo {
