@@ -878,9 +878,9 @@ export default defineConfig({
 | Crate | 锁定版本 | 用途 | 选型理由 | 备选 | 引入阶段 |
 | --- | --- | --- | --- | --- | --- |
 | `jieba-rs` | `0.11.0` | 中文分词（FTS5 预分词） | 纯 Rust、词典内置、无原生依赖、社区活跃（2026-09-16 刚发布） | `tantivy`（自带 CJK tokenizer，但引入完整搜索引擎偏重）、`cang-jie`（绑定 jieba C++，需交叉编译） | M3 |
-| `notify` | `8.2.0` | 跨平台文件监听 | Rust 生态事实标准，统一封装 inotify/FSEvents/ReadDirectoryChangesW。⚠️ `9.0.0-rc.5` 为预发布，禁用 | `ignore`（含 gitignore 语义，若需尊重 `.gitignore` 则更合适） | M1 |
-| `notify-debouncer-full` | `0.7.0` | notify 去抖动封装（索引器必需，避免保存时重复触发） | 与 `notify 8.x` 配套（依赖 `notify ^8`）。⚠️ 两者版本号**不要求相同**，但 `0.8.0-rc.2` 为预发布，禁用 | 自研去抖（易出错） | M1 |
-| `walkdir` | `2.5.0` | 递归目录遍历 | 流式迭代、内存友好、支持深度控制与过滤 | `jwalk`（并行遍历，全量扫描更快，但引入 rayon 依赖） | M1 |
+| `notify` | `8.2.0` | 跨平台文件监听 | Rust 生态事实标准，统一封装 inotify/FSEvents/ReadDirectoryChangesW。⚠️ `9.0.0-rc.5` 为预发布，禁用 | M3（原标 M1，实际在 M3 的 WP5 引入——M1 复核发现的漂移，2026-10-05 修正） | M1 |
+| `notify-debouncer-full` | `0.7.0` | notify 去抖动封装（索引器必需，避免保存时重复触发） | 与 `notify 8.x` 配套（依赖 `notify ^8`）。⚠️ 两者版本号**不要求相同**，但 `0.8.0-rc.2` 为预发布，禁用 | M3（同上） | M1 |
+| `walkdir` | `2.5.0` | 递归目录遍历 | 流式迭代、内存友好、支持深度控制与过滤 | M3（全量索引遍历，WP4） | M1 |
 | `sha2` | `0.11.0` | SHA-256（索引签名、更新校验、内容哈希） | RustCrypto 出品，纯 Rust。⚠️ **major bump**（0.10→0.11）：移除了 `asm`/`compress`/`force-soft`，新增 `alloc`/`oid`/`zeroize`，MSRV 1.85 | `ring`（含加密原语，但体积大且构建复杂） | M1 |
 | `thiserror` | `2.0.21` | `AppError` 枚举派生 | 库层错误定义标准做法。⚠️ **major bump**（1.x→2.x），API 有 breaking change，代码示例按 2.x 语义书写 | 手写 `Display`/`Error` 实现 | M0 |
 | `anyhow` | `1.0.104` | Command 层错误聚合 | 应用层错误处理便利 | 仅用 `thiserror` | M0 |
@@ -890,8 +890,8 @@ export default defineConfig({
 | `tracing` | `0.1.44` | 结构化日志 | 生态标准，支持级别过滤与多 sink | `log` + `fern` | M0 |
 | `tracing-subscriber` | `0.3.23`（`env-filter`） | 日志过滤与格式化 | 与 `tracing` 配套，`env-filter` feature 确认存在 | — | M0 |
 | `tracing-appender` | `0.2.5` | 日志按日滚动（PRD §2.4.2 保留 14 天） | 与 `tracing` 配套，`rolling::daily` 原生支持 | 手写滚动 | M0 |
-| `uuid` | `1.26.1`（`v4`） | `operation_id` / `preview_id` | 取消令牌与预览缓存的键。`v4` feature 确认存在（依赖 `rng`），MSRV 1.85 | 自增计数器（但跨重启不安全） | M1 |
-| `dashmap` | `6.2.1` | 并发哈希表（cancellations、previews） | 无锁读、分片写。⚠️ `7.0.0-rc2` 为预发布，禁用 | `std::sync::RwLock<HashMap>` | M1 |
+| `uuid` | `1.26.1`（`v4`） | `operation_id` / `preview_id` | 取消令牌与预览缓存的键。`v4` feature 确认存在（依赖 `rng`），MSRV 1.85 | **未引入**（原标 M1 但从未引入；需要时再评估，2026-10-05 修正） | M1 |
+| `dashmap` | `6.2.1` | 并发哈希表（cancellations、previews） | 无锁读、分片写。⚠️ `7.0.0-rc2` 为预发布，禁用 | **未引入**（原标 M1 但从未引入；需要时再评估，2026-10-05 修正） | M1 |
 | `time` | `0.3.55`（`formatting`, `local-offset`） | 时间戳、回收站按月目录、过期计算 | ✅ **选型已确认**：`time` 比 `chrono` 更轻量无历史包袱。其自身要求 Rust ≥ 1.88，**低于项目 MSRV 1.90，自 2026-09-30 起不再是瓶颈** | `chrono`（生态更广，MSRV 更低） |
 | `dunce` | `1.0.5` | Windows 路径规范化（去除 `\\?\` 前缀的可读形式） | 解决 Windows 长路径显示问题（NFR-PLAT-10），无 features | 手写 | M1 |
 | `base64` | `0.23.1` | 剪贴板图片 IPC 传输编码（`attachment_paste_image`） | 标准实现。⚠️ **major bump**（0.22→0.23），`Engine` trait 用法与 0.21 不同，代码示例按 0.23 API 书写 | Tauri 自带的 IPC 二进制传输（若支持则更优，避免 base64 膨胀 33%） | M6 |
@@ -4110,7 +4110,7 @@ echo "✅ 路径封装检查通过"
 | ~~`DEBT-11`~~ ✅ **已关闭（2026-09-30）** | ~~发布说明与版本号自动化暂缺~~：已落地**零依赖自研方案**——`scripts/changelog.mjs`（解析 Conventional Commits → 按类型分组渲染）+ `scripts/prepare-release.mjs`（推断递增类型 → 调 `bump-version.mjs` 同步四处版本 → 写入 `CHANGELOG.md`；默认 dry-run，`--write` 才落盘，工作区不干净时拒绝执行） | ~~CHANGELOG 需人工维护、版本号需手工同步~~ | 已由 `pnpm release:prepare` 覆盖；回归测试见 `tests/unit/changelog.spec.mjs`（18 项）。人工 review 仍作为最后一道确认（发布是显式动作） |
 | `DEBT-12` | **Tauri 插件锁定版本落后于 §3.2 矩阵**（2026-10-04 M2 复核发现）。矩阵标注的是各插件当前稳定版，而 `src-tauri/Cargo.toml` 锁的是 M0 时期版本：`tauri-plugin-shell` 2.3.6（矩阵 2.4.0）、`tauri-plugin-opener` 2.5.5（矩阵 2.7.0，已核对 crates.io 当前稳定版确为 2.7.0）、`tauri-plugin-dialog` 2.7.3（矩阵 2.8.0）、`tauri-plugin-process` 2.3.1（矩阵 2.4.0）；`tauri` 本体一致（2.12.0） | 「按文档核对依赖」会得出错误结论；插件侧安全修复可能未纳入 | **M9 依赖冻结前**统一升级到矩阵版本并跑三平台冒烟（单独 PR，lockfile 变更独立成 commit，R-17）；若届时决定不升级，则把矩阵改为实际锁定版本并注明理由 |
 | `DEBT-13` | **AC-EDITOR-05 的内核侧指标尚未在真机验证**（2026-10-05 M2 PR-7 登记）：`md-editor-v3` 的 2MB 打开耗时、输入延迟（<50ms）、滚动帧率（≥50FPS）、内存（<500MB）依赖真实 WebView，Node/jsdom 测不到 | 大文件编辑体验未经验证；M2 只覆盖了**我们这一侧**（§7.2 解析+渲染：**2.4MB ≈ 165ms**，见门禁 10 的 `markdownRenderLarge` 指标） | **M8 换 CodeMirror 6 时做正式验证**（真机 + NFR-PERF-07 口径）；若届时输入延迟不达标，按 M2 计划 §5③ 的口径继续顺延并在 M8 报告实测值（相关需求：AC-EDITOR-05 / NFR-PERF-07） |
-| `DEBT-14` | **Rust 命令层没有运行时测试床**（2026-10-05 M2 独立审查登记）：28 个命令（M2 净增 15）只有结构序列化断言，无 `tokio::test` / `tauri::test` 测试床；门禁 15 的 85% 只覆盖 `kp-domain` | PRD §8.3 要求「每个 Command 至少 1 正向 + 1 错误用例」；**B1（跟随重命名假冲突）正是长在这条缝里**——跨 TS/Rust 的契约错误三轮自检都没发现 | **M3 建立命令层测试床**（`tauri::test::mock_app` 或把命令体抽成可注入状态的服务函数），并把它接入门禁 15 的覆盖面（相关需求：PRD §8.3 / AC-EDITOR-05） |
+| `DEBT-14` | **Rust 命令层没有运行时测试床**（2026-10-05 M2 独立审查登记）：28 个命令（M2 净增 15）只有结构序列化断言，无 `tokio::test` / `tauri::test` 测试床；门禁 15 的 85% 只覆盖 `kp-domain` | PRD §8.3 要求「每个 Command 至少 1 正向 + 1 错误用例」；**B1（跟随重命名假冲突）正是长在这条缝里**——跨 TS/Rust 的契约错误三轮自检都没发现 | **M3 建立命令层测试床**（`tauri::test::mock_app` 或把命令体抽成可注入状态的服务函数），并把它接入门禁 15 的覆盖面（相关需求：PRD §8.3 / AC-EDITOR-05） **部分偿还（2026-10-05，M3 PR-1）**：`commands/index.rs` 已按此模式落地——命令体抽成 `parse_stored_signature`（纯函数）与 `read_stats(&DbPool)`，配 3 条真实临时索引库用例；**剩余**：按同一模式逐个抽出并补「1 正向 + 1 错误」用例（建议顺序：note_read/note_write → file_* → vault_* → settings_*） |
 | `DEBT-15` | **「显示隐藏文件」的作用域与 PRD 不一致**（2026-10-05 M2 独立审查登记）：PRD 定为 **Vault 作用域**（FR-SET-04、§4.11.3），实现写进**全局** preference，切换 Vault 会串设置 | 跨 Vault 体验不一致；不涉及数据安全 | 改存 `vault_state`（已是每 Vault 作用域）或按 vault 分键；随 **M3/M5** 的设置面一起做（相关需求：FR-SET-04 / PRD §4.11.3） |
 | `DEBT-16` | **写路径未拒 `.knowlpad/**`**（2026-10-05 M2 独立审查登记）：`is_internal_path` 在生产代码**零调用**，用户可构造 `.knowlpad/...` 的相对路径进入写命令 | 可能破坏内部目录（索引/回收站/备份） | 在 `PathGuard::resolve` 统一拒绝首段为 `.knowlpad` 的用户路径（内部写入器不经 resolve，故安全）；随 **M3** 的存储面一起做并补 AC-SEC 用例（相关需求：FR-STORAGE-04 / SEC）；`DEBT-17`；**本地附件图片未接线**（2026-10-05 M2 复核）：`EditorView` 未传 `resolveAsset`，全仓无 `convertFileSrc`，`tauri.conf.json` 无 `security.assetProtocol`，CSP 只放行 `https://asset.localhost`（Windows 实际用 `http://asset.localhost`）；阅读态本地图片是破图（FR-EDITOR-43 未达成）；**M6（附件域）**：三处联动（assetProtocol 作用域 + CSP 双形态 + resolveAsset），届时补 AC-ATTACH 用例；FR-EDITOR-43、SEC-08 |
 | `DEBT-18` | **渲染态代码块高亮未实现**（FR-EDITOR-44 P0 / FR-EDITOR-03）：技术方案 §2.2 规划的 `core/markdown/highlight.ts` 不存在，渲染管线零高亮（ED-06：不得引入独立高亮库，须纯文本 → 带 class 的 span） | 阅读态代码块无高亮 | **M5**（与设置/主题同期，纯前端）；FR-EDITOR-44、ED-06 |
