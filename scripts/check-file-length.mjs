@@ -79,7 +79,16 @@ if (process.argv.includes("--self-test")) {
   process.exit(pass === cases.length ? 0 : 1);
 }
 
-const files = SCAN_DIRS.flatMap((dir) => { try { return walk(dir); } catch { return []; } });
+// DEBT-21：此前是 `catch { return [] }` —— 扫描目录一旦失败（改名/权限/路径写错）会**静默退化为零文件**，
+// 门禁照样"通过"。现在：① 异常直接抛出；② 校验扫描到的文件数下限，防止"空扫描 = 通过"。
+const MIN_FILES = 50;
+const files = SCAN_DIRS.flatMap((dir) => walk(dir));
+if (files.length < MIN_FILES) {
+  console.error(
+    "❌ CODE-11 扫描到的文件过少（" + files.length + " < " + MIN_FILES + "）：扫描目录是否被改动或不可读？",
+  );
+  process.exit(1);
+}
 const results = files.map((f) => {
   const rel = relative(ROOT, f);
   return { rel, ...measure(rel, readFileSync(f, "utf8")) };
@@ -90,6 +99,16 @@ const warns = results.filter((r) => r.level === "warn");
 console.log(
   `▶ CODE-11 文件长度检查：${results.length} 个源文件（Rust + 前端；豁免 ${results.filter((r) => r.exempt).length} 个）`,
 );
+// DEBT-21：警告此前"永不阻断"。给定预算 —— **只许降不许升**；
+// 要放宽必须在本文件里改这个数字，并在 PR 说明理由（让"临时放一马"留下痕迹）。
+const WARN_BUDGET = 22;
+if (warns.length > WARN_BUDGET) {
+  console.error(
+    "❌ 超警告阈值的文件数 " + warns.length + " 超过预算 " + WARN_BUDGET + "：请拆分文件或调整预算并说明理由",
+  );
+  process.exit(1);
+}
+
 for (const w of warns) console.warn(`⚠️  ${w.rel} 为 ${w.lines} 行（警告阈值 ${WARN_LIMIT}）`);
 for (const e of errors) console.error(`❌ ${e.rel} 为 ${e.lines} 行，超过硬性上限 ${HARD_LIMIT}`);
 if (errors.length > 0) {
