@@ -22,7 +22,7 @@ use kp_domain::tokenize;
 use crate::storage::pool::DbPool;
 
 /// 遍历时永远跳过的目录（与监听侧共用）。
-pub const IGNORED_DIRS: [&'static str; 4] = [".knowlpad", ".obsidian", ".git", "node_modules"];
+pub const IGNORED_DIRS: [&str; 4] = [".knowlpad", ".obsidian", ".git", "node_modules"];
 /// 超过此大小的笔记跳过（SEC-11）。
 pub const MAX_NOTE_BYTES: u64 = 5 * 1024 * 1024;
 /// 每批提交的文件数（PERF-05：禁止逐条事务）。
