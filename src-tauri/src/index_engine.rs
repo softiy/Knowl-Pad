@@ -255,6 +255,16 @@ pub fn full_index<F: FnMut(usize, usize)>(
         done += chunk_len;
         progress(done, total);
     }
+    // 全部文件写完后统一裁决（此时候选行才齐）；裁决与计数在同一事务内完成
+    pool.with_writer(|conn| {
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .map_err(|_| AppError::db("开启裁决事务"))?;
+        crate::index_resolve::resolve_links(conn)?;
+        crate::index_resolve::recount_tags(conn)?;
+        conn.execute_batch("COMMIT")
+            .map_err(|_| AppError::db("提交裁决事务"))?;
+        Ok(())
+    })?;
     outcome.duration_ms = started.elapsed().as_millis() as u64;
     Ok(outcome)
 }
