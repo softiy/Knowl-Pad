@@ -34,7 +34,16 @@ pub struct DbPool {
 impl DbPool {
     /// 打开（或创建）全局库：应用 PRAGMA → 执行**版本化迁移** → 启动写线程。
     pub fn open(path: &Path) -> Result<Self, AppError> {
-        Self::open_with(path, |conn| super::migrate::migrate(conn).map(|_| ()))
+        let db_path = path.to_path_buf();
+        Self::open_with(path, move |conn| {
+            // DEBT-24①：**真正的升级**（已有库且版本低于目标）之前先把库备份出来。
+            // 新建库（version 0）不需要备份；版本已是最新时也不产生多余文件。
+            let from = super::migrate::schema_version(conn)?;
+            if from > 0 && from < super::migrate::latest_version() {
+                super::migrate::backup_before_migrate(conn, &db_path, from)?;
+            }
+            super::migrate::migrate(conn).map(|_| ())
+        })
     }
 
     /// 打开（或创建）数据库：应用 PRAGMA → 执行调用方给定的 schema 引导逻辑 → 启动写线程。
