@@ -57,7 +57,7 @@ fn mtime_ms(path: &Path) -> i64 {
 }
 
 /// 遍历 Vault，产出待索引的 `.md` 清单（跳过忽略目录、临时文件与超限文件）。
-pub fn scan_notes(root: &Path) -> Result<(Vec<ScanEntry>, Vec<String>), AppError> {
+pub fn scan_vault(root: &Path) -> Result<(Vec<ScanEntry>, Vec<String>), AppError> {
     let mut entries = Vec::new();
     let mut warnings = Vec::new();
     let walker = WalkDir::new(root).into_iter().filter_entry(|e| {
@@ -82,19 +82,17 @@ pub fn scan_notes(root: &Path) -> Result<(Vec<ScanEntry>, Vec<String>), AppError
             continue;
         }
         let path = entry.path();
+        // PR-6：记录**全部**文件（附件也要出现在文件树里）；只有 .md 会被解析并建全文索引
         let is_note = path
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("md"));
-        if !is_note {
-            continue;
-        }
         let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
         let rel_path = path
             .strip_prefix(root)
             .map_err(|_| AppError::PathOutsideVault)?
             .to_string_lossy()
             .replace('\\', "/");
-        if size_bytes > MAX_NOTE_BYTES {
+        if is_note && size_bytes > MAX_NOTE_BYTES {
             warnings.push(format!("skip-oversize:{rel_path}"));
             continue;
         }
@@ -116,6 +114,19 @@ pub fn content_fingerprint(bytes: &[u8]) -> String {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{hash:016x}")
+}
+
+/// 索引里的 kind 取值：`.md` 为 note，常见附件为 attachment，其余为 other。
+fn kind_of(rel_path: &str) -> &'static str {
+    let ext = rel_path.rsplit('.').next().unwrap_or("").to_lowercase();
+    if ext == "md" {
+        return "note";
+    }
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "pdf" | "mp3" | "wav" | "m4a"
+        | "mp4" | "mov" | "zip" | "txt" | "csv" | "json" => "attachment",
+        _ => "other",
+    }
 }
 
 fn split_name(rel_path: &str) -> (String, String, String) {
@@ -162,9 +173,18 @@ pub fn index_file_mode(
         }
     }
     let abs = root.join(&entry.rel_path);
+    let kind = kind_of(&entry.rel_path);
+    let is_note = kind == "note";
     let bytes = std::fs::read(&abs).map_err(AppError::from)?;
-    let note = md_parse::parse(&bytes);
-    let indexed_text = tokenize::for_index(&note.plain_text);
+    let note = if is_note {
+        Some(md_parse::parse(&bytes))
+    } else {
+        None
+    };
+    let indexed_text = note
+        .as_ref()
+        .map(|n| tokenize::for_index(&n.plain_text))
+        .unwrap_or_default();
     let fingerprint = content_fingerprint(&bytes);
     let now = mtime_ms(&abs).max(1);
 
@@ -186,18 +206,23 @@ pub fn index_file_mode(
     let (name, stem, ext) = split_name(&entry.rel_path);
     conn.execute(
         "INSERT INTO file (rel_path, name, stem, ext, kind, size_bytes, mtime_ms, content_hash, deleted, indexed_at) \
-         VALUES (?1, ?2, ?3, ?4, 'note', ?5, ?6, ?7, 0, ?8)",
-        params![entry.rel_path, name, stem, ext, entry.size_bytes as i64, entry.mtime_ms, fingerprint, now],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)",
+        params![entry.rel_path, name, stem, ext, kind, entry.size_bytes as i64, entry.mtime_ms, fingerprint, now],
     )
     .map_err(|_| AppError::db("写入文件行"))?;
     let file_id = conn.last_insert_rowid();
 
-    conn.execute(
-        "INSERT INTO note_fts(rowid, plain_text) VALUES (?1, ?2)",
-        params![file_id, indexed_text],
-    )
-    .map_err(|_| AppError::db("写入全文索引"))?;
+    if is_note {
+        conn.execute(
+            "INSERT INTO note_fts(rowid, plain_text) VALUES (?1, ?2)",
+            params![file_id, indexed_text],
+        )
+        .map_err(|_| AppError::db("写入全文索引"))?;
+    }
 
+    let Some(note) = note.as_ref() else {
+        return Ok(true);
+    };
     for (i, h) in note.headings.iter().enumerate() {
         conn.execute(
             "INSERT INTO heading (file_id, level, text, anchor, line, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -273,7 +298,7 @@ pub fn full_index_cancellable<F: FnMut(usize, usize), C: Fn() -> bool>(
     should_cancel: C,
 ) -> Result<IndexOutcome, AppError> {
     let started = Instant::now();
-    let (entries, warnings) = scan_notes(root)?;
+    let (entries, warnings) = scan_vault(root)?;
     let total = entries.len();
     let mut outcome = IndexOutcome {
         warnings,
