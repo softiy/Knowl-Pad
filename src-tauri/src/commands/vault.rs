@@ -61,6 +61,8 @@ pub async fn vault_create(
 /// 关闭当前 Vault（先刷盘）。
 #[tauri::command]
 pub async fn vault_close(state: tauri::State<'_, AppState>) -> Result<(), KpError> {
+    // 先停止文件监听（M3 WP5），避免关闭过程中的事件触发增量写库
+    state.stop_watcher();
     close_current(&state);
     Ok(())
 }

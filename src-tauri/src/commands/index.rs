@@ -233,6 +233,17 @@ pub async fn index_rebuild(
     );
     match result {
         Ok(outcome) => {
+            // 索引完成后再启动监听：确保监听期间的增量写库建立在完整索引之上。
+            // 监听启动失败（如 inotify watch 耗尽）则退化为 5s 轮询对账（NFR-PLAT-09）。
+            if !state.has_watcher() {
+                match crate::index_watch::start_watcher(pool.clone(), root.clone(), app.clone()) {
+                    Ok(handle) => state.set_watcher(handle),
+                    Err(err) => {
+                        tracing::warn!(error = %err, "文件监听启动失败，退化为轮询对账");
+                        crate::index_watch::start_polling_fallback(pool.clone(), root.clone());
+                    }
+                }
+            }
             let _ = app.emit(
                 "kp://index/completed",
                 IndexCompleted {

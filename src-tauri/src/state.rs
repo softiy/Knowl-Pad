@@ -15,6 +15,8 @@ pub struct AppState {
     current_vault_id: Mutex<Option<i64>>,
     /// 索引取消请求（FR-VAULT-09 / AC-VAULT-05）；由 index_cancel 置位、索引循环在批间检查并清除。
     index_cancel: AtomicBool,
+    /// 当前 Vault 的文件监听句柄（M3 WP5）；关闭 Vault 或重新打开时替换/停止。
+    watcher: Mutex<Option<crate::index_watch::WatcherHandle>>,
 }
 
 impl AppState {
@@ -54,6 +56,30 @@ impl AppState {
     /// 索引循环检查取消请求，并在读取时清除（避免影响下一次索引）。
     pub fn take_index_cancel(&self) -> bool {
         self.index_cancel.swap(false, Ordering::SeqCst)
+    }
+
+    /// 是否已在监听。
+    pub fn has_watcher(&self) -> bool {
+        self.watcher.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+
+    /// 记录监听句柄（替换旧的会先停止它）。
+    pub fn set_watcher(&self, handle: crate::index_watch::WatcherHandle) {
+        if let Ok(mut guard) = self.watcher.lock() {
+            if let Some(old) = guard.take() {
+                old.stop();
+            }
+            *guard = Some(handle);
+        }
+    }
+
+    /// 停止监听（关闭 Vault 时调用）。
+    pub fn stop_watcher(&self) {
+        if let Ok(mut guard) = self.watcher.lock() {
+            if let Some(old) = guard.take() {
+                old.stop();
+            }
+        }
     }
 
     /// 记录当前 Vault 的注册 id。
