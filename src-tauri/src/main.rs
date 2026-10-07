@@ -9,6 +9,8 @@ mod error_wrapper;
 mod index_engine;
 #[cfg(test)]
 mod index_engine_tests;
+#[cfg(test)]
+mod index_reliability_tests;
 mod index_resolve;
 mod logging;
 mod platform;
