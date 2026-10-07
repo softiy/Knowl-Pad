@@ -134,6 +134,22 @@ export const indexSignatureGet = (): Promise<SignatureInfo> => call<SignatureInf
 /** 各表实体计数。 */
 export const indexStats = (): Promise<IndexStats> => call<IndexStats>('index_stats');
 
+/** `index_rebuild` 的结果（FR-VAULT-09）。 */
+export interface IndexRebuildResult {
+  indexed: number;
+  skipped: number;
+  durationMs: number;
+  cancelled: boolean;
+  warnings: string[];
+}
+
+/** 全量重建索引（force=false 时跳过未变更文件）。 */
+export const indexRebuild = (force = false): Promise<IndexRebuildResult> =>
+  call<IndexRebuildResult>('index_rebuild', { force });
+
+/** 请求取消当前索引（幂等）。 */
+export const indexCancel = (): Promise<boolean> => call<boolean>('index_cancel');
+
 /** 新建 Vault（目录不存在时创建，并初始化 .knowlpad/ 与空索引库） */
 export const vaultCreate = (absPath: string, name?: string): Promise<VaultInfo> =>
   call<VaultInfo>('vault_create', { args: { absPath, name } });

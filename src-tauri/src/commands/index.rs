@@ -4,10 +4,12 @@
 //! `index_rebuild` / `index_cancel` 依赖索引引擎（M3 WP4），随该工作包落地。
 
 use serde::Serialize;
-use tauri::State;
+use std::time::Instant;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::paths::root_of;
 use crate::error_wrapper::KpError;
+use crate::index_engine::{full_index_cancellable, IndexMode};
 use crate::state::AppState;
 use crate::storage::index::{self, IndexSignature};
 
@@ -139,4 +141,134 @@ pub async fn index_stats(state: State<'_, AppState>) -> Result<IndexStats, KpErr
         .index_db()
         .ok_or(KpError(kp_domain::error::AppError::VaultNotOpen))?;
     read_stats(&pool).map_err(KpError)
+}
+
+// ── 索引编排（FR-VAULT-09 / AC-VAULT-05；事件载荷以 PRD §5.4 为准，勘误 D-23）──────────
+
+/// kp://index/progress 载荷（节流 ≥100ms）。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexProgress {
+    pub phase: String,
+    pub done: usize,
+    pub total: usize,
+    pub current_file: Option<String>,
+}
+
+/// kp://index/completed 载荷。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexCompleted {
+    pub stats: IndexStatsPayload,
+    pub duration_ms: u64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexStatsPayload {
+    pub indexed: usize,
+    pub skipped: usize,
+    pub cancelled: bool,
+}
+
+/// kp://index/failed 载荷（**无 detail 字段**：以 PRD 为准，勘误 D-23）。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexFailed {
+    pub code: String,
+    pub message: String,
+    pub failed_files: Vec<String>,
+}
+
+/// index_rebuild 的返回值。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexRebuildResult {
+    pub indexed: usize,
+    pub skipped: usize,
+    pub duration_ms: u64,
+    pub cancelled: bool,
+    pub warnings: Vec<String>,
+}
+
+/// 全量重建索引（force = false 时跳过 mtime 与大小都未变的文件）。
+#[tauri::command]
+pub async fn index_rebuild(
+    force: bool,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<IndexRebuildResult, KpError> {
+    let root = root_of(&state)?;
+    let pool = state
+        .index_db()
+        .ok_or(KpError(kp_domain::error::AppError::VaultNotOpen))?;
+    // 清掉历史取消请求，避免上一次的取消影响本次
+    state.take_index_cancel();
+    let mode = if force {
+        IndexMode::Force
+    } else {
+        IndexMode::SkipUnchanged
+    };
+    let mut last = Instant::now();
+    let progress_app = app.clone();
+    let result = full_index_cancellable(
+        &pool,
+        &root,
+        move |done, total| {
+            if last.elapsed().as_millis() >= 100 || done == total {
+                let _ = progress_app.emit(
+                    "kp://index/progress",
+                    IndexProgress {
+                        phase: "full".to_string(),
+                        done,
+                        total,
+                        current_file: None,
+                    },
+                );
+                last = Instant::now();
+            }
+        },
+        mode,
+        || state.take_index_cancel(),
+    );
+    match result {
+        Ok(outcome) => {
+            let _ = app.emit(
+                "kp://index/completed",
+                IndexCompleted {
+                    stats: IndexStatsPayload {
+                        indexed: outcome.indexed,
+                        skipped: outcome.skipped,
+                        cancelled: outcome.cancelled,
+                    },
+                    duration_ms: outcome.duration_ms,
+                },
+            );
+            Ok(IndexRebuildResult {
+                indexed: outcome.indexed,
+                skipped: outcome.skipped,
+                duration_ms: outcome.duration_ms,
+                cancelled: outcome.cancelled,
+                warnings: outcome.warnings,
+            })
+        }
+        Err(err) => {
+            let _ = app.emit(
+                "kp://index/failed",
+                IndexFailed {
+                    code: err.code().to_string(),
+                    message: err.to_string(),
+                    failed_files: Vec::new(),
+                },
+            );
+            Err(KpError(err))
+        }
+    }
+}
+
+/// 请求取消当前索引（幂等；索引循环在批间检查，AC-VAULT-05）。
+#[tauri::command]
+pub async fn index_cancel(state: State<'_, AppState>) -> Result<bool, KpError> {
+    state.request_index_cancel();
+    Ok(true)
 }

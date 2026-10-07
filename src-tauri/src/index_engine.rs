@@ -41,6 +41,8 @@ pub struct ScanEntry {
 pub struct IndexOutcome {
     pub indexed: usize,
     pub skipped: usize,
+    /// 是否因取消请求提前结束（AC-VAULT-05）
+    pub cancelled: bool,
     pub warnings: Vec<String>,
     pub duration_ms: u64,
 }
@@ -125,8 +127,40 @@ fn split_name(rel_path: &str) -> (String, String, String) {
     (name, stem, ext)
 }
 
-/// 索引单个文件（**调用方负责事务边界**）：先清旧记录，再写新记录。
+/// 跳过策略：Force 一律重建；SkipUnchanged 时 mtime 与大小都未变的文件直接跳过。
+///
+/// 说明：mtime + size 相同但内容被改的情况检测不到（完整指纹比对待 PR-5 的增量索引补），
+/// 因此 index_rebuild(force = true) 始终提供一条可靠的全量路径。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexMode {
+    Force,
+    SkipUnchanged,
+}
+
+/// 索引单个文件（调用方负责事务边界）：先清旧记录，再写新记录。
 pub fn index_file(conn: &Connection, root: &Path, entry: &ScanEntry) -> Result<(), AppError> {
+    index_file_mode(conn, root, entry, IndexMode::Force).map(|_| ())
+}
+
+/// 同上，但可按 IndexMode 跳过未变更文件（返回 false 表示跳过）。
+pub fn index_file_mode(
+    conn: &Connection,
+    root: &Path,
+    entry: &ScanEntry,
+    mode: IndexMode,
+) -> Result<bool, AppError> {
+    if mode == IndexMode::SkipUnchanged {
+        let unchanged: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM file WHERE rel_path = ?1 AND deleted = 0 AND mtime_ms = ?2 AND size_bytes = ?3",
+                params![entry.rel_path, entry.mtime_ms, entry.size_bytes as i64],
+                |r| r.get(0),
+            )
+            .ok();
+        if unchanged.is_some() {
+            return Ok(false);
+        }
+    }
     let abs = root.join(&entry.rel_path);
     let bytes = std::fs::read(&abs).map_err(AppError::from)?;
     let note = md_parse::parse(&bytes);
@@ -218,14 +252,25 @@ pub fn index_file(conn: &Connection, root: &Path, entry: &ScanEntry) -> Result<(
             .map_err(|_| AppError::db("写入别名"))?;
         }
     }
-    Ok(())
+    Ok(true)
 }
 
-/// 全量索引：分批事务写库，并按批回调进度（`progress(已处理, 总数)`）。
+/// 全量索引（默认 Force；不检查取消）。
 pub fn full_index<F: FnMut(usize, usize)>(
     pool: &DbPool,
     root: &Path,
+    progress: F,
+) -> Result<IndexOutcome, AppError> {
+    full_index_cancellable(pool, root, progress, IndexMode::Force, || false)
+}
+
+/// 全量索引：分批事务写库、按批回调进度、批间检查取消（AC-VAULT-05）。
+pub fn full_index_cancellable<F: FnMut(usize, usize), C: Fn() -> bool>(
+    pool: &DbPool,
+    root: &Path,
     mut progress: F,
+    mode: IndexMode,
+    should_cancel: C,
 ) -> Result<IndexOutcome, AppError> {
     let started = Instant::now();
     let (entries, warnings) = scan_notes(root)?;
@@ -236,6 +281,11 @@ pub fn full_index<F: FnMut(usize, usize)>(
     };
     let mut done = 0usize;
     for chunk in entries.chunks(BATCH_SIZE) {
+        if should_cancel() {
+            outcome.cancelled = true;
+            outcome.duration_ms = started.elapsed().as_millis() as u64;
+            return Ok(outcome);
+        }
         let chunk: Vec<ScanEntry> = chunk.to_vec();
         let chunk_len = chunk.len();
         let root_owned = root.to_path_buf();
@@ -244,8 +294,9 @@ pub fn full_index<F: FnMut(usize, usize)>(
                 .map_err(|_| AppError::db("开启索引事务"))?;
             let mut n = 0usize;
             for entry in &chunk {
-                index_file(conn, &root_owned, entry)?;
-                n += 1;
+                if index_file_mode(conn, &root_owned, entry, mode)? {
+                    n += 1;
+                }
             }
             conn.execute_batch("COMMIT")
                 .map_err(|_| AppError::db("提交索引事务"))?;
