@@ -1690,6 +1690,16 @@ interface KpError {
 
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |
+
+**索引域的返回结构**（勘误 **D-18** 的索引域部分，2026-10-05 补齐；文件域见 §5.3.2.1）：
+
+| 类型 | 字段 | 说明 |
+| --- | --- | --- |
+| `IndexStatus` | `indexDir: string`、`indexDb: string`、`ready: boolean`、`schemaVersion?: number`、`signaturePrefix?: string`、`builtAt?: number` | 索引状态与统计（`ready=false` 时表示尚未建好，UI 显示「索引中」） |
+| `IndexStats` | `files`、`deletedFiles`、`links`、`tags`、`headings`、`blockIds`、`ftsRows`（均 `number`） | 各表实体计数；`files` 不含软删除项 |
+| `SignatureInfo` | `expected: SignatureParts`、`stored: SignatureParts \| null`、`matched: boolean`、`reason: string \| null` | 诊断用：`stored` 为 null 表示索引库未记录签名（首次打开或未完成），一律按「不可信即重建」处理 |
+| `SignatureParts` | `schemaVersion`、`parserVersion`、`tokenizerVersion`、`tokenizerDictHash`、`vaultRoot`、`digest` | 签名六要素；`digest` 为规范化拼接后的 SHA-256 |
+
 | `trash_list` | `{ page }` | `TrashPage` | 回收站列表 |
 | `trash_restore` ⚠️ | `{ trash_id, on_conflict }` | `RestoreResult` | 恢复 |
 | `trash_delete_permanent` ⚠️ | `{ trash_id }` | `null` | 彻底删除 |
@@ -2145,7 +2155,7 @@ interface KpError {
 | **M1 存储与 Vault** | 数据层地基 | 全局库/索引库 schema 与迁移；Vault 打开/创建/切换；路径安全校验（SEC-02）；原子写入协议（§6.2.1） | **AC-VAULT-02/03/04 全通过**；AC-VAULT-01 的**存储相关部分**（不修改第三方配置目录、`.knowlpad/` 正确创建、文件计数正确）；AC-REL-01 强杀一致性通过；路径穿越测试全拦截。⚠️ AC-VAULT-01 的**解析断言**与 **AC-VAULT-05** 顺延至 M3（见 D-08） |
 | **M2 文件树与基础编辑** | 能看能改 | 文件树（虚拟滚动）；文件 CRUD；`md-editor-v3` 集成；自动保存；多标签；**DOMPurify 净化管线就位**（SEC-01，安全关键特性不推迟） | AC-FILE-01~05 全通过；AC-EDITOR-01/02 通过；AC-FILE-06 与 AC-EDITOR-05/06 为**近似口径**（**勘误 D-17**） |
 | **M3 解析与索引引擎** | 知识网络的数据基础 | Markdown 解析器（§3.1 全部规则）；jieba 分词；FTS5；全量/增量索引；文件监听；索引签名 | AC-SEARCH-01/04；解析器测试集（附录 B）准确率 ≥ 99%；AC-REL-03 索引重建一致 |
-| **M4 链接与反链** | 核心差异化能力 | 链接解析与裁决；反链面板；链接改写（预览+备份+原子+回滚）；悬空/歧义/孤立面板 | AC-LINK-01~05；AC-FILE-01/02（改写与回滚）全通过 |
+| **M4 链接与反链** | 核心差异化能力 | 反链/悬空/歧义/孤立**面板**；链接改写（预览+备份+原子+回滚）——**链接裁决本身在 M3 的索引阶段完成**（见勘误 D-20） | AC-LINK-01~05；AC-FILE-01/02（改写与回滚）全通过 |
 | **M5 搜索与标签** | 检索能力完整 | 全文搜索 UI 与高级语法；快速打开；标签树与标签视图；标签重命名 | AC-SEARCH 全通过；AC-TAG-01~04 全通过 |
 | **M6 图谱与附件** | 可视化与多媒体 | cytoscape 全局/局部图谱；降级策略；附件导入/粘贴/渲染；远程资源限制 | AC-GRAPH-01~04；AC-ATTACH-01~03；性能 NFR-PERF-12 达标 |
 | **M7 安全加固与回收站** | 安全闭环 | CSP 加固；导航拦截；回收站完整流程；日志隐私；安全测试集 | AC-SEC-02~05 全通过；AC-TRASH-01~04 全通过 |
@@ -2225,6 +2235,10 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | D-17 | M2 的阶段验收（§9.1）写作「AC-FILE-01~06（除链接改写）；AC-EDITOR-02/05/06 通过」，但其中三条在本阶段只能做到结构性近似（2026-10-05 M2 复核发现） | 按 **D-08 先例**登记可验证口径：**M2 实际判定 = AC-FILE-01~05 + AC-EDITOR-01/02 全通过**；AC-FILE-06 = 组件级近似（真机帧率/内存归 M3/M9，见该 AC 的度量口径注）；AC-EDITOR-05 = 「我们这一侧」解析+渲染预算通过 + 内核侧归 **DEBT-13**（M8）；AC-EDITOR-06 = 保存不回灌内核的**结构保证** + 内核撤销深度归 M8 | AC-FILE-06、AC-EDITOR-05/06 |
 | D-18 | §5.3.1/§5.3.7/§5.3.9 的 `VaultInfo`/`VaultSummary`/`IndexStatus`/`SystemInfo`/`CleanupResult` 等**只给类型名、从未定义字段**（与 **D-11** 同类缺陷；2026-10-05 M1 复核发现） | 登记为待补：随 **M3** 的索引域契约一起补 §5.3 的形状表（文件域已在 **§5.3.2.1** 补齐，可作模板） | §5.3.1/§5.3.7/§5.3.9、D-11 |
 | D-19 | **需求域 → 里程碑覆盖缺口**：`FR-SET`（14 条 / 7 条 P0）、`FR-PALETTE`（10 / 6）、`FR-LAYOUT`（5 / 3）、`FR-GLOBAL-01`（P0）以及**渲染态代码块高亮**（`FR-EDITOR-44` P0、`FR-EDITOR-03`）在 §9.1 的里程碑交付行里**没有任何归属**——若不登记，M10 的「全部 P0 完成」不可能达成（2026-10-05 复核发现） | 新增 **§9.1.1「需求域 → 里程碑」覆盖表**并把上述域明确归属（FR-SET / FR-PALETTE / FR-LAYOUT / FR-GLOBAL / 高亮 → **M5**） | §9.1、FR-SET-*、FR-PALETTE-*、FR-LAYOUT-*、FR-GLOBAL-01、FR-EDITOR-44 |
+| D-20 | §9.1 的 M4 行把「**链接解析与裁决**」列为 M4 交付，而 §3.1.2 的 **MD-WL-03** 明文「解析阶段一律不判定有效性，由**索引阶段**链接解析器统一裁决」，技术方案的全量索引流程也把裁决列为第 ⑤ 步（`index_engine/link_resolve.rs`）——两处真相源互相矛盾（2026-10-05 M3 复核发现） | 按**规则条款优先**：**裁决归 M3（索引阶段）**；M4 行改为「反链/悬空/歧义/孤立**面板** + 链接改写（预览+备份+原子+回滚）」。已同步修改 §9.1 的 M4 行措辞 | §3.1.2 MD-WL-03、§9.1 |
+| D-21 | 解析器实现路径不一致：§2.5/§3.1.5/§9.3 的 TEST-01 写 `domain/md_parse.rs`（**单文件**），技术方案 §5.1 写 `domain/md_parse/`（**目录**，含 frontmatter/wikilink/tag/heading/block_id/code_fence 七个文件） | 以**技术方案（目录）**为准（单文件放不下 27 条规则且不利于 CODE-11）；本行登记口径，实现按目录落地 | §2.5、§3.1.5、§9.3 TEST-01、技术方案 §5.1 |
+| D-22 | ~~事件表只有 13 个事件，技术方案会 emit `kp://note/updated`/`kp://link/changed` 而 PRD 未定义~~ **本条经复核为误判，已撤回（2026-10-05）**：这两个事件**本就在 §5.4 的事件表中**（事件表共 13 条，M3 复核时的抽取只列了其中与索引相关的 8 条，被错误推广为「PRD 未定义」） | **无需改动**；保留本行作为记录，并提示：**只列子集的抽取结果不能当作全集使用**（教训已写入 M3 计划 §8） | §5.4 事件表 |
+| D-23 | **三处事件载荷口径不一致**（2026-10-05 M3 复核，逐条核对 §5.4 的 13 条事件表后发现）：① `kp://index/failed`——技术方案写有 `detail`（inotify 耗尽的 sysctl 建议），PRD 只有 `code/message/failed_files`；② `kp://note/updated`——PRD 为 `{ rel_path }`，技术方案为 `{ rel_path, mtime_ms }`；③ `kp://link/changed`——PRD 为 `{ affected_files }`，技术方案为 `{ rel_path }` | 以 **PRD 为准**（EVT-03 要求载荷只含路径与元信息，且前端契约以 PRD 定义为准）：`index/failed` 的 sysctl 建议并入 `message`、`note/updated` 不带 `mtime_ms`、`link/changed` 用 `affected_files`；**技术方案侧需同步标注**，实现时不得引入 PRD 未定义的字段 | §5.4 事件表、EVT-03、技术方案 §5.4 |
 
 ---
 
