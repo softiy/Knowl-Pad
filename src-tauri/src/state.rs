@@ -1,5 +1,6 @@
 use crate::storage::pool::DbPool;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// 应用状态：当前打开的 Vault 根（M0 仅最小实现，M1 扩展为连接池/队列/取消令牌）。
@@ -12,6 +13,8 @@ pub struct AppState {
     index_db: Mutex<Option<Arc<DbPool>>>,
     /// 当前 Vault 在全局库中的注册 id（未注册或全局库不可用时为 None）。
     current_vault_id: Mutex<Option<i64>>,
+    /// 索引取消请求（FR-VAULT-09 / AC-VAULT-05）；由 index_cancel 置位、索引循环在批间检查并清除。
+    index_cancel: AtomicBool,
 }
 
 impl AppState {
@@ -41,6 +44,16 @@ impl AppState {
     /// 当前 Vault 的索引库句柄（未打开 Vault 时返回 None）。
     pub fn index_db(&self) -> Option<Arc<DbPool>> {
         self.index_db.lock().ok().and_then(|guard| guard.clone())
+    }
+
+    /// 请求取消当前索引（幂等）。
+    pub fn request_index_cancel(&self) {
+        self.index_cancel.store(true, Ordering::SeqCst);
+    }
+
+    /// 索引循环检查取消请求，并在读取时清除（避免影响下一次索引）。
+    pub fn take_index_cancel(&self) -> bool {
+        self.index_cancel.swap(false, Ordering::SeqCst)
     }
 
     /// 记录当前 Vault 的注册 id。
