@@ -1,0 +1,115 @@
+{
+  "note": "期望值由 PRD §3.1 的规则条款推导得出（附录 B 的固化流程）；不以任何外部软件运行时行为为基准。",
+  "accuracyRule": "准确率 = 通过项 / 总项；本切片 10 项 ⇒ 需 10/10（99% × 10 = 9.9）。",
+  "cases": [
+    {
+      "id": "B-01",
+      "file": "B-01.md",
+      "rule": "MD-WL-01/03",
+      "links": [
+        {
+          "target": "Note",
+          "kind": "link"
+        }
+      ]
+    },
+    {
+      "id": "B-02",
+      "file": "B-02.md",
+      "rule": "MD-WL-01",
+      "links": [
+        {
+          "target": "Note",
+          "alias": "别名",
+          "kind": "link"
+        }
+      ]
+    },
+    {
+      "id": "B-03",
+      "file": "B-03.md",
+      "rule": "MD-WL-01/MD-BID-01",
+      "links": [
+        {
+          "target": "Note",
+          "anchor": "标题",
+          "kind": "link"
+        },
+        {
+          "target": "Note",
+          "anchor": "^abc123",
+          "kind": "link"
+        }
+      ]
+    },
+    {
+      "id": "B-05",
+      "file": "B-05.md",
+      "rule": "MD-WL-02",
+      "links": [
+        {
+          "target": "folder/sub/Note",
+          "kind": "link"
+        }
+      ]
+    },
+    {
+      "id": "B-06",
+      "file": "B-06.md",
+      "rule": "MD-WL-07",
+      "links": [
+        {
+          "target": "image.png",
+          "kind": "embed"
+        },
+        {
+          "target": "Note",
+          "anchor": "标题",
+          "kind": "embed"
+        }
+      ]
+    },
+    {
+      "id": "B-08",
+      "file": "B-08.md",
+      "rule": "MD-WL-05",
+      "links": []
+    },
+    {
+      "id": "B-09",
+      "file": "B-09.md",
+      "rule": "MD-WL-05",
+      "links": []
+    },
+    {
+      "id": "B-10",
+      "file": "B-10.md",
+      "rule": "MD-WL-08",
+      "links": []
+    },
+    {
+      "id": "B-23",
+      "file": "B-23.md",
+      "rule": "NFR-PLAT-05",
+      "links": [
+        {
+          "target": "Crlf",
+          "kind": "link"
+        }
+      ],
+      "lineEnding": "Crlf"
+    },
+    {
+      "id": "B-24",
+      "file": "B-24.md",
+      "rule": "NFR-PLAT-06",
+      "links": [
+        {
+          "target": "Bom",
+          "kind": "link"
+        }
+      ],
+      "hasBom": true
+    }
+  ]
+}
