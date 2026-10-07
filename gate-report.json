@@ -1,107 +1,107 @@
 {
-  "generatedAt": "2026-10-06T23:59:39.061Z",
+  "generatedAt": "2026-10-07T02:55:54.849Z",
   "results": [
     {
       "id": "1",
       "name": "TypeScript 类型检查",
       "ok": true,
-      "ms": 6960
+      "ms": 6926
     },
     {
       "id": "2",
       "name": "前端 Lint",
       "ok": true,
-      "ms": 25485
+      "ms": 22997
     },
     {
       "id": "14",
       "name": "前端构建 + 完整性（准备 dist）",
       "ok": true,
-      "ms": 3744
+      "ms": 2907
     },
     {
       "id": "3",
       "name": "Rust Lint (clippy -D warnings)",
       "ok": true,
-      "ms": 5109
+      "ms": 943
     },
     {
       "id": "4",
       "name": "Rust 格式 (fmt --check)",
       "ok": true,
-      "ms": 343
+      "ms": 326
     },
     {
       "id": "6",
       "name": "Rust 单元/集成测试",
       "ok": true,
-      "ms": 10135
+      "ms": 7834
     },
     {
       "id": "15",
       "name": "Rust domain 覆盖率 ≥ 85%",
       "ok": true,
-      "ms": 5330
+      "ms": 13841
     },
     {
       "id": "5",
       "name": "前端单元/组件测试 + 覆盖率",
       "ok": true,
-      "ms": 7747
+      "ms": 8006
     },
     {
       "id": "7",
       "name": "依赖安全审计（pnpm + cargo）",
-      "ok": true,
-      "ms": 6581
+      "ok": false,
+      "ms": 29219
     },
     {
       "id": "8",
       "name": "Lockfile 一致性",
       "ok": true,
-      "ms": 3995
+      "ms": 978
     },
     {
       "id": "9",
       "name": "Rust 应用构建（tauri build 的本地等价）",
       "ok": true,
-      "ms": 18459
+      "ms": 18086
     },
     {
       "id": "10",
       "name": "性能基准（预算 + 回退 ≤ 2×）",
-      "ok": false,
-      "ms": 4919
+      "ok": true,
+      "ms": 3670
     },
     {
       "id": "11",
       "name": "安全测试集（AC-SEC）",
       "ok": true,
-      "ms": 8749
+      "ms": 8081
     },
     {
       "id": "12",
       "name": "可靠性测试集（AC-REL）",
       "ok": true,
-      "ms": 2615
+      "ms": 3769
     },
     {
       "id": "13",
       "name": "命名一致性与文件长度（门禁 13 + CODE-11）",
       "ok": true,
-      "ms": 6580
+      "ms": 6601
     },
     {
       "id": "16",
       "name": "路径封装检查（SEC PATH-02）",
       "ok": true,
-      "ms": 1399
+      "ms": 1131
     },
     {
       "id": "17",
       "name": "IPC 契约一致性（TS↔Rust）",
       "ok": true,
-      "ms": 132
+      "ms": 141
     }
   ]
 }
