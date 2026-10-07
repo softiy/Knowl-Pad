@@ -83,7 +83,10 @@ fn ac_search_04_external_change_is_indexed_and_searchable() {
         .expect("应收到变更事件");
     let elapsed_ms = started.elapsed().as_millis();
     println!("AC-SEARCH-04 耗时（外部写入 → 收到事件）：{elapsed_ms} ms");
-    assert!(elapsed_ms < 10_000, "外部变更到事件耗时 {elapsed_ms} ms 超出宽松上限");
+    assert!(
+        elapsed_ms < 10_000,
+        "外部变更到事件耗时 {elapsed_ms} ms 超出宽松上限"
+    );
     assert!(
         changes
             .iter()
@@ -175,9 +178,19 @@ fn indexing_does_not_trigger_itself_but_watcher_stays_alive() {
     std::thread::sleep(Duration::from_millis(300));
     full_index(&pool, &root, |_, _| {}).expect("再次索引");
     let quiet = rx.recv_timeout(Duration::from_millis(1200));
-    assert!(quiet.is_err(), "索引自身写 .knowlpad 不应触发变更事件，却收到 {quiet:?}");
+    assert!(
+        quiet.is_err(),
+        "索引自身写 .knowlpad 不应触发变更事件，却收到 {quiet:?}"
+    );
     fs::write(root.join("b.md"), "# 乙\n").expect("外部写入");
-    let alive = rx.recv_timeout(Duration::from_secs(15)).expect("监听应仍然活着");
-    assert!(alive.iter().any(|c| matches!(c, Change::Created(p) if p == "b.md")), "应报出外部新增：{alive:?}");
+    let alive = rx
+        .recv_timeout(Duration::from_secs(15))
+        .expect("监听应仍然活着");
+    assert!(
+        alive
+            .iter()
+            .any(|c| matches!(c, Change::Created(p) if p == "b.md")),
+        "应报出外部新增：{alive:?}"
+    );
     handle.stop();
 }
