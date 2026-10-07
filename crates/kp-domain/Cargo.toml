@@ -11,6 +11,8 @@ thiserror = "2.0.21"
 dunce = "1.0.5"
 # frontmatter 的 YAML 解析（技术方案 §3.5.2 矩阵：yaml-rust2 0.13.0，引入阶段 M3）
 yaml-rust2 = "0.13.0"
+# 中文分词（技术方案 §3.5.2 矩阵：jieba-rs 0.11.0，引入阶段 M3；词典全量内置、不联网）
+jieba-rs = "0.11.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
