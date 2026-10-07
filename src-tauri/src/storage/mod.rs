@@ -5,6 +5,9 @@
 
 pub mod global;
 pub mod index;
+pub mod index_query;
+#[cfg(test)]
+mod index_query_tests;
 pub mod index_rebuild;
 pub mod index_schema;
 pub mod migrate;
