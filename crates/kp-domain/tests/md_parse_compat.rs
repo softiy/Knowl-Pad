@@ -24,6 +24,12 @@ struct Case {
     has_bom: Option<bool>,
     #[serde(default)]
     line_ending: Option<String>,
+    #[serde(default)]
+    fm_tags: Option<Vec<String>>,
+    #[serde(default)]
+    fm_aliases: Option<Vec<String>>,
+    #[serde(default)]
+    fm_invalid: Option<bool>,
 }
 
 #[derive(serde::Deserialize)]
@@ -72,6 +78,27 @@ fn appendix_b_slice_accuracy_is_100_percent() {
         }
         if let Some(bom) = case.has_bom {
             ok = ok && note.has_bom == bom;
+        }
+        if let Some(tags) = case.fm_tags.as_ref() {
+            let got = note
+                .frontmatter
+                .as_ref()
+                .map(|f| f.tags.clone())
+                .unwrap_or_default();
+            ok = ok && &got == tags;
+        }
+        if let Some(aliases) = case.fm_aliases.as_ref() {
+            let got = note
+                .frontmatter
+                .as_ref()
+                .map(|f| f.aliases.clone())
+                .unwrap_or_default();
+            ok = ok && &got == aliases;
+        }
+        if case.fm_invalid == Some(true) {
+            ok = ok
+                && note.frontmatter.is_none()
+                && note.warnings.iter().any(|w| w.contains("FRONTMATTER"));
         }
         if let Some(le) = case.line_ending.as_deref() {
             let want = if le == "Crlf" {
