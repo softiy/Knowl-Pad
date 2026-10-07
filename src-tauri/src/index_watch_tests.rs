@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::index_engine::full_index;
-use crate::index_watch::{start_watcher_with, Change};
+use crate::index_watch::{start_polling_fallback, start_watcher_with, Change};
 use crate::index_watch_paths::merge_events;
 use crate::storage::index::open;
 use kp_domain::error::AppError;
@@ -120,4 +120,31 @@ fn ac_search_04_external_change_is_indexed_and_searchable() {
     );
 
     handle.stop();
+}
+/// **降级路径的真实验证**（独立审查 major #4）：监听句柄耗尽时启动的 5 秒轮询，
+/// 必须真的能把外部新增的文件索引进来 —— 此前那条分支只发事件、并没有启动轮询。
+#[test]
+fn polling_fallback_indexes_external_change() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲\n").expect("写笔记");
+    let pool = Arc::new(open(&root).expect("建索引库"));
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    let _handle = start_polling_fallback(pool.clone(), root.clone());
+    fs::write(root.join("轮询新增.md"), "# 轮询新增\n\n内容\n").expect("外部写入");
+    let deadline = std::time::Instant::now() + Duration::from_secs(12);
+    loop {
+        let n = count(
+            &pool,
+            "SELECT count(*) FROM file WHERE rel_path = '轮询新增.md'",
+        );
+        if n == 1 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "轮询降级未在 12 秒内索引外部新增（说明降级没有真的跑起来）"
+        );
+        std::thread::sleep(Duration::from_millis(300));
+    }
 }

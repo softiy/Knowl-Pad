@@ -158,6 +158,9 @@ where
 {
     let root_for_handler = root.clone();
     let pool_for_handler = pool.clone();
+    // 轮询降级只允许启动一次（MaxFilesWatch 可能反复上报）。
+    let fallback_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let fallback_flag = fallback_started.clone();
     let mut debouncer = new_debouncer(
         Duration::from_millis(DEBOUNCE_MS),
         None,
@@ -188,6 +191,14 @@ where
                 for e in errors {
                     // NFR-PLAT-09 / 勘误 D-23：sysctl 建议并入 message（载荷不得新增 detail 字段）
                     if matches!(e.kind, notify::ErrorKind::MaxFilesWatch) {
+                        // 独立审查指出：此前只发事件、**并没有真的降级**。这里真正启动轮询对账（只一次）。
+                        if !fallback_flag.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                            tracing::warn!("监听句柄耗尽，启动 5 秒轮询对账降级");
+                            let _ = crate::index_watch::start_polling_fallback(
+                                pool_for_handler.clone(),
+                                root_for_handler.clone(),
+                            );
+                        }
                         tracing::warn!(error = %e, "文件监听句柄数达上限，退化为轮询对账");
                         on_error(
                             "E_WATCH_LIMIT",
