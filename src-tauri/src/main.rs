@@ -6,6 +6,7 @@
 
 mod commands;
 mod error_wrapper;
+mod index_engine;
 mod logging;
 mod platform;
 mod state;
