@@ -12,7 +12,15 @@ const GATES = [
   { id: '3', name: 'Rust Lint (clippy -D warnings)', cmd: ['cargo', ['clippy', '--workspace', '--all-targets', '--locked', '--', '-D', 'warnings']] },
   { id: '4', name: 'Rust 格式 (fmt --check)', cmd: ['cargo', ['fmt', '--all', '--check']] },
   { id: '6', name: 'Rust 单元/集成测试', cmd: ['cargo', ['test', '--workspace', '--locked']] },
-  { id: '15', name: 'Rust domain 覆盖率 ≥ 85%', cmd: ['cargo', ['llvm-cov', '-p', 'kp-domain', '--locked', '--fail-under-lines', '85']] },
+  // DEBT-21：门禁 15 原先只覆盖 kp-domain —— 命令层（knowl-pad bin）**零覆盖**却照样通过，
+// 这正是 M2 复核里「命令层零覆盖」那条 blocker 的根因。现在拆成两项：domain 保持 85%，
+// 命令层单列一项并按实测值设下限（59.85% 实测 → 下限 56%），只许升不许降。
+    { id: '15', name: 'Rust domain 覆盖率 ≥ 85%', cmd: ['cargo', ['llvm-cov', '-p', 'kp-domain', '--locked', '--fail-under-lines', '85']] },
+    {
+      id: '15b',
+      name: '命令层覆盖率 ≥ 56%',
+      cmd: ['cargo', ['llvm-cov', '-p', 'knowl-pad', '--locked', '--fail-under-lines', String(56)]],
+    },
   { id: '5', name: '前端单元/组件测试 + 覆盖率', cmd: ['pnpm', ['test:coverage']] },
   { id: '7', name: '依赖安全审计（pnpm + cargo）', cmd: [null, null], steps: [['pnpm', ['audit', '--audit-level=high']], ['cargo', ['audit', '--file', 'Cargo.lock']]] },
   { id: '8', name: 'Lockfile 一致性', cmd: ['pnpm', ['gate:lockfile']] },
