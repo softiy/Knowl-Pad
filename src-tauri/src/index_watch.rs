@@ -6,7 +6,6 @@
 //! - 核心逻辑接受**回调**而非 `AppHandle`，因此可以在没有 Tauri 应用的情况下做端到端测试（DEBT-14 的同一思路）；
 //! - **轮询回退**：inotify watch 耗尽（NFR-PLAT-09）等场景下退化为每 5s 的「跳过未变更」全量对账。
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +16,8 @@ use tauri::{AppHandle, Emitter};
 
 use kp_domain::error::AppError;
 
-use crate::index_engine::{self, IndexMode, ScanEntry, IGNORED_DIRS};
+use crate::index_engine::{self, IndexMode};
+use crate::index_watch_paths::{collect_keys, merge_events, rels_of, scan_entry};
 use crate::storage::pool::DbPool;
 
 use crate::index_watch_events::{FsCreated, FsModified, FsRemoved, FsRenamed};
@@ -36,100 +36,8 @@ pub enum Change {
     Renamed(String, String),
 }
 
-/// 该路径是否应被忽略（与遍历同源）。
-pub fn is_ignored(root: &Path, path: &Path) -> bool {
-    let Ok(rel) = path.strip_prefix(root) else {
-        return true;
-    };
-    rel.components().any(|c| {
-        let name = c.as_os_str().to_string_lossy();
-        name.starts_with(".kp-tmp-") || IGNORED_DIRS.iter().any(|d| name.eq_ignore_ascii_case(d))
-    })
-}
-
-fn rel_of(root: &Path, path: &Path) -> Option<String> {
-    path.strip_prefix(root)
-        .ok()
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-}
-
-fn is_markdown(rel: &str) -> bool {
+pub(crate) fn is_markdown(rel: &str) -> bool {
     rel.to_lowercase().ends_with(".md")
-}
-
-/// 把 notify 事件归并成变更列表（同路径只保留最后一次，且去掉 create+modify 的重复）。
-pub fn merge_events(root: &Path, kinds: Vec<(EventKind, Vec<PathBuf>)>) -> Vec<Change> {
-    let mut out: Vec<Change> = Vec::new();
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    for (kind, paths) in kinds {
-        match kind {
-            EventKind::Create(_) => {
-                for p in paths {
-                    if is_ignored(root, &p) {
-                        continue;
-                    }
-                    if let Some(rel) = rel_of(root, &p) {
-                        if seen.insert(format!("c:{rel}")) {
-                            out.push(Change::Created(rel));
-                        }
-                    }
-                }
-            }
-            EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
-                // 重命名由 debouncer 的 RenameMode 处理；此处按「两个路径」尽力配对
-                let mut it = paths.into_iter().filter(|p| !is_ignored(root, p));
-                if let (Some(from), Some(to)) = (it.next(), it.next()) {
-                    if let (Some(f), Some(t)) = (rel_of(root, &from), rel_of(root, &to)) {
-                        if seen.insert(format!("r:{f}->{t}")) {
-                            out.push(Change::Renamed(f, t));
-                        }
-                    }
-                }
-            }
-            EventKind::Modify(_) => {
-                for p in paths {
-                    if is_ignored(root, &p) {
-                        continue;
-                    }
-                    if let Some(rel) = rel_of(root, &p) {
-                        if seen.insert(format!("m:{rel}")) {
-                            out.push(Change::Modified(rel));
-                        }
-                    }
-                }
-            }
-            EventKind::Remove(_) => {
-                for p in paths {
-                    if is_ignored(root, &p) {
-                        continue;
-                    }
-                    if let Some(rel) = rel_of(root, &p) {
-                        if seen.insert(format!("d:{rel}")) {
-                            out.push(Change::Removed(rel));
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
-fn scan_entry(root: &Path, rel: &str) -> Option<ScanEntry> {
-    let abs = root.join(rel);
-    let meta = std::fs::metadata(&abs).ok()?;
-    let mtime_ms = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    Some(ScanEntry {
-        rel_path: rel.to_string(),
-        size_bytes: meta.len(),
-        mtime_ms,
-    })
 }
 
 /// 处理一批变更：增量写库 → 事件回调 → 一次裁决与计数重算。
@@ -144,6 +52,14 @@ pub fn apply_changes<F: Fn(&[Change])>(
     let write = pool.with_writer(move |conn| {
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(|_| AppError::db("开启增量事务"))?;
+        // ① 写库前采集目标键（被删/改名的旧行也在此时还能读到别名）
+        let mut target_keys: Vec<String> = Vec::new();
+        for change in &changes_owned {
+            for rel in rels_of(change) {
+                collect_keys(conn, &rel, &mut target_keys)?;
+            }
+        }
+        // ② 逐条写库
         for change in &changes_owned {
             match change {
                 Change::Removed(rel) => {
@@ -178,6 +94,22 @@ pub fn apply_changes<F: Fn(&[Change])>(
                 }
             }
         }
+        // ③ 变更文件的 id（写完后查，新建的也在）
+        let mut changed_ids: Vec<i64> = Vec::new();
+        for change in &changes_owned {
+            for rel in rels_of(change) {
+                if let Ok(id) = conn.query_row(
+                    "SELECT id FROM file WHERE rel_path = ?1",
+                    rusqlite::params![rel],
+                    |r| r.get::<_, i64>(0),
+                ) {
+                    changed_ids.push(id);
+                }
+            }
+        }
+        // ④ 只重算受影响的链接（增量裁决）+ 标签计数，与写库同一事务
+        crate::index_resolve::resolve_links_matching(conn, &changed_ids, &target_keys)?;
+        crate::index_resolve::recount_tags(conn)?;
         conn.execute_batch("COMMIT")
             .map_err(|_| AppError::db("提交增量事务"))?;
         Ok(())
@@ -212,13 +144,15 @@ impl WatcherHandle {
 }
 
 /// 启动监听（核心）：变更经归并后交给回调（**不依赖 Tauri**，便于测试）。
-pub fn start_watcher_with<F>(
+pub fn start_watcher_with<F, G>(
     pool: Arc<DbPool>,
     root: PathBuf,
     on_changes: F,
+    on_error: G,
 ) -> Result<WatcherHandle, AppError>
 where
     F: Fn(&[Change]) + Send + 'static,
+    G: Fn(&str, &str) + Send + 'static,
 {
     let root_for_handler = root.clone();
     let pool_for_handler = pool.clone();
@@ -227,6 +161,18 @@ where
         None,
         move |res: DebounceEventResult| match res {
             Ok(events) => {
+                // Rescan（Windows 事件缓冲区溢出等，TECH:3086）：退化为全量 mtime 对账
+                if events.iter().any(|e| e.event.need_rescan()) {
+                    tracing::warn!("收到 Rescan，触发全量 mtime 对账");
+                    let _ = index_engine::full_index_cancellable(
+                        &pool_for_handler,
+                        &root_for_handler,
+                        |_, _| {},
+                        IndexMode::SkipUnchanged,
+                        || false,
+                    );
+                    return;
+                }
                 let kinds: Vec<(EventKind, Vec<PathBuf>)> = events
                     .into_iter()
                     .map(|e| (e.event.kind, e.event.paths.clone()))
@@ -238,7 +184,16 @@ where
             }
             Err(errors) => {
                 for e in errors {
-                    tracing::warn!(error = %e, "文件监听错误");
+                    // NFR-PLAT-09 / 勘误 D-23：sysctl 建议并入 message（载荷不得新增 detail 字段）
+                    if matches!(e.kind, notify::ErrorKind::MaxFilesWatch) {
+                        tracing::warn!(error = %e, "文件监听句柄数达上限，退化为轮询对账");
+                        on_error(
+                            "E_WATCH_LIMIT",
+                            "文件监听句柄数已达系统上限（Linux 可调大 fs.inotify.max_user_watches 后重启），已退化为每 5 秒轮询对账",
+                        );
+                    } else {
+                        tracing::warn!(error = %e, "文件监听错误");
+                    }
                 }
             }
         },
@@ -252,57 +207,73 @@ where
     })
 }
 
-/// 启动监听（带 Tauri 事件）：把变更翻译成 kp://fs/* 事件。
+/// 启动监听（带 Tauri 事件）：把变更翻译成 kp://fs/* 事件，监听不可用时报失败事件。
 pub fn start_watcher(
     pool: Arc<DbPool>,
     root: PathBuf,
     app: AppHandle,
 ) -> Result<WatcherHandle, AppError> {
-    start_watcher_with(pool, root, move |changes| {
-        for change in changes {
-            match change {
-                Change::Created(rel) => {
-                    let _ = app.emit(
-                        "kp://fs/created",
-                        FsCreated {
-                            rel_path: rel.clone(),
-                            kind: if is_markdown(rel) {
-                                "note".to_string()
-                            } else {
-                                "file".to_string()
+    let error_app = app.clone();
+    start_watcher_with(
+        pool,
+        root,
+        move |changes| {
+            for change in changes {
+                match change {
+                    Change::Created(rel) => {
+                        let _ = app.emit(
+                            "kp://fs/created",
+                            FsCreated {
+                                rel_path: rel.clone(),
+                                kind: if is_markdown(rel) {
+                                    "note".to_string()
+                                } else {
+                                    "file".to_string()
+                                },
                             },
-                        },
-                    );
-                }
-                Change::Modified(rel) => {
-                    let _ = app.emit(
-                        "kp://fs/modified",
-                        FsModified {
-                            rel_path: rel.clone(),
-                            mtime_ms: 0,
-                        },
-                    );
-                }
-                Change::Removed(rel) => {
-                    let _ = app.emit(
-                        "kp://fs/removed",
-                        FsRemoved {
-                            rel_path: rel.clone(),
-                        },
-                    );
-                }
-                Change::Renamed(from, to) => {
-                    let _ = app.emit(
-                        "kp://fs/renamed",
-                        FsRenamed {
-                            from: from.clone(),
-                            to: to.clone(),
-                        },
-                    );
+                        );
+                    }
+                    Change::Modified(rel) => {
+                        let _ = app.emit(
+                            "kp://fs/modified",
+                            FsModified {
+                                rel_path: rel.clone(),
+                                mtime_ms: 0,
+                            },
+                        );
+                    }
+                    Change::Removed(rel) => {
+                        let _ = app.emit(
+                            "kp://fs/removed",
+                            FsRemoved {
+                                rel_path: rel.clone(),
+                            },
+                        );
+                    }
+                    Change::Renamed(from, to) => {
+                        let _ = app.emit(
+                            "kp://fs/renamed",
+                            FsRenamed {
+                                from: from.clone(),
+                                to: to.clone(),
+                            },
+                        );
+                    }
                 }
             }
-        }
-    })
+        },
+        move |_code, message| {
+            // 监听不可用（inotify 耗尽等）：按 PRD §5.4 发失败事件（无 detail 字段，勘误 D-23）
+            let _ = error_app.emit(
+                "kp://index/failed",
+                crate::commands::index::IndexFailed {
+                    code: "E_WATCH_LIMIT".to_string(),
+                    message: message.to_string(),
+                    failed_files: Vec::new(),
+                },
+            );
+        },
+    )
 }
 
 /// 轮询回退（inotify 耗尽等，NFR-PLAT-09）：每 5s 做一次「跳过未变更」的对账。
