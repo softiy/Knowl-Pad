@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // 门禁 6 扩展：IPC 契约一致性——TS 侧调用的命令名必须都能在 Rust 侧找到 #[tauri::command]。
+import { readFileSync, readdirSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -56,3 +57,55 @@ if (missing.length) { console.error('❌ TS 侧调用了不存在的 Command：'
 const unexposed = [...rustCommands].filter((c) => !tsCommands.has(c));
 if (unexposed.length) console.warn('⚠️ Rust 已实现但 TS 未封装的 Command（仅提示，不阻断）：' + unexposed.sort().join(', '));
 console.log('✅ IPC 契约一致');
+
+// ── DEBT-21：事件名校验 ─────────────────────────────────────────────
+// 门禁 17 此前只校验**命令名**，13 个 kp:// 事件完全没人管。这里补上单向校验：
+// Rust 侧 emit 的每个事件名都必须出现在 **PRD §5.4 的事件表**里（PRD 是真相源）；
+// 反向（PRD 有、代码还没发）只作为提示打印，不算失败 —— M3 阶段本就还有事件未落地。
+/** 递归列出目录下的文件（自足实现：本脚本此前没有这个助手）。 */
+function walkDir(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = dir + "/" + entry.name;
+    if (entry.isDirectory()) out.push(...walkDir(full));
+    else out.push(full);
+  }
+  return out;
+}
+
+function collectRustEvents() {
+  const files = walkDir("src-tauri/src").filter((f) => f.endsWith(".rs"));
+  const names = new Set();
+  for (const f of files) {
+    const text = readFileSync(f, "utf8");
+    for (const m of text.matchAll(/emit\(\s*"([^"]+)"/g)) {
+      if (m[1].startsWith("kp://")) names.add(m[1]);
+    }
+  }
+  return [...names].sort();
+}
+
+function collectPrdEvents() {
+  const prd = readFileSync("docs/Knowl-Pad-PRD.md", "utf8");
+  const names = new Set();
+  for (const m of prd.matchAll(/^\| `(kp:\/\/[^`]+)`/gm)) names.add(m[1]);
+  return [...names].sort();
+}
+
+const rustEvents = collectRustEvents();
+const prdEvents = collectPrdEvents();
+if (prdEvents.length === 0) {
+  console.error("❌ 未能从 PRD §5.4 抽到任何事件名：事件表是否被改动或格式变了？");
+  process.exit(1);
+}
+const unknown = rustEvents.filter((e) => !prdEvents.includes(e));
+const notEmitted = prdEvents.filter((e) => !rustEvents.includes(e));
+console.log("  Rust 已发事件 " + rustEvents.length + " 个；PRD 事件表 " + prdEvents.length + " 个");
+if (notEmitted.length) {
+  console.log("  ℹ️ PRD 已定义但尚未发出（M3 后续或后续里程碑）：" + notEmitted.join(", "));
+}
+if (unknown.length) {
+  console.error("❌ 代码发出了 PRD 未定义的事件：" + unknown.join(", "));
+  process.exit(1);
+}
+console.log("✅ 事件名与 PRD §5.4 事件表一致");
