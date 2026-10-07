@@ -7,6 +7,9 @@
 mod commands;
 mod error_wrapper;
 mod index_engine;
+#[cfg(test)]
+mod index_engine_tests;
+mod index_resolve;
 mod logging;
 mod platform;
 mod state;
