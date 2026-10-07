@@ -57,7 +57,7 @@ fn setup_vault() -> tempfile::TempDir {
 
 /// 全部实体的规范化快照（排序确定，可逐字符比对）。
 fn snapshot(pool: &DbPool) -> String {
-    let queries: [&str; 7] = [
+    let queries: [&str; 8] = [
         "SELECT rel_path, name, stem, ext, kind, size_bytes, content_hash, deleted FROM file ORDER BY rel_path",
         "SELECT f.rel_path, h.level, h.text, h.anchor, h.line, h.sort_order FROM heading h JOIN file f ON f.id = h.file_id ORDER BY f.rel_path, h.sort_order",
         "SELECT f.rel_path, b.bid, b.line_start, b.line_end FROM block_id b JOIN file f ON f.id = b.file_id ORDER BY f.rel_path, b.bid",
@@ -65,6 +65,8 @@ fn snapshot(pool: &DbPool) -> String {
         "SELECT norm, display, depth, is_leaf, ref_count FROM tag ORDER BY norm",
         "SELECT f.rel_path, t.norm, ft.line, ft.col FROM file_tag ft JOIN file f ON f.id = ft.file_id JOIN tag t ON t.id = ft.tag_id ORDER BY f.rel_path, t.norm, ft.line",
         "SELECT f.rel_path, fa.alias FROM file_alias fa JOIN file f ON f.id = fa.file_id ORDER BY f.rel_path, fa.alias",
+        // AC-REL-03：全文索引也要进快照（独立审查指出此前只比了 7 张实体表）
+        "SELECT f.rel_path, n.plain_text FROM note_fts n JOIN file f ON f.id = n.rowid ORDER BY f.rel_path",
     ];
     pool.with_reader(|conn| {
         let mut out = String::new();
@@ -178,5 +180,68 @@ fn debt_04_link_candidates_scale_to_100k_files() {
     assert!(
         ms < 120_000,
         "裁决耗时 {ms} ms 超出宽松上限（说明法复杂度退化回逐条扫表？）"
+    );
+}
+/// **AC-REL-03 的"任意 100 查询"**：用确定性构造的一批 FTS 查询，比对重建前后结果是否逐条一致。
+#[test]
+fn ac_rel_03_hundred_queries_are_stable_across_rebuild() {
+    let dir = setup_vault();
+    let pool = open(dir.path()).expect("建索引库");
+    full_index(&pool, dir.path(), |_, _| {}).expect("首次索引");
+    let tokens: Vec<String> = pool
+        .with_reader(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT plain_text FROM note_fts")
+                .map_err(|_| AppError::db("读索引文本"))?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|_| AppError::db("读索引文本"))?;
+            let mut out: Vec<String> = Vec::new();
+            for row in rows.flatten() {
+                out.extend(row.split_whitespace().map(|s| s.to_string()));
+            }
+            Ok(out)
+        })
+        .expect("读索引文本");
+    assert!(!tokens.is_empty(), "索引文本不应为空");
+    let queries: Vec<String> = (0..100).map(|i| tokens[i % tokens.len()].clone()).collect();
+    let run_all = |pool: &DbPool| -> Vec<i64> {
+        queries
+            .iter()
+            .map(|q| {
+                let expr =
+                    kp_domain::search::build_match_expr(q, kp_domain::search::MatchMode::All);
+                // 空表达式不是合法 MATCH（如 ^blk1 这类符号 token 会被分词过滤掉）—— 记为 0 命中
+                if expr.trim().is_empty() {
+                    return 0;
+                }
+                pool.with_reader(|conn| {
+                    conn.query_row(
+                        "SELECT count(*) FROM note_fts WHERE note_fts MATCH ?1",
+                        rusqlite::params![expr],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .map_err(|_| AppError::db("查询"))
+                })
+                .expect("查询")
+            })
+            .collect()
+    };
+    let before = run_all(&pool);
+    assert!(before.iter().any(|n| *n > 0), "至少应有查询命中");
+    pool.with_writer(|conn| {
+        conn.execute_batch(
+            "BEGIN IMMEDIATE; DELETE FROM note_fts; DELETE FROM file_tag; DELETE FROM file_alias; \
+             DELETE FROM link; DELETE FROM block_id; DELETE FROM heading; DELETE FROM tag; \
+             DELETE FROM file; DELETE FROM meta; COMMIT;",
+        )
+        .map_err(|_| AppError::db("清空"))
+    })
+    .expect("清空");
+    full_index(&pool, dir.path(), |_, _| {}).expect("重建");
+    assert_eq!(
+        before,
+        run_all(&pool),
+        "AC-REL-03：100 条查询的结果必须逐条一致"
     );
 }
