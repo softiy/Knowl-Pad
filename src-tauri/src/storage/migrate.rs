@@ -130,8 +130,63 @@ fn map_err(err: rusqlite::Error) -> AppError {
     AppError::db("执行数据库迁移")
 }
 
+/// 迁移前备份（**DEBT-24①**）：在改动 schema 之前，把当前库一致地导出到同目录的 `.bak` 文件。
+///
+/// 用 `VACUUM INTO` 而不是复制文件：它由 SQLite 自己产出**事务一致**的快照，
+/// 且不关心 WAL/`-shm` 是否落盘（直接拷贝有可能拿到半写状态）。
+///
+/// 只在**真正的升级**（`from_version > 0` 且低于目标）时调用 —— 新建库无需备份。
+pub fn backup_before_migrate(
+    conn: &Connection,
+    db_path: &std::path::Path,
+    from_version: i32,
+) -> Result<std::path::PathBuf, AppError> {
+    let file_name = db_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "global.db".to_string());
+    let base = db_path.with_file_name(format!("{file_name}.bak-v{from_version}"));
+    // 已有同名备份时不覆盖：追加时间戳，避免把上一次的回滚点冲掉
+    let target = if base.exists() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        db_path.with_file_name(format!("{file_name}.bak-v{from_version}-{nanos}"))
+    } else {
+        base
+    };
+    conn.execute(
+        "VACUUM INTO ?1",
+        rusqlite::params![target.to_string_lossy()],
+    )
+    .map_err(|_| AppError::db("迁移前备份数据库"))?;
+    tracing::info!(backup = %target.display(), from_version, "迁移前已备份全局库");
+    Ok(target)
+}
+
 #[cfg(test)]
 mod tests {
+    /// **DEBT-24① 回归**：备份是一致快照，且不覆盖上一次的回滚点。
+    #[test]
+    fn debt_24_backup_creates_consistent_copy() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let path = dir.path().join("global.db");
+        let conn = rusqlite::Connection::open(&path).expect("建库");
+        conn.execute_batch("CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (42);")
+            .expect("建表");
+        let backup = backup_before_migrate(&conn, &path, 1).expect("备份应成功");
+        assert!(backup.exists(), "备份文件应存在");
+        let reader = rusqlite::Connection::open(&backup).expect("备份应可打开");
+        let value: i64 = reader
+            .query_row("SELECT a FROM t", [], |r| r.get(0))
+            .expect("备份内应能读回数据（一致快照）");
+        assert_eq!(value, 42);
+        let again = backup_before_migrate(&conn, &path, 1).expect("第二次备份应成功");
+        assert_ne!(again, backup, "同名备份已存在时应追加时间戳，不覆盖");
+        assert!(backup.exists(), "上一次的回滚点必须保留");
+    }
+
     use super::*;
     use crate::storage::pragma;
 
