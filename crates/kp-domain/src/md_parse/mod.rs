@@ -10,12 +10,18 @@
 //! 后续切片：frontmatter（MD-FM-01~06）、标签（MD-TAG-01~06）、标题（MD-H-01~03）、
 //! 块 ID（MD-BID-01~03）、plain_text 的完整清洗、10s 超时与 >5MB 跳过（由调用方负责）。
 
+pub mod block_id;
 pub mod code_fence;
 pub mod frontmatter;
+pub mod heading;
+pub mod tag;
 pub mod wikilink;
 
+pub use block_id::BlockId;
 pub use code_fence::CodeRanges;
 pub use frontmatter::Frontmatter;
+pub use heading::Heading;
+pub use tag::Tag;
 pub use wikilink::{Link, LinkKind};
 
 /// 换行风格（NFR-PLAT-05：解析不得改写用户换行）。
@@ -30,6 +36,12 @@ pub enum LineEnding {
 pub struct ParsedNote {
     /// frontmatter（MD-FM-01~06；无效或缺闭合时为 None）
     pub frontmatter: Option<Frontmatter>,
+    /// 标签（正文 + frontmatter；层级已展开，MD-TAG-03/06）
+    pub tags: Vec<Tag>,
+    /// 标题（ATX + Setext，MD-H-01~03）
+    pub headings: Vec<Heading>,
+    /// 块 ID 及其所属块行范围（MD-BID-01~03）
+    pub block_ids: Vec<BlockId>,
     /// wikilink 与嵌入（原始形态，未裁决）
     pub links: Vec<Link>,
     /// 非致命警告（不中断索引）
@@ -72,9 +84,17 @@ pub fn parse(bytes: &[u8]) -> ParsedNote {
     let skip = fm.range.clone();
     let code = CodeRanges::scan(&text);
     let links = wikilink::extract_skipping(&text, &code, skip.clone());
+    let headings = heading::extract(&text, &code, skip.clone());
+    let block_ids = block_id::extract(&text, &code, skip.clone());
+    let mut tags =
+        tag::from_frontmatter(fm.data.as_ref().map(|f| f.tags.as_slice()).unwrap_or(&[]));
+    tags.extend(tag::extract(&text, &code, skip.clone()));
     let plain_text = plain_text(&text, &code, skip);
     ParsedNote {
         frontmatter: fm.data,
+        tags,
+        headings,
+        block_ids,
         links,
         warnings,
         plain_text,
@@ -164,5 +184,24 @@ mod tests {
         let note = parse(b"keep\n```\ndrop\n```\nkeep2\n");
         assert!(note.plain_text.contains("keep"));
         assert!(!note.plain_text.contains("drop"));
+    }
+    #[test]
+    fn tag06_frontmatter_tags_flow_through_parse() {
+        let note = parse("---\ntags: [甲/乙]\n---\n正文 #丙\n".as_bytes());
+        let names: Vec<&str> = note.tags.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"甲/乙"), "frontmatter 标签要登记");
+        assert!(names.contains(&"甲"), "层级展开要包含祖先");
+        assert!(names.contains(&"丙"), "正文标签也要登记");
+        let fm_tag = note.tags.iter().find(|t| t.name == "甲/乙").expect("存在");
+        assert_eq!(fm_tag.line, -1, "MD-TAG-06：frontmatter 来源 line = -1");
+    }
+
+    #[test]
+    fn code_blocks_hide_tags_headings_and_block_ids() {
+        let note = parse("```\n# tag\n```\n# 真标题\n文字 ^bid\n".as_bytes());
+        assert_eq!(note.headings.len(), 1);
+        assert_eq!(note.headings[0].text, "真标题");
+        assert!(note.tags.is_empty(), "代码块内的 #tag 不算标签");
+        assert_eq!(note.block_ids.len(), 1);
     }
 }
