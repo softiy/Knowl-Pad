@@ -1,10 +1,3 @@
-# 统一行尾：仓库内文本一律 LF（Prettier endOfLine=lf，CI 在 Linux）
-* text=auto eol=lf
-
-# 门禁脚本必须保持 LF，否则 Linux 下 bash 直接失败
-*.sh text eol=lf
-
-# 二进制资源不要做行尾转换
-*.png binary
-*.ico binary
-*.exe binary
+# 解析器夹具必须**字节保真**：B-23 依赖 CRLF、B-24 依赖 BOM，任何换行/编码转换都会让期望值失真。
+# （2026-10-05：M3 PR-2 切片在 CI 上因此失败过一次——本地通过、Linux 检出后 CRLF 变 LF。）
+tests/fixtures/** -text
