@@ -91,6 +91,18 @@ pub async fn file_tree(
     let root = root_of(&state)?;
     let rel = args.parent_rel_path.unwrap_or_default();
     let include_hidden = args.include_hidden.unwrap_or(false);
+    // DEBT-15 口径：**默认视图走索引库**（避免每次展开都递归 readdir）；
+    // include_hidden = true 仍走直读 —— 索引按 IGNORED_DIRS 跳过了隐藏目录，
+    // 而"显示隐藏项"的语义是"让我看见它们"，不能因为索引没收录就说它们不存在。
+    if !include_hidden {
+        if let Some(pool) = state.index_db() {
+            if crate::storage::index_query::has_rows(&pool) {
+                let entries =
+                    crate::storage::index_query::list_children(&pool, &rel).map_err(KpError)?;
+                return Ok(entries.into_iter().map(FileNode::from).collect());
+            }
+        }
+    }
     let entries = tauri::async_runtime::spawn_blocking(move || {
         file_tree::list_dir(&root, &rel, include_hidden)
     })
@@ -113,6 +125,14 @@ pub async fn file_list_dir(
 ) -> Result<Vec<FileNode>, KpError> {
     let root = root_of(&state)?;
     let rel = args.rel_path;
+    // DEBT-15 口径：本命令恒为「不显示隐藏项」，因此索引可用时优先走索引（PR-6）
+    if let Some(pool) = state.index_db() {
+        if crate::storage::index_query::has_rows(&pool) {
+            let entries =
+                crate::storage::index_query::list_children(&pool, &rel).map_err(KpError)?;
+            return Ok(entries.into_iter().map(FileNode::from).collect());
+        }
+    }
     let entries =
         tauri::async_runtime::spawn_blocking(move || file_tree::list_dir(&root, &rel, false))
             .await
