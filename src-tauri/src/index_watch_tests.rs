@@ -77,9 +77,13 @@ fn ac_search_04_external_change_is_indexed_and_searchable() {
     std::thread::sleep(Duration::from_millis(300));
     fs::write(root.join("外部新增.md"), "# 外部新增\n\n中文内容可检索\n").expect("外部写入");
 
+    let started = std::time::Instant::now();
     let changes = rx
         .recv_timeout(Duration::from_secs(15))
         .expect("应收到变更事件");
+    let elapsed_ms = started.elapsed().as_millis();
+    println!("AC-SEARCH-04 耗时（外部写入 → 收到事件）：{elapsed_ms} ms");
+    assert!(elapsed_ms < 10_000, "外部变更到事件耗时 {elapsed_ms} ms 超出宽松上限");
     assert!(
         changes
             .iter()
@@ -147,4 +151,33 @@ fn polling_fallback_indexes_external_change() {
         );
         std::thread::sleep(Duration::from_millis(300));
     }
+}
+/// **监听死循环防护**（计划 §4 第 21 行 / TECH §13.1 验证项 ③）：
+/// 索引只写 `.knowlpad/`（忽略目录）→ "索引进行中改文件"不应产生事件；
+/// 并且必须证明监听**是活的**（否则"没有事件"可能只是没在监听）。
+#[test]
+fn indexing_does_not_trigger_itself_but_watcher_stays_alive() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲\n\n内容\n").expect("写笔记");
+    let pool = Arc::new(open(&root).expect("建索引库"));
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<Change>>();
+    let handle = start_watcher_with(
+        pool.clone(),
+        root.clone(),
+        move |changes| {
+            let _ = tx.send(changes.to_vec());
+        },
+        |_code, _message| {},
+    )
+    .expect("启动监听");
+    std::thread::sleep(Duration::from_millis(300));
+    full_index(&pool, &root, |_, _| {}).expect("再次索引");
+    let quiet = rx.recv_timeout(Duration::from_millis(1200));
+    assert!(quiet.is_err(), "索引自身写 .knowlpad 不应触发变更事件，却收到 {quiet:?}");
+    fs::write(root.join("b.md"), "# 乙\n").expect("外部写入");
+    let alive = rx.recv_timeout(Duration::from_secs(15)).expect("监听应仍然活着");
+    assert!(alive.iter().any(|c| matches!(c, Change::Created(p) if p == "b.md")), "应报出外部新增：{alive:?}");
+    handle.stop();
 }
