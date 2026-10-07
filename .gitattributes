@@ -1,3 +1,9 @@
-# 解析器夹具必须**字节保真**：B-23 依赖 CRLF、B-24 依赖 BOM，任何换行/编码转换都会让期望值失真。
-# （2026-10-05：M3 PR-2 切片在 CI 上因此失败过一次——本地通过、Linux 检出后 CRLF 变 LF。）
+# ── 换行与编码规范化（2026-10-05 加）──────────────────────────────────
+# 背景：Windows runner 默认 core.autocrlf=true，源码被检出为 CRLF；
+# 本仓的工具链（Vite/vitest 解析 .mjs/.ts）在 CRLF 检出下出现过 SyntaxError，
+# 而同一提交在 Linux 上全绿。统一为 LF 可让三平台检出结果一致。
+* text=auto eol=lf
+
+# 解析器夹具必须**字节保真**：B-23 依赖 CRLF、B-24 依赖 BOM，
+# 任何换行/编码转换都会让附录 B 的期望值失真（M3 PR-2 切片曾因此在 CI 失败）。
 tests/fixtures/** -text
