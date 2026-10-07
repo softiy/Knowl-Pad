@@ -12,6 +12,10 @@ mod index_engine_tests;
 #[cfg(test)]
 mod index_reliability_tests;
 mod index_resolve;
+mod index_watch;
+mod index_watch_events;
+#[cfg(test)]
+mod index_watch_tests;
 mod logging;
 mod platform;
 mod state;
