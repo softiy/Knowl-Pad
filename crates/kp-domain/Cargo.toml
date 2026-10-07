@@ -9,6 +9,8 @@ license = "MIT OR Apache-2.0"
 thiserror = "2.0.21"
 # Windows 路径规范化：去除 \\?\ 前缀的可读形式（技术方案 §3.5.2 / NFR-PLAT-10）
 dunce = "1.0.5"
+# frontmatter 的 YAML 解析（技术方案 §3.5.2 矩阵：yaml-rust2 0.13.0，引入阶段 M3）
+yaml-rust2 = "0.13.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
