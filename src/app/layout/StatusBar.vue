@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   fileTree,
   indexStatus,
@@ -9,6 +9,8 @@ import {
   type VaultInfo,
 } from '@core/ipc/commands';
 import { asKpError } from '@core/ipc/errors';
+import { onIndexCompleted, onIndexFailed, onIndexProgress } from '@core/ipc/events';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 
 /**
  * 状态栏（FR-VAULT-11）与 Git 忽略提示（FR-VAULT-12 / FR-STORAGE-03）。
@@ -24,6 +26,9 @@ const hintDismissed = ref(true);
 const copied = ref(false);
 /** 索引/ Git 检测失败的可见状态（R-15：不空吞错误，也不伪装成"没有仓库"） */
 const indexError = ref<string | null>(null);
+/** 索引进度（来自 kp://index/progress，节流 ≥100ms）。 */
+const indexProgress = ref<{ done: number; total: number } | null>(null);
+let unlisten: UnlistenFn[] = [];
 const gitCheckFailed = ref(false);
 const gitError = ref<string | null>(null);
 
@@ -34,6 +39,11 @@ const PREF_GIT_HINT_DISMISSED = 'ui.gitHintDismissed';
 /** FR-VAULT-11 的三种状态：就绪 / 索引中 / 索引失败。 */
 const indexLabel = computed(() => {
   if (indexFailed.value) return '索引失败';
+  // 真实信号优先：正在索引时显示进度（FR-VAULT-11 的"索引中"）
+  if (indexProgress.value) {
+    const p = indexProgress.value;
+    return p.total > 0 ? '索引中 ' + p.done + '/' + p.total : '索引中';
+  }
   if (!index.value) return '索引中';
   return index.value.ready ? '就绪' : '索引中';
 });
@@ -78,6 +88,34 @@ async function refresh(): Promise<void> {
 
 onMounted(() => {
   void refresh();
+  // FR-VAULT-11 的真实信号：订阅索引事件（此前只有"invoke 失败即索引失败"的近似口径）
+  void (async () => {
+    try {
+      unlisten = await Promise.all([
+        onIndexProgress((p) => {
+          indexProgress.value = { done: p.done, total: p.total };
+        }),
+        onIndexCompleted(() => {
+          indexProgress.value = null;
+          indexFailed.value = false;
+          void refresh();
+        }),
+        onIndexFailed((e) => {
+          indexProgress.value = null;
+          indexFailed.value = true;
+          indexError.value = e.message;
+        }),
+      ]);
+    } catch (err) {
+      // R-15：不空吞 —— 事件通道不可用（例如非 Tauri 环境）时记录可见错误
+      indexError.value = asKpError(err).message;
+    }
+  })();
+});
+
+onUnmounted(() => {
+  for (const off of unlisten) off();
+  unlisten = [];
 });
 
 watch(

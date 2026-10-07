@@ -8,6 +8,12 @@ vi.mock('@core/ipc/commands', () => ({
   preferenceSet: vi.fn(),
 }));
 
+vi.mock('@core/ipc/events', () => ({
+  onIndexProgress: vi.fn(async () => () => {}),
+  onIndexCompleted: vi.fn(async () => () => {}),
+  onIndexFailed: vi.fn(async () => () => {}),
+}));
+
 import { fileTree, indexStatus, preferenceGet, preferenceSet } from '@core/ipc/commands';
 import StatusBar from '@/app/layout/StatusBar.vue';
 
