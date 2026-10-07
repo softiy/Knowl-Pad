@@ -99,20 +99,17 @@ pub(crate) fn read_stats(
     })
 }
 
-/// 当前索引签名与磁盘上记录的签名对比（FR-SIG-01 的诊断入口）。
-#[tauri::command]
-pub async fn index_signature_get(state: State<'_, AppState>) -> Result<SignatureInfo, KpError> {
-    let root = root_of(&state)?;
-    let expected = IndexSignature::current(&root);
-    let pool = state.index_db();
-    let stored_raw = match &pool {
-        Some(pool) => pool
-            .with_reader(|conn| index::read_meta(conn, "index_signature"))
-            .map_err(KpError)
+/// 签名对比（与 Tauri State 无关，供命令层与打开 Vault 的对账路径共用）。
+pub(crate) fn signature_info(
+    root: &std::path::Path,
+    pool: Option<&crate::storage::pool::DbPool>,
+) -> SignatureInfo {
+    let expected = IndexSignature::current(root);
+    let stored_raw = pool.and_then(|p| {
+        p.with_reader(|conn| index::read_meta(conn, "index_signature"))
             .ok()
-            .flatten(),
-        None => None,
-    };
+            .flatten()
+    });
     let stored = parse_stored_signature(stored_raw.as_deref());
     let matched = stored.as_ref().is_some_and(|s| s.digest == expected.digest);
     let reason = if matched {
@@ -124,14 +121,22 @@ pub async fn index_signature_get(state: State<'_, AppState>) -> Result<Signature
             "索引库中的签名无法解析，按不可信处理，将触发全量索引".to_string()
         })
     } else {
-        Some(stored_raw.unwrap_or_default())
+        Some(stored_raw.clone().unwrap_or_default())
     };
-    Ok(SignatureInfo {
+    SignatureInfo {
         expected: SignatureParts::from(&expected),
         stored,
         matched,
         reason,
-    })
+    }
+}
+
+/// 当前索引签名与磁盘上记录的签名对比（FR-SIG-01 的诊断入口）。
+#[tauri::command]
+pub async fn index_signature_get(state: State<'_, AppState>) -> Result<SignatureInfo, KpError> {
+    let root = root_of(&state)?;
+    let pool = state.index_db();
+    Ok(signature_info(&root, pool.as_deref()))
 }
 
 /// 各表实体计数（`index_stats`）。

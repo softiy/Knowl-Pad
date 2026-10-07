@@ -23,6 +23,20 @@ fn spawn_reconcile_and_watch(
     pool: std::sync::Arc<crate::storage::pool::DbPool>,
 ) {
     tauri::async_runtime::spawn(async move {
+        // FR-SIG-01：签名不匹配（或缺失）时**先发 kp://index/rebuild-required**，
+        // 让 UI 有机会提示"需要重建索引"，再开始对账。
+        // 独立审查 major #2 指出：该事件此前在整个仓库里没有任何 emit ✗。
+        let sig = crate::commands::index::signature_info(&root, Some(&pool));
+        if !sig.matched {
+            let _ = app.emit(
+                "kp://index/rebuild-required",
+                serde_json::json!({
+                    "reason": sig.reason.clone().unwrap_or_default(),
+                    "oldSig": sig.stored.as_ref().map(|s| s.digest.clone()),
+                    "newSig": sig.expected.digest.clone(),
+                }),
+            );
+        }
         match full_index_cancellable(&pool, &root, |_, _| {}, IndexMode::SkipUnchanged, || false) {
             Ok(outcome) => {
                 let _ = app.emit(
