@@ -87,31 +87,7 @@ pub fn resolve_links(conn: &Connection) -> Result<ResolveOutcome, AppError> {
 
     let mut out = ResolveOutcome::default();
     for (link_id, target) in rows {
-        let key = target.trim().to_lowercase();
-        if key.is_empty() {
-            continue;
-        }
-        let without_md = key.strip_suffix(".md").unwrap_or(&key).to_string();
-        let mut candidates: Vec<i64> = Vec::new();
-        for map_key in [&key, &without_md] {
-            if let Some(ids) = by_name.get(map_key) {
-                for id in ids {
-                    if !candidates.contains(id) {
-                        candidates.push(*id);
-                    }
-                }
-            }
-        }
-        if candidates.is_empty() {
-            if let Some(ids) = by_alias.get(&key) {
-                candidates.extend(ids.iter().copied());
-            }
-        }
-        let (status, dst) = match candidates.len() {
-            1 => ("resolved", Some(candidates[0])),
-            0 => ("dangling", None),
-            _ => ("ambiguous", None),
-        };
+        let (status, dst) = judge(&by_name, &by_alias, &target);
         conn.execute(
             "UPDATE link SET status = ?1, dst_file_id = ?2 WHERE id = ?3",
             rusqlite::params![status, dst, link_id],
@@ -135,4 +111,104 @@ pub fn recount_tags(conn: &Connection) -> Result<usize, AppError> {
         )
         .map_err(|_| AppError::db("重算标签引用计数"))?;
     Ok(n)
+}
+
+/// **增量裁决**：只重算受影响的链接，而不是全表。
+///
+/// 受影响 = ① 这些文件自己的出链（`src_file_id ∈ changed`）；
+/// ② 目标键命中这些文件的**其他**链接（`target_ref` 等于其 stem/rel_path/别名 —— 含"该文件刚被删除/改名"的情形，
+/// 因此目标键必须由调用方**在写库之前**采集）。
+///
+/// 候选表仍然是 O(N) 建一次（10 万文件实测约百毫秒级），真正贵的是逐条 UPDATE，故这里靠收敛链接数取胜。
+pub fn resolve_links_matching(
+    conn: &Connection,
+    changed_file_ids: &[i64],
+    target_keys: &[String],
+) -> Result<ResolveOutcome, AppError> {
+    if changed_file_ids.is_empty() && target_keys.is_empty() {
+        return Ok(ResolveOutcome::default());
+    }
+    conn.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS _kp_changed(id INTEGER PRIMARY KEY); \
+         DELETE FROM _kp_changed; \
+         CREATE TEMP TABLE IF NOT EXISTS _kp_targets(key TEXT PRIMARY KEY); \
+         DELETE FROM _kp_targets;",
+    )
+    .map_err(|_| AppError::db("建临时变更表"))?;
+    for id in changed_file_ids {
+        conn.execute(
+            "INSERT OR IGNORE INTO _kp_changed(id) VALUES (?1)",
+            rusqlite::params![id],
+        )
+        .map_err(|_| AppError::db("写入变更文件"))?;
+    }
+    for key in target_keys {
+        conn.execute(
+            "INSERT OR IGNORE INTO _kp_targets(key) VALUES (?1)",
+            rusqlite::params![key.to_lowercase()],
+        )
+        .map_err(|_| AppError::db("写入变更目标键"))?;
+    }
+    let (by_name, by_alias) = build_candidates(conn)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT l.id, l.target_ref FROM link l \
+              WHERE l.src_file_id IN (SELECT id FROM _kp_changed) \
+                 OR lower(l.target_ref) IN (SELECT key FROM _kp_targets)",
+        )
+        .map_err(|_| AppError::db("读取受影响链接"))?;
+    let rows: Vec<(i64, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|_| AppError::db("读取受影响链接"))?
+        .filter_map(Result::ok)
+        .collect();
+    drop(stmt);
+    let mut out = ResolveOutcome::default();
+    for (link_id, target) in rows {
+        let (status, dst) = judge(&by_name, &by_alias, &target);
+        conn.execute(
+            "UPDATE link SET status = ?1, dst_file_id = ?2 WHERE id = ?3",
+            rusqlite::params![status, dst, link_id],
+        )
+        .map_err(|_| AppError::db("写回裁决结果"))?;
+        match status {
+            "resolved" => out.resolved += 1,
+            "ambiguous" => out.ambiguous += 1,
+            _ => out.dangling += 1,
+        }
+    }
+    Ok(out)
+}
+
+/// 裁决单条：候选 1 个 → resolved；0 → dangling；≥2 → ambiguous（不猜）。
+fn judge(
+    by_name: &CandidateMap,
+    by_alias: &CandidateMap,
+    target: &str,
+) -> (&'static str, Option<i64>) {
+    let key = target.trim().to_lowercase();
+    if key.is_empty() {
+        return ("dangling", None);
+    }
+    let without_md = key.strip_suffix(".md").unwrap_or(&key).to_string();
+    let mut candidates: Vec<i64> = Vec::new();
+    for map_key in [&key, &without_md] {
+        if let Some(ids) = by_name.get(map_key) {
+            for id in ids {
+                if !candidates.contains(id) {
+                    candidates.push(*id);
+                }
+            }
+        }
+    }
+    if candidates.is_empty() {
+        if let Some(ids) = by_alias.get(&key) {
+            candidates.extend(ids.iter().copied());
+        }
+    }
+    match candidates.len() {
+        1 => ("resolved", Some(candidates[0])),
+        0 => ("dangling", None),
+        _ => ("ambiguous", None),
+    }
 }
