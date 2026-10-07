@@ -7,7 +7,6 @@
 //! - 遍历与（后续的）文件监听**必须复用同一份忽略规则**（技术方案 TECH:1752-1754）。
 
 // 本切片的引擎尚未接线（遍历命令与事件在 PR-4 下一切片）；接线后删除本行。
-#![allow(dead_code)]
 
 use std::path::Path;
 use std::time::Instant;
@@ -149,6 +148,10 @@ pub enum IndexMode {
 }
 
 /// 索引单个文件（调用方负责事务边界）：先清旧记录，再写新记录。
+///
+/// 注：生产路径走 `index_file_mode`；本函数目前只有测试调用，故单独豁免 dead_code
+/// （模块级豁免已被独立审查指出为"名不副实"，此处收窄到函数级）。
+#[allow(dead_code)]
 pub fn index_file(conn: &Connection, root: &Path, entry: &ScanEntry) -> Result<(), AppError> {
     index_file_mode(conn, root, entry, IndexMode::Force).map(|_| ())
 }
@@ -281,6 +284,10 @@ pub fn index_file_mode(
 }
 
 /// 全量索引（默认 Force；不检查取消）。
+///
+/// 注：生产路径统一走 `full_index_cancellable`（命令层与监听都在用）；本函数是给测试用的便捷包装，
+/// 故单独豁免 dead_code —— 与 `index_file` 同一处理。
+#[allow(dead_code)]
 pub fn full_index<F: FnMut(usize, usize)>(
     pool: &DbPool,
     root: &Path,
