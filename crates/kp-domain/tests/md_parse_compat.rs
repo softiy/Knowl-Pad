@@ -30,6 +30,25 @@ struct Case {
     fm_aliases: Option<Vec<String>>,
     #[serde(default)]
     fm_invalid: Option<bool>,
+    #[serde(default)]
+    tags: Option<Vec<ExpectedTag>>,
+    #[serde(default)]
+    headings: Option<Vec<ExpectedHeading>>,
+    #[serde(default)]
+    block_ids: Option<Vec<String>>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExpectedTag {
+    name: String,
+    is_leaf: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct ExpectedHeading {
+    level: u8,
+    text: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -100,6 +119,30 @@ fn appendix_b_slice_accuracy_is_100_percent() {
                 && note.frontmatter.is_none()
                 && note.warnings.iter().any(|w| w.contains("FRONTMATTER"));
         }
+        if let Some(tags) = case.tags.as_ref() {
+            let got: Vec<(String, bool)> = note
+                .tags
+                .iter()
+                .map(|t| (t.name.clone(), t.is_leaf))
+                .collect();
+            let want: Vec<(String, bool)> =
+                tags.iter().map(|t| (t.name.clone(), t.is_leaf)).collect();
+            ok = ok && got == want;
+        }
+        if let Some(headings) = case.headings.as_ref() {
+            let got: Vec<(u8, String)> = note
+                .headings
+                .iter()
+                .map(|h| (h.level, h.text.clone()))
+                .collect();
+            let want: Vec<(u8, String)> =
+                headings.iter().map(|h| (h.level, h.text.clone())).collect();
+            ok = ok && got == want;
+        }
+        if let Some(ids) = case.block_ids.as_ref() {
+            let got: Vec<String> = note.block_ids.iter().map(|b| b.id.clone()).collect();
+            ok = ok && &got == ids;
+        }
         if let Some(le) = case.line_ending.as_deref() {
             let want = if le == "Crlf" {
                 LineEnding::Crlf
@@ -111,7 +154,18 @@ fn appendix_b_slice_accuracy_is_100_percent() {
         if ok {
             passed += 1;
         } else {
-            failures.push(format!("{}（{}）实际 {:?}", case.id, case.rule, note.links));
+            failures.push(format!(
+                "{}（{}）links={:?} tags={:?} headings={:?} blockIds={:?}",
+                case.id,
+                case.rule,
+                note.links,
+                note.tags.iter().map(|t| &t.name).collect::<Vec<_>>(),
+                note.headings
+                    .iter()
+                    .map(|h| (&h.text, h.level))
+                    .collect::<Vec<_>>(),
+                note.block_ids.iter().map(|b| &b.id).collect::<Vec<_>>(),
+            ));
         }
     }
 

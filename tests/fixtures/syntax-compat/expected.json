@@ -142,6 +142,79 @@
         }
       ],
       "fmInvalid": true
+    },
+    {
+      "id": "B-11",
+      "file": "B-11.md",
+      "rule": "MD-TAG-01/02",
+      "links": [],
+      "tags": [
+        {
+          "name": "标签",
+          "isLeaf": true
+        }
+      ]
+    },
+    {
+      "id": "B-12",
+      "file": "B-12.md",
+      "rule": "MD-TAG-03",
+      "links": [],
+      "tags": [
+        {
+          "name": "父/子/孙",
+          "isLeaf": true
+        },
+        {
+          "name": "父/子",
+          "isLeaf": false
+        },
+        {
+          "name": "父",
+          "isLeaf": false
+        }
+      ]
+    },
+    {
+      "id": "B-13",
+      "file": "B-13.md",
+      "rule": "MD-TAG-01",
+      "links": [],
+      "tags": []
+    },
+    {
+      "id": "B-14",
+      "file": "B-14.md",
+      "rule": "MD-TAG-04/MD-H-01",
+      "links": [],
+      "tags": [],
+      "headings": [
+        {
+          "level": 1,
+          "text": "标题"
+        }
+      ]
+    },
+    {
+      "id": "B-18",
+      "file": "B-18.md",
+      "rule": "MD-BID-01/02",
+      "links": [],
+      "blockIds": [
+        "blockid"
+      ]
+    },
+    {
+      "id": "B-21",
+      "file": "B-21.md",
+      "rule": "MD-H-01",
+      "links": [],
+      "headings": [
+        {
+          "level": 1,
+          "text": "标题"
+        }
+      ]
     }
   ]
 }
