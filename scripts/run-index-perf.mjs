@@ -14,11 +14,10 @@ const TOLERANCE = 2.0;
 const UPDATE = process.argv.includes("--update-baseline");
 
 function runTest(filter) {
-  const res = spawnSync("cargo", ["test", "-p", "knowl-pad", "--locked", "--", "--nocapture", filter], {
-    stdio: ["ignore", "pipe", "pipe"],
-    encoding: "utf8",
-    shell: true,
-  });
+  // DEP0190：不要把 args 数组和 shell:true 混用（Node 会警告参数未转义）。
+  // 与 run-security.mjs 同样处理：拼成单条命令字符串再交给 shell。
+  const line = ["cargo", "test", "-p", "knowl-pad", "--locked", "--", "--nocapture", filter].join(" ");
+  const res = spawnSync(line, { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", shell: true });
   return (res.stdout || "") + (res.stderr || "");
 }
 
