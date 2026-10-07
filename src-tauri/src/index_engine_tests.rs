@@ -219,6 +219,7 @@ fn attachment_is_indexed_without_full_text() {
         .expect("附件应已入库");
     assert_eq!(kind, "attachment");
     let fts: i64 = count(&pool, "SELECT count(*) FROM note_fts");
+    let files: i64 = count(&pool, "SELECT count(*) FROM file");
     assert_eq!(files, 6, "四篇笔记 + note.txt + 图片.png");
     assert_eq!(fts, 4, "只有四篇 .md 进全文索引，附件不进");
 }
