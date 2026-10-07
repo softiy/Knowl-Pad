@@ -33,6 +33,15 @@ pub struct Link {
 
 /// 提取全部 wikilink（按出现顺序）。
 pub fn extract(text: &str, code: &CodeRanges) -> Vec<Link> {
+    extract_skipping(text, code, None)
+}
+
+/// 同上，但跳过指定字节区间内的内容（用于 **MD-WL-06**：frontmatter 内的 wikilink 不解析）。
+pub fn extract_skipping(
+    text: &str,
+    code: &CodeRanges,
+    skip: Option<std::ops::Range<usize>>,
+) -> Vec<Link> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
     let mut i = 0usize;
@@ -56,7 +65,8 @@ pub fn extract(text: &str, code: &CodeRanges) -> Vec<Link> {
         let embed = i > 0 && bytes[i - 1] == b'!';
         let start = if embed { i - 1 } else { i };
         // MD-WL-05：代码块/行内代码内不解析
-        if code.contains(start) {
+        let in_skip = skip.as_ref().is_some_and(|r| r.contains(&start));
+        if code.contains(start) || in_skip {
             i += 2;
             continue;
         }

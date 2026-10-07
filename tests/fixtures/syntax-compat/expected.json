@@ -110,6 +110,38 @@
         }
       ],
       "hasBom": true
+    },
+    {
+      "id": "B-15",
+      "file": "B-15.md",
+      "rule": "MD-FM-04/MD-TAG-06",
+      "links": [],
+      "fmTags": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "id": "B-16",
+      "file": "B-16.md",
+      "rule": "MD-FM-04",
+      "links": [],
+      "fmAliases": [
+        "x",
+        "y"
+      ]
+    },
+    {
+      "id": "B-17",
+      "file": "B-17.md",
+      "rule": "MD-FM-02/03",
+      "links": [
+        {
+          "target": "StillParsed",
+          "kind": "link"
+        }
+      ],
+      "fmInvalid": true
     }
   ]
 }

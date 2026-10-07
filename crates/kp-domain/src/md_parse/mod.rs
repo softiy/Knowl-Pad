@@ -11,9 +11,11 @@
 //! 块 ID（MD-BID-01~03）、plain_text 的完整清洗、10s 超时与 >5MB 跳过（由调用方负责）。
 
 pub mod code_fence;
+pub mod frontmatter;
 pub mod wikilink;
 
 pub use code_fence::CodeRanges;
+pub use frontmatter::Frontmatter;
 pub use wikilink::{Link, LinkKind};
 
 /// 换行风格（NFR-PLAT-05：解析不得改写用户换行）。
@@ -26,6 +28,8 @@ pub enum LineEnding {
 /// 解析结果（PRD §3.1.5 的 `ParsedNote`；本切片先落已实现字段）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedNote {
+    /// frontmatter（MD-FM-01~06；无效或缺闭合时为 None）
+    pub frontmatter: Option<Frontmatter>,
     /// wikilink 与嵌入（原始形态，未裁决）
     pub links: Vec<Link>,
     /// 非致命警告（不中断索引）
@@ -54,10 +58,23 @@ pub fn parse(bytes: &[u8]) -> ParsedNote {
     } else {
         LineEnding::Lf
     };
+    // MD-FM-01~06：先扫 frontmatter；其区间既不进链接扫描（MD-WL-06）也不进全文索引（MD-FM-06）
+    let fm = frontmatter::scan(&text);
+    if fm.unclosed {
+        warnings.push("FRONTMATTER_UNCLOSED：缺少闭合 ---，该块按正文处理".to_string());
+    }
+    if fm.parse_failed {
+        warnings.push(
+            "FRONTMATTER_INVALID：YAML 解析失败，已降级为无 frontmatter（正文照常索引）"
+                .to_string(),
+        );
+    }
+    let skip = fm.range.clone();
     let code = CodeRanges::scan(&text);
-    let links = wikilink::extract(&text, &code);
-    let plain_text = plain_text(&text, &code);
+    let links = wikilink::extract_skipping(&text, &code, skip.clone());
+    let plain_text = plain_text(&text, &code, skip);
     ParsedNote {
+        frontmatter: fm.data,
         links,
         warnings,
         plain_text,
@@ -66,11 +83,12 @@ pub fn parse(bytes: &[u8]) -> ParsedNote {
     }
 }
 
-/// 去掉代码区间后的正文（本切片的最小实现；完整清洗随后续切片完善）。
-fn plain_text(text: &str, code: &CodeRanges) -> String {
+/// 去掉代码区间与 frontmatter 区间后的正文（MD-FM-06；完整清洗随后续切片完善）。
+fn plain_text(text: &str, code: &CodeRanges, skip: Option<std::ops::Range<usize>>) -> String {
     let mut out = String::with_capacity(text.len());
     for (i, ch) in text.char_indices() {
-        if !code.contains(i) {
+        let skipped = skip.as_ref().is_some_and(|r| r.contains(&i));
+        if !skipped && !code.contains(i) {
             out.push(ch);
         }
     }
@@ -103,6 +121,42 @@ mod tests {
         let note = parse(b"a\r\nb\r\n");
         assert_eq!(note.line_ending, LineEnding::Crlf);
         assert_eq!(parse(b"a\nb\n").line_ending, LineEnding::Lf);
+    }
+
+    #[test]
+    fn fm06_frontmatter_is_excluded_from_plain_text() {
+        let note = parse("---\ntags: [a]\n秘密字段: 1\n---\n正文关键词\n".as_bytes());
+        assert!(note.plain_text.contains("正文关键词"));
+        assert!(
+            !note.plain_text.contains("秘密字段"),
+            "MD-FM-06：frontmatter 不进全文索引"
+        );
+        assert_eq!(
+            note.frontmatter.as_ref().map(|f| f.tags.clone()),
+            Some(vec!["a".to_string()])
+        );
+    }
+
+    #[test]
+    fn wl06_wikilinks_inside_frontmatter_are_not_parsed() {
+        let note = parse("---\naliases: [\"[[NotALink]]\"]\n---\n正文 [[Real]]\n".as_bytes());
+        assert_eq!(
+            note.links.len(),
+            1,
+            "MD-WL-06：frontmatter 内的 [[...]] 不解析"
+        );
+        assert_eq!(note.links[0].target, "Real");
+    }
+
+    #[test]
+    fn fm02_unclosed_frontmatter_keeps_body_parseable() {
+        let note = parse("---\ntags: [a]\n[[InBody]]\n".as_bytes());
+        assert!(note.frontmatter.is_none());
+        assert!(note
+            .warnings
+            .iter()
+            .any(|w| w.contains("FRONTMATTER_UNCLOSED")));
+        assert_eq!(note.links.len(), 1, "缺闭合时该块按正文处理，链接照常解析");
     }
 
     #[test]
