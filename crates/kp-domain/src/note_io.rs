@@ -18,6 +18,26 @@ pub fn mtime_ms(path: &Path) -> Result<i64, AppError> {
     Ok(elapsed.as_millis() as i64)
 }
 
+/// 是否**我们自己写的**临时文件（**DEBT-23** 的收敛）。
+///
+/// 命名由 [`temp_path`] 决定：`.kp-tmp-<pid>-<nanos>-<seq>` —— 三段必须全是数字。
+/// 早期实现只判前缀 `starts_with(".kp-tmp-")`，于是用户自己在 Vault 里建的
+/// `.kp-tmp-notes.md` 也会被启动清理**递归删掉**（M1 复核发现的误删分支）。
+fn is_our_temp_file(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(TEMP_PREFIX) else {
+        return false;
+    };
+    let mut parts = rest.split('-');
+    let (Some(a), Some(b), Some(c), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    [a, b, c]
+        .iter()
+        .all(|p| !p.is_empty() && p.chars().all(|ch| ch.is_ascii_digit()))
+}
+
 fn temp_path(parent: &Path) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -114,7 +134,7 @@ pub fn cleanup_temp_files_recursive(root: &Path) -> Result<usize, AppError> {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with(TEMP_PREFIX) && fs::remove_file(&path).is_ok() {
+            if is_our_temp_file(&name) && fs::remove_file(&path).is_ok() {
                 removed += 1;
             }
         }
@@ -160,7 +180,7 @@ pub fn cleanup_temp_files(dir: &Path) -> Result<usize, AppError> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with(TEMP_PREFIX) {
+        if is_our_temp_file(&name) {
             fs::remove_file(entry.path())?;
             removed += 1;
         }
