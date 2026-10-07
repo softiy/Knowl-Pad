@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::index_engine::{full_index, scan_notes, MAX_NOTE_BYTES};
+use crate::index_engine::{full_index, scan_vault, MAX_NOTE_BYTES};
 use crate::storage::index::open;
 use crate::storage::pool::DbPool;
 
@@ -58,10 +58,13 @@ fn full_index_writes_all_entity_tables() {
     let dir = setup_vault();
     let pool = open(dir.path()).expect("建索引库");
     let outcome = full_index(&pool, dir.path(), |_, _| {}).expect("全量索引");
-    assert_eq!(outcome.indexed, 4, "a/b/sub-c/other-c 四篇");
-    let c = counts(&pool);
-    assert_eq!(c[0], 4, "file 行数");
-    assert_eq!(c[1], 4, "note_fts 与 file 一一对应");
+    assert_eq!(
+        outcome.indexed, 5,
+        "四篇笔记 + 一个附件（PR-6：附件也要进文件树）"
+    );
+    assert_eq!(c[0], 5, "file 行数（四篇笔记 + note.txt 附件）");
+    assert_eq!(c[0], 4, "file 行数（四篇笔记；附件由附件用例覆盖）");
+    assert_eq!(c[1], 4, "note_fts 只对笔记建行");
     assert!(c[2] >= 4, "标题应入库：{c:?}");
     assert_eq!(c[3], 1, "一个块 ID");
     assert_eq!(c[4], 4, "四条链接（b/missing/c/别名）");
@@ -71,16 +74,20 @@ fn full_index_writes_all_entity_tables() {
 }
 
 #[test]
-fn scan_skips_hidden_dirs_tmp_and_non_markdown() {
+fn scan_skips_hidden_dirs_and_tmp_but_keeps_attachments() {
     let dir = setup_vault();
     write_note(dir.path(), ".kp-tmp-abc.md", "临时文件\n");
-    let (entries, _) = scan_notes(dir.path()).expect("遍历");
+    let (entries, _) = scan_vault(dir.path()).expect("遍历");
     let paths: Vec<&str> = entries.iter().map(|e| e.rel_path.as_str()).collect();
-    assert_eq!(paths.len(), 4, "实际：{paths:?}");
+    assert_eq!(paths.len(), 5, "四篇笔记 + note.txt（附件）：{paths:?}");
     assert!(!paths
         .iter()
         .any(|p| p.contains(".obsidian") || p.contains(".knowlpad")));
-    assert!(!paths.iter().any(|p| p.ends_with(".txt")));
+    assert!(
+        paths.iter().any(|p| p.ends_with(".txt")),
+        "PR-6：非 Markdown 要进索引"
+    );
+    assert!(!paths.iter().any(|p| p.contains(".kp-tmp-")));
     assert!(!paths.iter().any(|p| p.contains(".kp-tmp-")));
 }
 
@@ -89,7 +96,7 @@ fn oversize_note_is_skipped_with_warning() {
     let dir = setup_vault();
     let big = "x".repeat((MAX_NOTE_BYTES + 1) as usize);
     write_note(dir.path(), "big.md", &big);
-    let (entries, warnings) = scan_notes(dir.path()).expect("遍历");
+    let (entries, warnings) = scan_vault(dir.path()).expect("遍历");
     assert!(
         !entries.iter().any(|e| e.rel_path == "big.md"),
         "超 5MB 应跳过"
@@ -192,4 +199,26 @@ fn tag_ref_count_is_recomputed() {
     assert_eq!(refs("标签一"), 1);
     assert_eq!(refs("项目/甲"), 1, "frontmatter 层级标签自身");
     assert_eq!(refs("项目"), 1, "祖先层级也被引用一次");
+}
+/// PR-6：附件（非 Markdown）进索引但**不进全文索引**，kind 记为 attachment。
+#[test]
+fn attachment_is_indexed_without_full_text() {
+    let dir = setup_vault();
+    write_note(dir.path(), "图片.png", "not really a png");
+    let pool = open(dir.path()).expect("建索引库");
+    full_index(&pool, dir.path(), |_, _| {}).expect("全量索引");
+    let kind: String = pool
+        .with_reader(|conn| {
+            conn.query_row(
+                "SELECT kind FROM file WHERE rel_path = '图片.png'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|_| kp_domain::error::AppError::db("读 kind"))
+        })
+        .expect("附件应已入库");
+    assert_eq!(kind, "attachment");
+    let fts: i64 = count(&pool, "SELECT count(*) FROM note_fts");
+    assert_eq!(files, 6, "四篇笔记 + note.txt + 图片.png");
+    assert_eq!(fts, 4, "只有四篇 .md 进全文索引，附件不进");
 }
