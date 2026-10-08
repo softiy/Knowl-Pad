@@ -1,7 +1,4 @@
-// 隐藏 Windows 下的控制台窗口（release）
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-// Tauri 的 #[tauri::command] 宏展开依赖 never type fallback（Rust 2024 兼容性 lint，
-// 现为 deny-by-default）。此处显式允许；待 Tauri 宏修复后移除。
 #![allow(dependency_on_unit_never_type_fallback)]
 
 mod commands;
@@ -31,6 +28,8 @@ use commands::link::{
     link_ambiguous_list, link_backlinks, link_dangling_list, link_headings, link_orphan_list,
     link_outgoing,
 };
+use commands::link_rewrite::{link_rewrite_apply, link_rewrite_preview};
+use commands::link_rewrite_store::link_rewrite_rollback;
 use commands::note::{note_read, note_write};
 use commands::settings::{preference_get, preference_set, vault_state_get, vault_state_set};
 use commands::system::{ping, system_info};
@@ -41,8 +40,6 @@ use commands::vault::{
 use state::AppState;
 
 fn main() {
-    // 平台冒烟模式：KP_SMOKE=1 时，窗口创建后自行断言并在超时内退出。
-    // 供 CI（Linux/xvfb、macOS、Windows runner）验证「应用能启动且主窗口存在」。
     let smoke = std::env::var("KP_SMOKE").is_ok();
 
     tauri::Builder::default()
@@ -52,7 +49,6 @@ fn main() {
                 use tauri::Manager;
                 match app.path().app_config_dir() {
                     Ok(dir) => {
-                        // 日志先于存储层初始化，否则迁移与建库日志会丢失（§9.5）。
                         // 但**日志失败不得阻断存储层**——两者是独立的降级单元。
                         if let Err(err) = logging::init(&dir.join("logs")) {
                             eprintln!("日志初始化失败（继续运行）：{err}");
@@ -83,8 +79,6 @@ fn main() {
                                     .set_global_db(std::sync::Arc::new(pool));
                                 // FR-VAULT-06：恢复上次打开的 Vault（失败或路径失效都不阻断启动，
                                 // 且绝不创建目录——AC-VAULT-02）
-                                // M3 复核 blocker 修复：启动自动恢复路径此前只 activate_vault，
-                                // 既不跑对账也不起监听 → 重启后外部改动完全不被感知。
                                 if commands::vault_lifecycle::restore_last_vault(
                                     &app.state::<AppState>(),
                                 )
@@ -171,6 +165,9 @@ fn main() {
             link_ambiguous_list,
             link_orphan_list,
             link_headings,
+            link_rewrite_preview,
+            link_rewrite_apply,
+            link_rewrite_rollback,
             index_signature_get,
             index_stats,
             index_rebuild,
@@ -189,7 +186,6 @@ mod m0_stub_tests {
 
     #[test]
     fn platform_flag_is_defined() {
-        // 至少调用一次，保证平台适配入口可用且不被 dead_code 判定
         let _ = platform::case_insensitive_fs();
     }
 
@@ -201,8 +197,6 @@ mod m0_stub_tests {
 
     #[test]
     fn vault_root_lifecycle() {
-        // 路径校验职责已下沉到 storage::index::open / PathGuard（PR-2），
-        // 此处只断言 AppState 对根路径的持有语义。
         let state = AppState::new();
         assert!(state.current_root().is_none(), "未打开 Vault 时应为空");
 

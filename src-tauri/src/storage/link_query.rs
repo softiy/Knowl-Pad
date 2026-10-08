@@ -7,7 +7,7 @@ use super::pool::DbPool;
 
 // 行结构拆到 link_query_types，这里 re-export 以保持调用方与测试不变。
 use super::link_query_notes::note_id;
-pub use super::link_query_notes::{backlinks_for, outgoing_for};
+pub use super::link_query_notes::{backlinks_for, files_referencing, outgoing_for};
 #[allow(unused_imports)] // 供后续命令/测试按类型名取用（当前命令层只用值）
 pub use super::link_query_types::{
     AmbiguousRow, BacklinkRow, DanglingGroup, HeadingRow, OutgoingRow,
