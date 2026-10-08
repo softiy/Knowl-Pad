@@ -28,6 +28,12 @@ vi.mock('@features/vault', async () => {
 /** 供 beforeEach 重置 mock 用（形状与 mock 工厂内的一致）。 */
 const VAULT = { root: 'C:/vaults/notes', displayName: '我的知识库', vaultId: 1, caseInsensitiveFs: true };
 
+// 工作区布局现在会挂 LinksPanel（链接域），它 onMounted 就查 IPC —— 这里整体替身掉，
+// 让本 spec 只关心"切换知识库"这一条链路（依赖最小化）。
+vi.mock('@features/links', () => ({
+  LinksPanel: { name: 'LinksPanel', template: '<div data-testid="links-panel" />' },
+}));
+
 const saveAll = vi.fn(async () => {});
 const dirtyFlag = { value: false };
 const hasUnsaved = vi.fn(() => false);
