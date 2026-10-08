@@ -361,3 +361,27 @@ fn save_does_not_resurrect_deleted_note() {
     assert_eq!(err.code(), "E_FILE_NOT_FOUND");
     assert!(!target.exists(), "已删除的文件不得被写回");
 }
+
+/// **DEBT-16 残余的回归**：护栏必须可被命令层复用（`note_write` 此前绕过它）。
+#[test]
+fn ensure_writable_is_public_for_command_layer() {
+    for rejected in [
+        ".knowlpad/index.db",
+        ".KNOWLPAD/index.db",
+        ".obsidian/app.json",
+        ".git/config",
+    ] {
+        assert!(
+            crate::file_ops::ensure_writable(rejected).is_err(),
+            "{rejected} 必须被拒绝"
+        );
+    }
+    // a/.knowlpad/x 是**刻意允许**的：vault_paths 只把**根级**受保护目录视作禁区
+    // （文档写明：嵌套的 .knowlpad 是用户的普通目录）。
+    for allowed in ["note.md", "dir/note.md", ".hidden-note.md", "a/.knowlpad/x"] {
+        assert!(
+            crate::file_ops::ensure_writable(allowed).is_ok(),
+            "{allowed} 不应被拒绝"
+        );
+    }
+}

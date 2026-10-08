@@ -69,7 +69,7 @@ pub struct DeleteOutcome {
 ///
 /// 读操作（文件树列目录、打开笔记）**不受限**——AC-FILE-09 要求 `.obsidian/`/`.git/` 在
 /// 开启「显示隐藏文件」后可见；这里只拦写、改、删、移。
-fn ensure_writable(rel_path: &str) -> Result<(), AppError> {
+pub fn ensure_writable(rel_path: &str) -> Result<(), AppError> {
     let normalized = rel_path.replace('\\', "/");
     if let Some(first) = normalized.split('/').find(|seg| !seg.is_empty()) {
         let is_internal = crate::vault_paths::is_internal_path(first);
