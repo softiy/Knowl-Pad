@@ -1,181 +1,26 @@
 //! 链接查询层（M4 / FR-LINK-10~22）：**只读 SQL**，供命令层组装 IPC 形状。
-//!
 //! 分工：本层只查索引库（`link`/`file`/`heading` 表）；**上下文片段**（FR-LINK-11）由命令层
-//! 读笔记正文后调用 `kp_domain::snippet::extract_snippet` 组装 —— 域层不碰 IO，SQL 只在本层。
 
 use kp_domain::error::AppError;
-use rusqlite::Connection;
 
 use super::pool::DbPool;
 
-/// 一条反链（FR-LINK-10/11/15）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
-pub struct BacklinkRow {
-    pub src_rel_path: String,
-    pub src_name: String,
-    pub link_kind: String,
-    pub target_ref: String,
-    pub alias: Option<String>,
-    pub anchor: Option<String>,
-    pub line: u32,
-    pub col: u32,
-}
-
-/// 一条出链（含悬空/歧义状态）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
-pub struct OutgoingRow {
-    pub target_ref: String,
-    pub status: String,
-    pub anchor: Option<String>,
-    pub alias: Option<String>,
-    pub link_kind: String,
-    pub line: u32,
-    pub col: u32,
-    pub dst_rel_path: Option<String>,
-}
-
-/// 悬空链接按目标名分组（FR-LINK-20）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
-pub struct DanglingGroup {
-    pub target_ref: String,
-    /// 引用处数
-    pub ref_count: u32,
-    /// 引用它的笔记数
-    pub source_count: u32,
-    /// 示例来源（最多 3 个，按路径排序，便于 UI 展示）
-    pub sample_sources: Vec<String>,
-}
-
-/// 歧义链接（FR-LINK-22 / AC-LINK-04）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
-pub struct AmbiguousRow {
-    pub target_ref: String,
-    /// 候选目标的相对路径（按路径排序，确定性）
-    pub candidates: Vec<String>,
-    /// 引用处数
-    pub ref_count: u32,
-}
-
-/// 标题（`link_headings` 用；编辑器补全/锚点校验展示）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
-pub struct HeadingRow {
-    pub level: u32,
-    pub text: String,
-    pub anchor: String,
-    pub line: u32,
-}
-
-fn note_id(conn: &Connection, rel_path: &str) -> Result<Option<i64>, AppError> {
-    conn.query_row(
-        "SELECT id FROM file WHERE rel_path = ?1",
-        rusqlite::params![rel_path],
-        |r| r.get::<_, i64>(0),
-    )
-    .map(Some)
-    .or_else(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => Ok(None),
-        _ => Err(AppError::db("查询文件失败")),
-    })
-}
-
-/// 指向 `dst_rel_path` 的**已解析**反链（AC-LINK-01 的计数口径就是本函数的行数）。
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
-pub fn backlinks_for(pool: &DbPool, dst_rel_path: &str) -> Result<Vec<BacklinkRow>, AppError> {
-    pool.with_reader(|conn| {
-        let Some(dst) = note_id(conn, dst_rel_path)? else {
-            return Ok(Vec::new());
-        };
-        let mut stmt = conn
-            .prepare(
-                "SELECT f.rel_path, f.name, l.link_kind, l.target_ref, l.alias, l.anchor, l.line, l.col \
-                 FROM link l JOIN file f ON f.id = l.src_file_id \
-                 WHERE l.dst_file_id = ?1 AND l.status = 'resolved' \
-                 ORDER BY f.rel_path, l.line, l.col",
-            )
-            .map_err(|_| AppError::db("准备反链查询失败"))?;
-        let rows = stmt
-            .query_map(rusqlite::params![dst], |r| {
-                Ok(BacklinkRow {
-                    src_rel_path: r.get(0)?,
-                    src_name: r.get(1)?,
-                    link_kind: r.get(2)?,
-                    target_ref: r.get(3)?,
-                    alias: r.get(4)?,
-                    anchor: r.get(5)?,
-                    line: r.get::<_, i64>(6)? as u32,
-                    col: r.get::<_, i64>(7)? as u32,
-                })
-            })
-            .map_err(|_| AppError::db("执行反链查询失败"))?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|_| AppError::db("读取反链结果失败"))
-    })
-}
+// 行结构拆到 link_query_types，这里 re-export 以保持调用方与测试不变。
+use super::link_query_notes::note_id;
+#[allow(unused_imports)] // 供测试与命令层从 link_query 取用（尚未接入）
+pub use super::link_query_notes::{backlinks_for, outgoing_for};
+#[allow(unused_imports)] // 同上
+pub use super::link_query_types::{
+    AmbiguousRow, BacklinkRow, DanglingGroup, HeadingRow, OutgoingRow,
+};
 
 /// 反链计数（AC-LINK-01 要求面板条数与 SQL 计数一致，这个函数就是"SQL 计数"的单一来源）。
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
+#[allow(dead_code)] // 命令层接入前暂无调用方
 pub fn backlink_count(pool: &DbPool, dst_rel_path: &str) -> Result<u32, AppError> {
     Ok(backlinks_for(pool, dst_rel_path)?.len() as u32)
 }
 
-/// `src_rel_path` 的出链（含各状态）。
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
-pub fn outgoing_for(pool: &DbPool, src_rel_path: &str) -> Result<Vec<OutgoingRow>, AppError> {
-    pool.with_reader(|conn| {
-        let Some(src) = note_id(conn, src_rel_path)? else {
-            return Ok(Vec::new());
-        };
-        let mut stmt = conn
-            .prepare(
-                "SELECT l.target_ref, l.status, l.anchor, l.alias, l.link_kind, l.line, l.col, d.rel_path \
-                 FROM link l LEFT JOIN file d ON d.id = l.dst_file_id \
-                 WHERE l.src_file_id = ?1 ORDER BY l.line, l.col",
-            )
-            .map_err(|_| AppError::db("准备出链查询失败"))?;
-        let rows = stmt
-            .query_map(rusqlite::params![src], |r| {
-                Ok(OutgoingRow {
-                    target_ref: r.get(0)?,
-                    status: r.get(1)?,
-                    anchor: r.get(2)?,
-                    alias: r.get(3)?,
-                    link_kind: r.get(4)?,
-                    line: r.get::<_, i64>(5)? as u32,
-                    col: r.get::<_, i64>(6)? as u32,
-                    dst_rel_path: r.get(7)?,
-                })
-            })
-            .map_err(|_| AppError::db("执行出链查询失败"))?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|_| AppError::db("读取出链结果失败"))
-    })
-}
-
-/// 悬空链接按目标名分组（FR-LINK-20：按目标名分组 + 显示引用次数）。
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
+#[allow(dead_code)] // 命令层接入前暂无调用方（移除点：commands/link.rs 落地时）
 pub fn dangling_groups(pool: &DbPool) -> Result<Vec<DanglingGroup>, AppError> {
     pool.with_reader(|conn| {
         let mut stmt = conn
@@ -217,10 +62,7 @@ pub fn dangling_groups(pool: &DbPool) -> Result<Vec<DanglingGroup>, AppError> {
     })
 }
 
-/// 歧义链接（AC-LINK-04：10 条 `[[note]]` → 2 个候选）。
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
+#[allow(dead_code)] // 命令层接入前暂无调用方（移除点：commands/link.rs 落地时）
 pub fn ambiguous_rows(pool: &DbPool) -> Result<Vec<AmbiguousRow>, AppError> {
     pool.with_reader(|conn| {
         let mut stmt = conn
@@ -264,9 +106,7 @@ pub fn ambiguous_rows(pool: &DbPool) -> Result<Vec<AmbiguousRow>, AppError> {
 }
 
 /// 孤立笔记：**没有任何出链且没有任何入链**（FR-LINK-21）；自链接两侧都不计（FR-LINK-07）。
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
+#[allow(dead_code)] // 命令层接入前暂无调用方（移除点：commands/link.rs 落地时）
 pub fn orphan_notes(pool: &DbPool) -> Result<Vec<String>, AppError> {
     pool.with_reader(|conn| {
         let mut stmt = conn
@@ -287,10 +127,7 @@ pub fn orphan_notes(pool: &DbPool) -> Result<Vec<String>, AppError> {
     })
 }
 
-/// 某笔记的全部标题（`link_headings`）。
-// M4 命令层（下一批：commands/link.rs）接入前本项暂无调用方 ——
-// 按 M3 的处置惯例用**逐项窄豁免 + 理由**（模块级 #![allow] 会被审查判为"名不副实"）。
-#[allow(dead_code)] // 移除点：命令层接入的那个 PR
+#[allow(dead_code)] // 命令层接入前暂无调用方（移除点：commands/link.rs 落地时）
 pub fn headings_of(pool: &DbPool, rel_path: &str) -> Result<Vec<HeadingRow>, AppError> {
     pool.with_reader(|conn| {
         let Some(id) = note_id(conn, rel_path)? else {
