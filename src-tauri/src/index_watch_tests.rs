@@ -194,3 +194,118 @@ fn indexing_does_not_trigger_itself_but_watcher_stays_alive() {
     );
     handle.stop();
 }
+
+/// **AC-FILE-07 的删除路径**（M3 复核 M3-2：此前只有"新增"场景，删除/改名**零覆盖**）。
+/// 外部删掉笔记后：① 监听必须报出删除；② 索引里不再有该文件；③ 指向它的链接变 `dangling`。
+#[test]
+fn ac_file_07_external_delete_removes_from_index_and_dangles_links() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲\n\n见 [[b]]\n").expect("写 a");
+    fs::write(root.join("b.md"), "# 乙\n").expect("写 b");
+    let pool = Arc::new(open(&root).expect("建索引库"));
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM file WHERE rel_path = 'b.md'"),
+        1
+    );
+    assert_eq!(
+        link_status(&pool, "b"),
+        "resolved",
+        "删除之前 [[b]] 是 resolved"
+    );
+
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<Change>>();
+    let handle = start_watcher_with(
+        pool.clone(),
+        root.clone(),
+        move |changes| {
+            let _ = tx.send(changes.to_vec());
+        },
+        |_code, _message| {},
+    )
+    .expect("启动监听");
+    std::thread::sleep(Duration::from_millis(300));
+
+    fs::remove_file(root.join("b.md")).expect("外部删除");
+    let reported = rx
+        .recv_timeout(Duration::from_secs(15))
+        .expect("应报出外部删除");
+    assert!(
+        reported
+            .iter()
+            .any(|c| matches!(c, Change::Removed(p) if p == "b.md")),
+        "应报出 Removed(b.md)：{reported:?}"
+    );
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM file WHERE rel_path = 'b.md'"),
+        0,
+        "删除后索引里不得再有该文件"
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM link WHERE target_ref = 'b' AND status = 'dangling'"
+        ),
+        1,
+        "指向被删文件的链接必须变 dangling"
+    );
+    handle.stop();
+}
+
+/// **AC-FILE-07 的改名路径**：外部改名后旧路径从索引消失、新路径进索引，且链接重新裁决。
+#[test]
+fn ac_file_07_external_rename_reindexes_old_and_new_path() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲\n\n见 [[b]]\n").expect("写 a");
+    fs::write(root.join("b.md"), "# 乙\n").expect("写 b");
+    let pool = Arc::new(open(&root).expect("建索引库"));
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM link WHERE target_ref = 'b' AND status = 'resolved'"
+        ),
+        1,
+        "改名之前 [[b]] 是 resolved"
+    );
+
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<Change>>();
+    let handle = start_watcher_with(
+        pool.clone(),
+        root.clone(),
+        move |changes| {
+            let _ = tx.send(changes.to_vec());
+        },
+        |_code, _message| {},
+    )
+    .expect("启动监听");
+    std::thread::sleep(Duration::from_millis(300));
+
+    fs::rename(root.join("b.md"), root.join("c.md")).expect("外部改名");
+    // 改名在文件系统上表现为一对事件；等索引收敛（最多 15 秒）
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let old_gone = count(&pool, "SELECT count(*) FROM file WHERE rel_path = 'b.md'") == 0;
+        let new_present = count(&pool, "SELECT count(*) FROM file WHERE rel_path = 'c.md'") == 1;
+        if old_gone && new_present {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "改名后索引未在 15 秒内收敛（old_gone={old_gone}, new_present={new_present}）"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM link WHERE target_ref = 'b' AND status = 'dangling'"
+        ),
+        1,
+        "旧目标 [[b]] 应变 dangling"
+    );
+    let _ = rx.recv_timeout(Duration::from_secs(2)); // 事件内容已由上面的索引状态覆盖
+    handle.stop();
+}
