@@ -183,7 +183,7 @@ export const useFileOpsStore = defineStore('fileOps', () => {
         const to = joinRel(current.parentDir, current.value.trim());
         const result = await fileRename(current.target, to, policy);
         // FR-FILE-28 / AC-FILE-05：编辑器跟随重命名（不丢未保存内容）
-        useEditorStore().followRename(result.from, result.to);
+        useEditorStore().followRenameUnder(result.from, result.to);
         await refreshTree();
         notice.value = `已重命名为 ${result.to}`;
       } else {

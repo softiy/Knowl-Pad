@@ -196,6 +196,36 @@ export const useEditorStore = defineStore('editor', () => {
     if (activeRelPath.value === oldRelPath) activeRelPath.value = newRelPath;
   }
 
+  /**
+   * **目录重命名时跟随子树**（M1/M2 复核 major：此前只有精确匹配的 `followRename`，
+   * 打开中的 `dir/a.md` 仍指向旧路径，之后的自动保存会以不存在的路径写盘 → 报「文件不存在」，
+   * FR-FILE-28 明文禁止）。与 `closeUnder` 对称：按前缀改写所有受影响的标签。
+   *
+   * 返回改写的标签数（调用方可据此提示）。
+   */
+  function followRenameUnder(oldRelPath: string, newRelPath: string): number {
+    const prefix = oldRelPath + '/';
+    let changed = 0;
+    for (const buffer of buffers.value) {
+      if (buffer.relPath === oldRelPath) {
+        cancelAutosave(buffer.relPath);
+        buffer.relPath = newRelPath;
+        buffer.mtimeMs = MTIME_UNKNOWN;
+        if (activeRelPath.value === oldRelPath) activeRelPath.value = newRelPath;
+        changed += 1;
+      } else if (buffer.relPath.startsWith(prefix)) {
+        const rest = buffer.relPath.slice(prefix.length);
+        const next = `${newRelPath}/${rest}`;
+        cancelAutosave(buffer.relPath);
+        if (activeRelPath.value === buffer.relPath) activeRelPath.value = next;
+        buffer.relPath = next;
+        buffer.mtimeMs = MTIME_UNKNOWN;
+        changed += 1;
+      }
+    }
+    return changed;
+  }
+
   /** 关闭某个路径及其**子树**下的全部标签（删除文件夹时用，M1/M2 复核）。 */
   function closeUnder(relPath: string): number {
     const prefix = relPath + '/';
@@ -274,6 +304,7 @@ export const useEditorStore = defineStore('editor', () => {
     saveAll,
     resolveConflict,
     followRename,
+    followRenameUnder,
     reorderTab,
     closeUnder,
     closeOthers,
