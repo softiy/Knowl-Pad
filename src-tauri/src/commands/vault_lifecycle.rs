@@ -14,11 +14,11 @@ pub(crate) struct PreparedVault {
     pub root: PathBuf,
     pub display_name: String,
     pub pool: crate::storage::pool::DbPool,
+    /// 打开时的索引可用判定（FR-VAULT-* / M3-8）。
+    index_ready: bool,
 }
 
 /// 准备 Vault：校验路径 → （可选）建目录 → 确保 .knowlpad/ → 打开索引库。
-///
-/// **阻塞 IO**，调用方应放入线程池（R-08）。
 /// 路径无效时**绝不创建任何目录**（FR-VAULT-08 / AC-VAULT-02）。
 pub(crate) fn prepare_vault(
     path: &Path,
@@ -55,11 +55,17 @@ pub(crate) fn prepare_vault(
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "Vault".to_string());
 
-    let pool = crate::storage::index::open(&root)?;
+    // M3 复核 M3-8：把存储层自己的重建判定带出来（Unchanged = 索引文件被保留 → 确实建立过）。
+    let (pool, outcome) = crate::storage::index::open_with_outcome(&root)?;
+    let index_ready = matches!(
+        outcome,
+        crate::storage::index_rebuild::RebuildOutcome::Unchanged
+    );
     Ok(PreparedVault {
         root,
         display_name,
         pool,
+        index_ready,
     })
 }
 
@@ -84,7 +90,6 @@ pub(crate) fn activate_vault(
     close_current(state);
 
     // §9.5 日志内容红线：Vault 绝对路径**仅在此处记录一次**（用于诊断），
-    // 其余日志只允许出现相对路径
     tracing::info!(root = %prepared.root.display(), "打开 Vault");
 
     let abs_path = prepared.root.to_string_lossy().to_string();
@@ -97,6 +102,7 @@ pub(crate) fn activate_vault(
         None => None,
     };
 
+    state.set_index_ready(prepared.index_ready);
     state.set_index_db(Some(Arc::new(prepared.pool)));
     state.set_root(Some(prepared.root.clone()));
     state.set_current_vault_id(vault_id);
@@ -150,12 +156,7 @@ pub(crate) fn current_vault(state: &AppState) -> Option<VaultInfo> {
 }
 
 /// 启动恢复（FR-VAULT-06）：尝试重新打开上次的 Vault。
-///
 /// 语义（AC-VAULT-02 前提）：
-/// - 用户已在设置中关闭恢复，或没有记录 → 返回 None，不做任何事；
-/// - 路径已失效（移动硬盘拔出等）→ **不创建任何目录**，仅记录告警并返回 None，
-///   由 UI 引导「重新定位 / 从列表移除」；
-/// - 失败绝不阻断启动。
 pub(crate) fn restore_last_vault(state: &AppState) -> Option<VaultInfo> {
     let global = state.global_db()?;
     match crate::storage::global::restore_last_enabled(&global) {

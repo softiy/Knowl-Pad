@@ -1,7 +1,4 @@
 //! 索引库 index.db：DDL、签名比对与「丢弃重建」（PRD §3.2 / §3.6 MIG-01；技术方案 §4.4 / §4.6）。
-//!
-//! 索引库是**纯派生数据**：schema 变更不做在线迁移，直接丢弃重建（MIG-01）。
-//! 触发重建的条件：① 库文件不存在（新库） ② schema_version 不一致 ③ 索引签名不一致
 //! ④ 存在未完成的 重建标记（FR-SIG-03，中断后可重新开始，绝不把半索引当有效索引）。
 
 use super::index_schema::DDL_V1;
@@ -22,12 +19,6 @@ pub const PARSER_VERSION: u32 = 0;
 pub const TOKENIZER_VERSION: &str = kp_domain::tokenize::TOKENIZER_VERSION;
 
 /// 词典指纹：M3 由 build.rs 对内嵌词典计算 SHA-256 前 16 位（技术方案 §4.6）。
-/// 词典哈希（进索引签名）。
-///
-/// jieba-rs 的词典**编译期内嵌**于二进制、运行时没有可哈希的词典文件，因此这里用
-/// **版本 + 特性 + 内置词典标识**的 FNV-1a 64 十六进制作为「变化检测」指纹：
-/// 任何一项变化都会让签名变化 → 触发全量重建（正确性优先于性能的刻意取舍）。
-/// 复现方式：FNV-1a64("jieba-rs|<version>|default-dict")。
 pub const TOKENIZER_DICT_HASH: &str = "5d5182e208a4a8a0";
 
 /// meta 中的重建标记键：重建开始时置位，完成后清除（FR-SIG-03 / NFR-REL-07）。
@@ -122,7 +113,20 @@ fn sha256_hex(input: &str) -> String {
 }
 
 /// 打开索引库：签名一致则直接使用；否则**丢弃重建**（MIG-01）。
+///
+/// 生产路径用 [`open_with_outcome`]（它把重建判定带给调用方）；本函数保留给测试与
+/// 不需要判定的调用方。
+#[allow(dead_code)] // 生产路径用 open_with_outcome（见上）；测试大量使用本函数
 pub fn open(vault_root: &Path) -> Result<DbPool, AppError> {
+    open_with_outcome(vault_root).map(|(pool, _)| pool)
+}
+
+/// 与 `open` 相同，但把**重建判定**一并返回给调用方。
+/// M3 复核 M3-8 需要它：`IndexStatus.ready` 此前恒为 true，而"meta 里有没有记录"
+/// 不能作为判据（`bootstrap` 开库时无条件写 meta）。真正可信的判据是存储层自己的判定：
+pub fn open_with_outcome(
+    vault_root: &Path,
+) -> Result<(DbPool, super::index_rebuild::RebuildOutcome), AppError> {
     let db_path = vault_root.join(INDEX_DB_REL);
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -131,7 +135,6 @@ pub fn open(vault_root: &Path) -> Result<DbPool, AppError> {
 
     // §4.4：先做**文件级**的「丢弃重建 + 原子切换」，再打开连接池。
     // 旧实现是开池后就地 DROP TABLE，那样会先销毁旧索引——FR-SIG-02（重建期旧索引只读可用）
-    // 在其上无法实现。
     let outcome = super::index_rebuild::ensure_index_db(&db_path, &expected)?;
     match &outcome {
         super::index_rebuild::RebuildOutcome::Unchanged => {
@@ -144,12 +147,11 @@ pub fn open(vault_root: &Path) -> Result<DbPool, AppError> {
         ),
     }
 
-    DbPool::open_with(&db_path, move |conn| bootstrap(conn, &expected))
+    let pool = DbPool::open_with(&db_path, move |conn| bootstrap(conn, &expected))?;
+    Ok((pool, outcome))
 }
 
 /// 连接池就绪后的 schema 兜底（幂等）：建表 + 写 meta。
-///
-/// 重建判定已在 ensure_index_db 中按 §4.4 完成（文件级），此处不再比较签名。
 fn bootstrap(conn: &mut Connection, expected: &IndexSignature) -> Result<(), AppError> {
     create_schema(conn)?;
     write_meta(conn, expected)?;
