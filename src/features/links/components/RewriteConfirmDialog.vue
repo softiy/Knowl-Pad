@@ -17,7 +17,8 @@ import { asKpError } from '@core/ipc/errors';
  * 传入 rename 时，重命名与改写属于**同一次可回滚操作**（FR-FILE-22）：
  * 此时不要再调用 file_rename —— PRD §5.3.3 明确 file_rename「不含链接改写」。
  */
-const props = defineProps<{ renameFrom?: string; renameTo?: string }>();
+// 显式写成 `| undefined`：项目开了 exactOptionalPropertyTypes，调用方会传 string | undefined
+const props = defineProps<{ renameFrom?: string | undefined; renameTo?: string | undefined }>();
 
 const fromRef = ref('');
 const toRef = ref('');

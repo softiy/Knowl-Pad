@@ -53,8 +53,12 @@ fn nfr_perf_16_rewrites_three_hundred_references_quickly() {
         plan_ms + apply_ms
     );
     // 抽查首尾两个文件确实被改到
-    assert!(fs::read_to_string(root.join("notes/n000.md")).unwrap().contains("[[B]]"));
-    assert!(fs::read_to_string(root.join("notes/n299.md")).unwrap().contains("[[B]]"));
+    assert!(fs::read_to_string(root.join("notes/n000.md"))
+        .unwrap()
+        .contains("[[B]]"));
+    assert!(fs::read_to_string(root.join("notes/n299.md"))
+        .unwrap()
+        .contains("[[B]]"));
 }
 
 /// 联合操作（改名 + 改写）在同样规模下的实测（FR-FILE-22 的路径）。
