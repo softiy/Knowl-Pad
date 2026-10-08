@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue';
 import { useVaultStore } from '@features/vault';
 import { EditorView, useEditorStore } from '@features/editor';
 import { FileOpsDialog, FileTree, useFileOpsStore, type MenuAction } from '@features/file-tree';
+import { LinksPanel } from '@features/links';
 import VaultList from '@features/vault/components/VaultList.vue';
 import StatusBar from './StatusBar.vue';
 
@@ -52,6 +53,11 @@ function onOpen(relPath: string): void {
   void editor.openNote(relPath);
 }
 
+/** 点击反链/孤立项：打开来源笔记（FR-LINK-13 的第一半；滚动定位与高亮见遗留项）。 */
+function onOpenLink(payload: { relPath: string; line: number }): void {
+  void editor.openNote(payload.relPath);
+}
+
 function parentOf(relPath: string, isDir: boolean): string {
   if (isDir) return relPath;
   const index = relPath.lastIndexOf('/');
@@ -94,6 +100,7 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
         <section class="kp-workspace__main">
           <EditorView />
         </section>
+        <LinksPanel :active-rel-path="editor.activeRelPath ?? null" @open="onOpenLink" />
       </template>
       <VaultList v-else />
     </div>
