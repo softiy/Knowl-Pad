@@ -1,0 +1,186 @@
+{
+  "meta": {
+    "purpose": "M4 链接改写矩阵：每种链接形式 × 每种上下文，给定期望输出（PRD FR-FILE-21/22、AC-FILE-01）",
+    "truthSource": [
+      "docs/Knowl-Pad-PRD.md AC-FILE-01",
+      "FR-LINK-02",
+      "FR-LINK-23"
+    ],
+    "rename": {
+      "from": "A.md",
+      "to": "B.md"
+    }
+  },
+  "cases": [
+    {
+      "id": "L-01",
+      "form": "wikilink-plain",
+      "context": "body",
+      "input": "见 [[A]]。",
+      "expected": "见 [[B]]。",
+      "shouldRewrite": true,
+      "covers": [
+        "AC-FILE-01"
+      ]
+    },
+    {
+      "id": "L-02",
+      "form": "wikilink-alias",
+      "context": "body",
+      "input": "见 [[A|别名]]。",
+      "expected": "见 [[B|别名]]。",
+      "shouldRewrite": true,
+      "covers": [
+        "AC-FILE-01",
+        "FR-LINK-11"
+      ]
+    },
+    {
+      "id": "L-03",
+      "form": "wikilink-heading",
+      "context": "body",
+      "input": "见 [[folder/A#标题]]。",
+      "expected": "见 [[folder/B#标题]]。",
+      "shouldRewrite": true,
+      "covers": [
+        "AC-FILE-01",
+        "FR-LINK-03"
+      ]
+    },
+    {
+      "id": "L-04",
+      "form": "wikilink-block",
+      "context": "body",
+      "input": "见 [[A#^bid]]。",
+      "expected": "见 [[B#^bid]]。",
+      "shouldRewrite": true,
+      "covers": [
+        "FR-LINK-04"
+      ]
+    },
+    {
+      "id": "L-05",
+      "form": "embed-note",
+      "context": "body",
+      "input": "![[A]]",
+      "expected": "![[B]]",
+      "shouldRewrite": true,
+      "covers": [
+        "FR-LINK-05",
+        "FR-LINK-15"
+      ]
+    },
+    {
+      "id": "L-06",
+      "form": "embed-heading",
+      "context": "body",
+      "input": "![[A#标题]]",
+      "expected": "![[B#标题]]",
+      "shouldRewrite": true,
+      "covers": [
+        "FR-LINK-15"
+      ]
+    },
+    {
+      "id": "L-07",
+      "form": "markdown-inline",
+      "context": "body",
+      "input": "[文本](A.md)",
+      "expected": "[文本](B.md)",
+      "shouldRewrite": true,
+      "covers": [
+        "AC-FILE-01"
+      ]
+    },
+    {
+      "id": "L-08",
+      "form": "markdown-title",
+      "context": "body",
+      "input": "[文本](A.md \"标题\")",
+      "expected": "[文本](B.md \"标题\")",
+      "shouldRewrite": true,
+      "covers": [
+        "AC-FILE-01"
+      ]
+    },
+    {
+      "id": "L-09",
+      "form": "wikilink-case-insensitive",
+      "context": "body",
+      "input": "见 [[a]]。",
+      "expected": "见 [[B]]。",
+      "shouldRewrite": true,
+      "covers": [
+        "FR-LINK-02"
+      ]
+    },
+    {
+      "id": "L-10",
+      "form": "wikilink-plain",
+      "context": "fenced-code",
+      "input": "```\n[[A]]\n```",
+      "expected": "```\n[[A]]\n```",
+      "shouldRewrite": false,
+      "covers": [
+        "AC-FILE-01"
+      ],
+      "note": "AC-FILE-01 的硬要求：代码块内 2 处必须保持 A 不变"
+    },
+    {
+      "id": "L-11",
+      "form": "wikilink-plain",
+      "context": "inline-code",
+      "input": "这是 `[[A]]` 字面量",
+      "expected": "这是 `[[A]]` 字面量",
+      "shouldRewrite": false,
+      "covers": [
+        "AC-FILE-01"
+      ]
+    },
+    {
+      "id": "L-12",
+      "form": "wikilink-plain",
+      "context": "frontmatter",
+      "input": "---\naliases:\n  - \"[[A]]\"\n---\n正文",
+      "expected": "---\naliases:\n  - \"[[A]]\"\n---\n正文",
+      "shouldRewrite": false,
+      "covers": [
+        "AC-FILE-01"
+      ]
+    },
+    {
+      "id": "L-13",
+      "form": "wikilink-plain",
+      "context": "html-comment",
+      "input": "<!-- [[A]] -->",
+      "expected": "<!-- [[A]] -->",
+      "shouldRewrite": false,
+      "covers": [
+        "AC-FILE-01"
+      ]
+    },
+    {
+      "id": "L-14",
+      "form": "wikilink-other-target",
+      "context": "body",
+      "input": "见 [[C]]。",
+      "expected": "见 [[C]]。",
+      "shouldRewrite": false,
+      "covers": [
+        "AC-FILE-01"
+      ]
+    },
+    {
+      "id": "L-15",
+      "form": "wikilink-plain",
+      "context": "body-多行",
+      "input": "第一行\n[[A]] 与 [[A|别名]]\n第三行",
+      "expected": "第一行\n[[B]] 与 [[B|别名]]\n第三行",
+      "shouldRewrite": true,
+      "covers": [
+        "AC-FILE-01",
+        "AC-LINK-01"
+      ]
+    }
+  ]
+}
