@@ -258,3 +258,30 @@ fn files_referencing_matches_stem_case_insensitively() {
         "无关词干不得命中"
     );
 }
+
+/// FR-LINK-22 的 \`link_resolve_ambiguous\` 靠它定位：给定 link.id 必须能拿到
+/// **来源文件 + 1-based 行列 + 原目标**；不存在的 id 返回 None（而不是报错，由命令层决定怎么提示）。
+#[test]
+fn link_by_id_returns_source_and_position() {
+    let f = fixture(
+        &[("a.md", "a.md", "a", "note"), ("b.md", "b.md", "b", "note")],
+        &[("a.md", Some("b.md"), "note", "ambiguous", "wikilink", 7, 3)],
+    );
+    let id: i64 = f
+        .pool
+        .with_reader(|conn| {
+            conn.query_row("SELECT id FROM link WHERE target_ref = 'note'", [], |r| {
+                r.get(0)
+            })
+            .map_err(|e| kp_domain::error::AppError::db(&format!("取 id 失败：{e}")))
+        })
+        .expect("取 id");
+    let row = link_by_id(&f.pool, id).expect("查询").expect("应命中");
+    assert_eq!(row.0, "a.md", "来源文件");
+    assert_eq!((row.1, row.2), (7, 3), "行列必须是 1-based 且与索引一致");
+    assert_eq!(row.3, "note", "原目标");
+    assert!(
+        link_by_id(&f.pool, 999_999).expect("查询").is_none(),
+        "不存在的 id 应为 None"
+    );
+}

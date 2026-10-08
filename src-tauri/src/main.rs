@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(dependency_on_unit_never_type_fallback)]
-
 mod commands;
 mod error_wrapper;
 mod index_engine;
@@ -18,7 +17,6 @@ mod logging;
 mod platform;
 mod state;
 mod storage;
-
 use commands::file::{file_list_dir, file_stat, file_tree, file_validate_name};
 use commands::file_write::{
     file_delete, file_move, file_rename, file_reveal, folder_create, note_create,
@@ -28,6 +26,7 @@ use commands::link::{
     link_ambiguous_list, link_backlinks, link_dangling_list, link_headings, link_orphan_list,
     link_outgoing,
 };
+use commands::link_resolve::link_resolve_ambiguous;
 use commands::link_rewrite::{link_rewrite_apply, link_rewrite_preview};
 use commands::link_rewrite_store::link_rewrite_rollback;
 use commands::note::{note_read, note_write};
@@ -38,10 +37,8 @@ use commands::vault::{
     vault_register_remove, vault_relocate, vault_rename,
 };
 use state::AppState;
-
 fn main() {
     let smoke = std::env::var("KP_SMOKE").is_ok();
-
     tauri::Builder::default()
         .setup(move |app| {
             // 全局库（global.db）：配置目录必须经 Tauri path API 取得（PRD §2.4 实现约束）
@@ -168,6 +165,7 @@ fn main() {
             link_rewrite_preview,
             link_rewrite_apply,
             link_rewrite_rollback,
+            link_resolve_ambiguous,
             index_signature_get,
             index_stats,
             index_rebuild,
@@ -177,33 +175,27 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running Knowl Pad");
 }
-
 #[cfg(test)]
 mod appendix_b_tests;
 #[cfg(test)]
 mod m0_stub_tests {
     use super::*;
-
     #[test]
     fn platform_flag_is_defined() {
         let _ = platform::case_insensitive_fs();
     }
-
     #[test]
     fn storage_constants_are_stable() {
         assert_eq!(storage::INDEX_DIR_REL, ".knowlpad");
         assert_eq!(storage::INDEX_DB_REL, ".knowlpad/index.db");
     }
-
     #[test]
     fn vault_root_lifecycle() {
         let state = AppState::new();
         assert!(state.current_root().is_none(), "未打开 Vault 时应为空");
-
         let dir = tempfile::tempdir().unwrap();
         state.set_root(Some(dir.path().to_path_buf()));
         assert!(state.current_root().is_some(), "打开 Vault 后应有值");
-
         state.set_root(None);
         assert!(state.current_root().is_none(), "关闭后应再次为空");
     }
