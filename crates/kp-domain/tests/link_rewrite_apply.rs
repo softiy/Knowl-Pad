@@ -115,7 +115,9 @@ mod joint {
         fs::create_dir_all(&root).expect("建 vault");
         write(&root, "A.md", "# 甲\n");
         write(&root, "one.md", "见 [[A]]\n");
-        write(&root, "two.md", "也见 [[A|别名]]\n");
+        // 第二个目标刻意放在**子目录**里：按平台构造"写不进"时要只锁它那一层，
+        // 因为撤销改名发生在 vault 根目录，若把根目录也锁住，撤销本身就会失败。
+        write(&root, "sub/two.md", "也见 [[A|别名]]\n");
         (dir, root, backups)
     }
 
@@ -123,7 +125,7 @@ mod joint {
     #[test]
     fn success_renames_and_rewrites_together() {
         let (_d, root, backups) = setup();
-        let rels = vec!["one.md".to_string(), "two.md".to_string()];
+        let rels = vec!["one.md".to_string(), "sub/two.md".to_string()];
         let (report, new_rel) =
             rename_with_rewrite(&root, "A.md", "B.md", &rels, &backups).expect("联合操作应成功");
         assert_eq!(new_rel, "B.md");
@@ -131,7 +133,10 @@ mod joint {
         assert!(root.join("B.md").exists(), "文件应已改名");
         assert!(!root.join("A.md").exists(), "旧名不应再存在");
         assert!(read(&root, "one.md").contains("[[B]]"));
-        assert!(read(&root, "two.md").contains("[[B|别名]]"), "别名必须保留");
+        assert!(
+            read(&root, "sub/two.md").contains("[[B|别名]]"),
+            "别名必须保留"
+        );
     }
 
     /// ② **改写失败 → 撤销改名**（FR-FILE-22 的明文要求）。
@@ -139,13 +144,29 @@ mod joint {
     #[allow(clippy::permissions_set_readonly_false)] // 见下方注释：仅还原夹具自己设的只读标记
     fn rewrite_failure_undoes_the_rename() {
         let (_d, root, backups) = setup();
-        let rels = vec!["one.md".to_string(), "two.md".to_string()];
-        // 让第二个被改写目标写不进去：置为**只读**（换成目录不行 —— 目录会让
-        // plan_rename 的"读不到就跳过"策略把它滤掉，计划里就没有它了）。
-        let two = root.join("two.md");
-        let mut perm = fs::metadata(&two).expect("读权限").permissions();
-        perm.set_readonly(true);
-        fs::set_permissions(&two, perm).expect("置只读");
+        let rels = vec!["one.md".to_string(), "sub/two.md".to_string()];
+        // 让第二个被改写目标"**读得到、写不进**"——这是关键：plan_rename 只收它能读到的文件，
+        // 所以必须构造出"在计划里、但落地时失败"的目标。
+        //
+        // 而"写不进"的构造**因平台而异**（CI 在 Linux 上跑，本地在 Windows 上跑）：
+        //   * Windows：把文件置只读即可阻止替换（已实测有效）；
+        //   * Unix：替换只读文件**是允许的**（权限看父目录），必须把**父目录**置为不可写，
+        //     这样 atomic_write 在目标目录里创建临时文件就会失败。
+        let two = root.join("sub/two.md");
+        #[cfg(windows)]
+        {
+            let mut perm = fs::metadata(&two).expect("读权限").permissions();
+            perm.set_readonly(true);
+            fs::set_permissions(&two, perm).expect("置只读");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let sub = root.join("sub");
+            let mut perm = fs::metadata(&sub).expect("读目录权限").permissions();
+            perm.set_mode(0o555);
+            fs::set_permissions(&sub, perm).expect("子目录置不可写");
+        }
 
         let err = rename_with_rewrite(&root, "A.md", "B.md", &rels, &backups)
             .expect_err("改写失败时整体必须失败");
@@ -166,7 +187,7 @@ mod joint {
     #[test]
     fn rename_failure_touches_no_link() {
         let (_d, root, backups) = setup();
-        let rels = vec!["one.md".to_string(), "two.md".to_string()];
+        let rels = vec!["one.md".to_string(), "sub/two.md".to_string()];
         // 让目标目录无法创建：把 B 的父路径做成一个普通文件
         write(&root, "blocked", "我是文件不是目录\n");
         let err = rename_with_rewrite(&root, "A.md", "blocked/B.md", &rels, &backups)
@@ -175,7 +196,7 @@ mod joint {
         assert!(root.join("A.md").exists(), "源文件应原样保留");
         assert_eq!(read(&root, "one.md"), "见 [[A]]\n", "链接一处都不应改写");
         assert_eq!(
-            read(&root, "two.md"),
+            read(&root, "sub/two.md"),
             "也见 [[A|别名]]\n",
             "链接一处都不应改写"
         );
