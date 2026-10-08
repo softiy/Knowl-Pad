@@ -37,7 +37,27 @@ fn spawn_reconcile_and_watch(
                 }),
             );
         }
-        match full_index_cancellable(&pool, &root, |_, _| {}, IndexMode::SkipUnchanged, || false) {
+        // FR-VAULT-09 / D-18：打开 Vault 的对账也要发进度（节流 ≥100ms，形状按 PRD §5.4）。
+        // 此前传 |_, _| {}，导致进度事件只有 index_rebuild 才会发（M3 复核 M8）。
+        let progress_app = app.clone();
+        let last_emit =
+            std::cell::Cell::new(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        let progress = move |done: usize, total: usize| {
+            if last_emit.get().elapsed() < std::time::Duration::from_millis(100) {
+                return;
+            }
+            last_emit.set(std::time::Instant::now());
+            let _ = progress_app.emit(
+                "kp://index/progress",
+                serde_json::json!({
+                    "phase": "full",
+                    "done": done,
+                    "total": total,
+                    "currentFile": serde_json::Value::Null,
+                }),
+            );
+        };
+        match full_index_cancellable(&pool, &root, progress, IndexMode::SkipUnchanged, || false) {
             Ok(outcome) => {
                 let _ = app.emit(
                     "kp://index/completed",
@@ -64,9 +84,13 @@ fn spawn_reconcile_and_watch(
             }
         }
         let state = app.state::<AppState>();
-        if !state.has_watcher() {
+        // M3 复核 blocker 修复：监听是「每个 Vault 一个」。此前用不带 root 的
+        // has_watcher() 判定，切到另一个 Vault 时会误判"已在监听" → 新 Vault 永不启动监听、
+        // 旧 watcher 继续写旧库。现在按 root 判定：同一 Vault 重开则复用，换了 Vault 则先停再起。
+        if !state.has_watcher_for(&root) {
+            state.stop_watcher();
             match start_watcher(pool.clone(), root.clone(), app.clone()) {
-                Ok(handle) => state.set_watcher(handle),
+                Ok(handle) => state.set_watcher(handle, root.clone()),
                 Err(err) => {
                     tracing::warn!(error = %err, "文件监听启动失败，退化为轮询对账");
                     crate::index_watch::start_polling_fallback(pool.clone(), root.clone());
@@ -77,7 +101,7 @@ fn spawn_reconcile_and_watch(
 }
 
 /// 从状态里取根与索引库；两者齐备才启动后台任务。
-fn reconcile_after_open(state: &AppState, app: &AppHandle) {
+pub(crate) fn reconcile_after_open(state: &AppState, app: &AppHandle) {
     let Ok(root) = super::paths::root_of(state) else {
         return;
     };
