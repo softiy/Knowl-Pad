@@ -97,8 +97,19 @@ pub async fn file_tree(
     if !include_hidden {
         if let Some(pool) = state.index_db() {
             if crate::storage::index_query::has_rows(&pool) {
-                let entries =
+                let mut entries =
                     crate::storage::index_query::list_children(&pool, &rel).map_err(KpError)?;
+                // M2 复核 blocker：索引只记文件，**空目录无法表达**（新建文件夹后树里不出现）。
+                // 补一次单层目录扫描并并入；忽略集与索引相同，故两种模式只有 include_hidden 一个差异。
+                let scanned = tauri::async_runtime::spawn_blocking({
+                    let root = root.clone();
+                    let rel = rel.clone();
+                    move || file_tree::list_dir(&root, &rel, false)
+                })
+                .await
+                .unwrap_or_else(|_| Ok(Vec::new()))
+                .unwrap_or_default();
+                crate::storage::index_query::merge_scanned_dirs(&mut entries, scanned);
                 return Ok(entries.into_iter().map(FileNode::from).collect());
             }
         }

@@ -23,6 +23,33 @@ pub fn has_rows(pool: &DbPool) -> bool {
     .unwrap_or(false)
 }
 
+/// 把**直读扫描**到的目录并入索引推导出的条目（M2 复核 blocker 的修法）。
+///
+/// 为什么需要它：索引只记录**文件**，目录节点靠路径前缀推导 → **没有任何文件的目录**
+/// （新建的空文件夹，FR-FILE-11 / AC-FILE-10）在树里永远不出现。修法是索引视角补一次**单层**目录扫描，
+/// 并按索引相同的忽略集过滤，使两种模式只有 `include_hidden` 一个差异。
+///
+/// 纯函数，便于回归（命令层无法单测，见 DEBT-14）。
+pub fn merge_scanned_dirs(entries: &mut Vec<FileEntry>, scanned: Vec<FileEntry>) {
+    for e in scanned {
+        if !e.is_dir {
+            continue; // 文件仍以索引为准
+        }
+        if crate::index_engine::is_ignored_dir(&e.name) {
+            continue; // 与索引同一忽略集，避免两种模式结论相反
+        }
+        if entries.iter().any(|x| x.is_dir && x.name == e.name) {
+            continue; // 索引已推导出同名目录
+        }
+        entries.push(e);
+    }
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+}
+
 /// 列出某个目录下的直接子项（由索引库推导）。`parent_rel` 为空表示 Vault 根。
 pub fn list_children(pool: &DbPool, parent_rel: &str) -> Result<Vec<FileEntry>, AppError> {
     let prefix = if parent_rel.is_empty() {
