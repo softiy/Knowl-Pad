@@ -48,13 +48,20 @@ fn apply_writes_all_and_keeps_backups() {
         "未命中的文件不得改动"
     );
 
-    let backups_in_dir: Vec<_> = fs::read_dir(&report.backup_dir)
+    // 断言必须与 read_dir 的返回顺序**无关**：CI 上这里先返回了 b.md 的备份，
+    // 而 b 的原文是 [[A#标题]]（不含 [[A]] 字面量），本地恰好顺序相反 —— 靠运气的断言不算断言。
+    let mut backups: Vec<String> = fs::read_dir(&report.backup_dir)
         .expect("读备份目录")
         .filter_map(|e| e.ok())
+        .map(|e| fs::read_to_string(e.path()).expect("读备份"))
         .collect();
-    assert_eq!(backups_in_dir.len(), 2, "每个被改文件都要有一份备份");
-    let first = fs::read_to_string(backups_in_dir[0].path()).expect("读备份");
-    assert!(first.contains("[[A]]"), "备份里必须是**改写前**的内容");
+    backups.sort();
+    let mut expected = vec![
+        "甲见 [[A]] 与 [[A|别名]]\n".to_string(),
+        "乙见 [[A#标题]]\n".to_string(),
+    ];
+    expected.sort();
+    assert_eq!(backups, expected, "备份集合必须**恰好**是改写前的两份原文");
 }
 
 /// **全有或全无**：第二个文件落地失败时，第一个文件必须被还原成原文。
