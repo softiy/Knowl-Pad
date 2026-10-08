@@ -98,6 +98,8 @@ pub struct AmbiguousItem {
     pub target_ref: String,
     pub candidates: Vec<String>,
     pub ref_count: u32,
+    /// 逐条指定目标时用的 link.id（FR-LINK-22 / AC-LINK-05）
+    pub link_ids: Vec<i64>,
 }
 
 #[derive(Serialize)]

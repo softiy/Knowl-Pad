@@ -58,17 +58,18 @@ pub fn ambiguous_rows(pool: &DbPool) -> Result<Vec<AmbiguousRow>, AppError> {
     pool.with_reader(|conn| {
         let mut stmt = conn
             .prepare(
-                "SELECT target_ref, COUNT(*) FROM link WHERE status = 'ambiguous' \
+                // 一并取回各条的 link.id：面板要逐条"指定目标"，而 link_resolve_ambiguous 收的是 link_id
+                "SELECT target_ref, COUNT(*), group_concat(id) FROM link WHERE status = 'ambiguous' \
                  GROUP BY target_ref ORDER BY target_ref",
             )
             .map_err(|_| AppError::db("准备歧义查询失败"))?;
-        let groups: Vec<(String, i64)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        let groups: Vec<(String, i64, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
             .map_err(|_| AppError::db("执行歧义查询失败"))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| AppError::db("读取歧义结果失败"))?;
         let mut out = Vec::new();
-        for (target_ref, ref_count) in groups {
+        for (target_ref, ref_count, ids) in groups {
             // 候选 = 与 target_ref 的最后一段（去 .md）大小写不敏感同名的笔记（FR-LINK-02 ②）
             let stem = target_ref
                 .rsplit('/')
@@ -86,10 +87,17 @@ pub fn ambiguous_rows(pool: &DbPool) -> Result<Vec<AmbiguousRow>, AppError> {
                 .map_err(|_| AppError::db("执行候选查询失败"))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|_| AppError::db("读取候选结果失败"))?;
+            // group_concat 返回逗号分隔；解析失败（理论上不会）时给空列表而不是 panic
+            let link_ids: Vec<i64> = ids
+                .unwrap_or_default()
+                .split(',')
+                .filter_map(|s| s.trim().parse::<i64>().ok())
+                .collect();
             out.push(AmbiguousRow {
                 target_ref,
                 candidates,
                 ref_count: ref_count as u32,
+                link_ids,
             });
         }
         Ok(out)

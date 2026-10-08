@@ -285,3 +285,37 @@ fn link_by_id_returns_source_and_position() {
         "不存在的 id 应为 None"
     );
 }
+
+/// **FR-LINK-22 / AC-LINK-05 的关键接口**：歧义行必须带上各条的 **link.id** ——
+/// 面板要逐条"指定目标"，而 \`link_resolve_ambiguous { link_id, target_rel_path }\` 收的正是 link_id。
+/// 没有它，UI 只能"整组"处理，做不到 AC-LINK-04 的"为其中一条指定"。
+#[test]
+fn ambiguous_rows_carry_link_ids() {
+    let f = fixture(
+        &[
+            ("f1/note.md", "note.md", "note", "note"),
+            ("f2/note.md", "note.md", "note", "note"),
+            ("src.md", "src.md", "src", "note"),
+        ],
+        &[
+            ("src.md", None, "note", "ambiguous", "wikilink", 1, 1),
+            ("src.md", None, "note", "ambiguous", "wikilink", 3, 1),
+        ],
+    );
+    let rows = ambiguous_rows(&f.pool).expect("查询歧义");
+    assert_eq!(rows.len(), 1, "同目标名归一组");
+    assert_eq!(rows[0].ref_count, 2);
+    assert_eq!(rows[0].link_ids.len(), 2, "两条链接的 id 都要带上");
+    // 每个 id 都必须能反查到来源与位置（命令层就是靠这个定位的）
+    for id in &rows[0].link_ids {
+        let row = link_by_id(&f.pool, *id)
+            .expect("按 id 查")
+            .expect("必须存在");
+        assert_eq!(row.0, "src.md");
+        assert!(row.1 >= 1 && row.2 >= 1, "行列应为 1-based");
+    }
+    assert!(
+        rows[0].link_ids[0] != rows[0].link_ids[1],
+        "两个 id 不应相同"
+    );
+}

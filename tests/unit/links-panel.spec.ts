@@ -15,6 +15,7 @@ const hoisted = vi.hoisted(() => ({
   preview: vi.fn(),
   apply: vi.fn(),
   rollback: vi.fn(),
+  resolveAmbiguous: vi.fn(),
 }));
 
 vi.mock('@core/ipc/linkCommands', () => ({
@@ -25,6 +26,7 @@ vi.mock('@core/ipc/linkCommands', () => ({
   linkRewritePreview: hoisted.preview,
   linkRewriteApply: hoisted.apply,
   linkRewriteRollback: hoisted.rollback,
+  linkResolveAmbiguous: hoisted.resolveAmbiguous,
 }));
 vi.mock('@core/ipc/events', () => ({
   onIndexCompleted: vi.fn(async () => () => {}),
@@ -47,11 +49,12 @@ describe('链接面板', () => {
       ] },
     ]);
     hoisted.dangling.mockReset().mockResolvedValue({ items: [{ targetRef: 'missing', refCount: 4, sourceCount: 2, sampleSources: ['a.md'] }], total: 1 });
-    hoisted.ambiguous.mockReset().mockResolvedValue({ items: [{ targetRef: 'note', candidates: ['f1/note.md', 'f2/note.md'], refCount: 10 }], total: 1 });
+    hoisted.ambiguous.mockReset().mockResolvedValue({ items: [{ targetRef: 'note', candidates: ['f1/note.md', 'f2/note.md'], refCount: 10, linkIds: [11, 12] }], total: 1 });
     hoisted.orphans.mockReset().mockResolvedValue({ items: ['solo.md'], total: 1 });
     hoisted.preview.mockReset();
     hoisted.apply.mockReset();
     hoisted.rollback.mockReset();
+    hoisted.resolveAmbiguous.mockReset().mockResolvedValue({ operationId: 'op-x', fileCount: 1, spanCount: 1 });
   });
 
   it('四个页签显示各自的计数', async () => {
@@ -83,13 +86,24 @@ describe('链接面板', () => {
     expect(hoisted.backlinks).not.toHaveBeenCalled();
   });
 
-  it('歧义页签列出候选（逐条指定目标已登记顺延）', async () => {
+  it('歧义页签列出候选，并可**逐条**指定目标（FR-LINK-22 / AC-LINK-05）', async () => {
     const w = mount(LinksPanel, { props: {} });
     await flushPromises();
     await w.get('[data-testid="links-tab-ambiguous"]').trigger('click');
     expect(w.get('[data-testid="ambiguous-item"]').text()).toContain('10 处引用');
     expect(w.get('[data-testid="ambiguous-item"]').text()).toContain('f1/note.md');
-    expect(w.find('[data-testid="ambiguous-deferred"]').exists()).toBe(true);
+
+    // 未选目标时按钮禁用
+    const button = w.get('[data-testid="ambiguous-resolve"]');
+    expect(button.attributes('disabled')).toBeDefined();
+
+    await w.get('[data-testid="ambiguous-choose"]').setValue('f2/note.md');
+    await w.get('[data-testid="ambiguous-resolve"]').trigger('click');
+    await flushPromises();
+    // 该组两条链接都要**各自**调用一次（后端按 link_id 精确改那一处）
+    expect(hoisted.resolveAmbiguous).toHaveBeenCalledTimes(2);
+    expect(hoisted.resolveAmbiguous).toHaveBeenCalledWith(11, 'f2/note.md');
+    expect(hoisted.resolveAmbiguous).toHaveBeenCalledWith(12, 'f2/note.md');
   });
 });
 

@@ -138,6 +138,7 @@ pub async fn link_ambiguous_list(state: State<'_, AppState>) -> Result<Ambiguous
             target_ref: r.target_ref,
             candidates: r.candidates,
             ref_count: r.ref_count,
+            link_ids: r.link_ids,
         })
         .collect();
     Ok(AmbiguousPage {
