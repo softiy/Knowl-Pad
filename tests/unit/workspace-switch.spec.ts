@@ -5,8 +5,14 @@ vi.mock('@features/vault', async () => {
   // 真实项目用 Pinia store（ref 会被自动解包），这里用 reactive 复现同样的语义：
   // 组件模板写的是 `vaultStore.current.displayName`，裸 ref 会得到 undefined。
   const { ref, reactive } = await import('vue');
-  const VAULT = { root: 'C:/vaults/notes', displayName: '我的知识库', vaultId: 1, caseInsensitiveFs: true };
-  const current = ref<typeof VAULT | null>({ ...VAULT });
+  // 注意：vi.mock 的工厂会被提升，**不能**引用模块作用域的变量（会 ReferenceError），
+  // 所以这里的字面量与文件下方的 VAULT 常量保持一致（重复是刻意的）。
+  const current = ref<{
+    root: string;
+    displayName: string;
+    vaultId: number;
+    caseInsensitiveFs: boolean;
+  } | null>({ root: 'C:/vaults/notes', displayName: '我的知识库', vaultId: 1, caseInsensitiveFs: true });
   const error = ref<string | null>(null);
   const store = reactive({
     current,
@@ -18,6 +24,9 @@ vi.mock('@features/vault', async () => {
   });
   return { useVaultStore: () => store };
 });
+
+/** 供 beforeEach 重置 mock 用（形状与 mock 工厂内的一致）。 */
+const VAULT = { root: 'C:/vaults/notes', displayName: '我的知识库', vaultId: 1, caseInsensitiveFs: true };
 
 const saveAll = vi.fn(async () => {});
 const dirtyFlag = { value: false };
