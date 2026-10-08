@@ -1,5 +1,4 @@
 //! 索引域命令（PRD §5.3.7）。
-//!
 //! M3 WP1 先落两个**诊断类**命令（可直接实现、无副作用）：签名信息与实体计数。
 //! `index_rebuild` / `index_cancel` 依赖索引引擎（M3 WP4），随该工作包落地。
 
@@ -93,8 +92,6 @@ pub(crate) fn signature_info(
 ) -> SignatureInfo {
     let expected = IndexSignature::current(root);
     // M3 复核 M3：此前把 meta 里的 64 位十六进制 digest 当 JSON 解析 → 恒 None →
-    // matched 恒 false → 每次打开 Vault 都误发 kp://index/rebuild-required。
-    // 改为按字段读取（复用 storage 层的 stored_signature，它对每个字段分别 read_meta）。
     let stored = pool.and_then(|p| {
         p.with_reader(crate::storage::index::stored_signature)
             .ok()
@@ -238,6 +235,7 @@ pub async fn index_rebuild(
                     }
                 }
             }
+            state.set_index_ready(true); // 索引已建立（M3 复核 M3-8）
             let _ = app.emit(
                 "kp://index/completed",
                 IndexCompleted {

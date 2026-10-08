@@ -15,6 +15,11 @@ pub struct AppState {
     current_vault_id: Mutex<Option<i64>>,
     /// 索引取消请求（FR-VAULT-09 / AC-VAULT-05）；由 index_cancel 置位、索引循环在批间检查并清除。
     index_cancel: AtomicBool,
+    /// 索引是否**可用**（M3 复核 M3-8：`IndexStatus.ready` 此前恒为 true）。
+    ///
+    /// 判据来自存储层自己的重建判定（`RebuildOutcome::Untouched` 表示索引文件被保留、
+    /// 即确实建立过；`Fresh`/`Rebuilt` 表示刚被新建或丢弃重建，此时索引还是空的）。
+    index_ready: AtomicBool,
     /// 当前 Vault 的文件监听句柄（M3 WP5）；关闭 Vault 或重新打开时替换/停止。
     watcher: Mutex<Option<crate::index_watch::WatcherHandle>>,
     /// 该句柄监听的 Vault 根（M3 复核 blocker 修复）：
@@ -40,6 +45,16 @@ impl AppState {
     }
 
     /// 记录/清除当前 Vault 的索引库句柄（关闭 Vault 时传 None）。
+    /// 写入索引可用标记（由打开 Vault 与全量重建两条路径调用）。
+    pub fn set_index_ready(&self, ready: bool) {
+        self.index_ready.store(ready, Ordering::SeqCst);
+    }
+
+    /// 索引当前是否可用。
+    pub fn index_ready(&self) -> bool {
+        self.index_ready.load(Ordering::SeqCst)
+    }
+
     pub fn set_index_db(&self, pool: Option<Arc<DbPool>>) {
         if let Ok(mut guard) = self.index_db.lock() {
             *guard = pool;

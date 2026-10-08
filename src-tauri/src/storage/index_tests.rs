@@ -373,3 +373,41 @@ fn fts_special_characters_do_not_error() {
     });
     assert!(res.is_ok(), "元字符输入不得导致 SQL 错误：{res:?}");
 }
+
+/// **M3 复核 M3-8 的判据回归**：`ready` 必须来自存储层自己的判定，而不是"meta 里有没有记录"
+/// —— 后者恒为真（`bootstrap` 开库时无条件 `write_meta`），上一轮就是被这一点推翻的。
+#[test]
+fn open_with_outcome_reports_unchanged_only_after_an_index_exists() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    std::fs::write(root.join("a.md"), "# 甲\n").expect("写笔记");
+
+    // 第一次：索引库不存在 → Fresh（此时**尚不可用**，ready 应为 false）
+    let (pool, first) = crate::storage::index::open_with_outcome(&root).expect("首次打开");
+    assert!(
+        matches!(first, RebuildOutcome::Fresh),
+        "首次打开应为 Fresh，实际 {first:?}"
+    );
+    drop(pool);
+
+    // 第二次：索引库已在 → 判定应为 Unchanged（文件被保留）
+    let (pool, second) = crate::storage::index::open_with_outcome(&root).expect("再次打开");
+    assert!(
+        matches!(second, RebuildOutcome::Unchanged),
+        "既有索引库应为 Unchanged，实际 {second:?}"
+    );
+
+    // 而 meta 是否存在**不能**区分这两种情形 —— 这正是判据被推翻的原因
+    let (sig, built) = pool
+        .with_reader(|conn| {
+            Ok((
+                crate::storage::index::read_meta(conn, "index_signature")?,
+                crate::storage::index::read_meta(conn, "built_at")?,
+            ))
+        })
+        .expect("读 meta");
+    assert!(
+        sig.is_some() && built.is_some(),
+        "两次打开后 meta 都已存在，所以「meta 存在」不构成判据"
+    );
+}

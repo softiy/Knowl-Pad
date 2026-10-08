@@ -14,8 +14,6 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 
 /// 打开/新建 Vault 后的后台任务：**先做 mtime 对账**（跳过未变更），**再启动文件监听**。
-///
-/// 之所以放在后台：对账要遍历整库（可能上万文件），不能阻塞 open 命令返回。
 /// 监听启动失败（如 inotify watch 耗尽）则退化为 5s 轮询对账（NFR-PLAT-09）。
 fn spawn_reconcile_and_watch(
     app: AppHandle,
@@ -24,8 +22,6 @@ fn spawn_reconcile_and_watch(
 ) {
     tauri::async_runtime::spawn(async move {
         // FR-SIG-01：签名不匹配（或缺失）时**先发 kp://index/rebuild-required**，
-        // 让 UI 有机会提示"需要重建索引"，再开始对账。
-        // 独立审查 major #2 指出：该事件此前在整个仓库里没有任何 emit ✗。
         let sig = crate::commands::index::signature_info(&root, Some(&pool));
         if !sig.matched {
             let _ = app.emit(
@@ -85,8 +81,6 @@ fn spawn_reconcile_and_watch(
         }
         let state = app.state::<AppState>();
         // M3 复核 blocker 修复：监听是「每个 Vault 一个」。此前用不带 root 的
-        // has_watcher() 判定，切到另一个 Vault 时会误判"已在监听" → 新 Vault 永不启动监听、
-        // 旧 watcher 继续写旧库。现在按 root 判定：同一 Vault 重开则复用，换了 Vault 则先停再起。
         if !state.has_watcher_for(&root) {
             state.stop_watcher();
             match start_watcher(pool.clone(), root.clone(), app.clone()) {
@@ -301,7 +295,8 @@ pub async fn index_status(state: tauri::State<'_, AppState>) -> Result<IndexStat
     Ok(IndexStatus {
         index_dir,
         index_db,
-        ready: true,
+        // M3 复核 M3-8：ready 表示**索引可用**，判据来自存储层（见 state::index_ready）。
+        ready: state.index_ready(),
         schema_version: schema_version.and_then(|raw| raw.parse().ok()),
         signature_prefix: signature.map(|raw| raw.chars().take(12).collect()),
         built_at: built_at.and_then(|raw| raw.parse().ok()),
