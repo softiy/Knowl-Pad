@@ -14,16 +14,14 @@ const hoisted = vi.hoisted(() => ({
   indexCancel: vi.fn(),
 }));
 
-vi.mock('@core/ipc/commands', async () => {
-  const actual = await vi.importActual<typeof import('@core/ipc/commands')>('@core/ipc/commands');
-  return {
-    ...actual,
-    indexStatus: hoisted.indexStatus,
-    indexStats: hoisted.indexStats,
-    indexRebuild: hoisted.indexRebuild,
-    indexCancel: hoisted.indexCancel,
-  };
-});
+// 只替换这四个命令：组件不需要同模块的其它导出（类型在编译期擦除），
+// 因此不必 importActual —— 那会触发项目的 @typescript-eslint/consistent-type-imports。
+vi.mock('@core/ipc/commands', () => ({
+  indexStatus: hoisted.indexStatus,
+  indexStats: hoisted.indexStats,
+  indexRebuild: hoisted.indexRebuild,
+  indexCancel: hoisted.indexCancel,
+}));
 
 vi.mock('@core/ipc/events', () => ({
   onIndexProgress: vi.fn(async () => () => {}),
