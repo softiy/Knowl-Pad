@@ -223,3 +223,63 @@ fn attachment_is_indexed_without_full_text() {
     assert_eq!(files, 6, "四篇笔记 + note.txt + 图片.png");
     assert_eq!(fts, 4, "只有四篇 .md 进全文索引，附件不进");
 }
+
+/// **MD-WL-04 矩阵**：同目录优先 → 更浅路径优先 → 等深并列仍 ambiguous（不猜）。
+#[test]
+fn md_wl_04_disambiguation_prefers_same_dir_then_shallower_path() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path();
+    // 三个同名笔记，深度分别为 0 / 1 / 2
+    write_note(root, "note.md", "# 根\n");
+    write_note(root, "sub/note.md", "# 一层\n");
+    write_note(root, "deep/x/note.md", "# 两层\n");
+    // 三个不同目录的来源，各自指向 [[note]]
+    write_note(root, "sub/src.md", "见 [[note]]\n");
+    write_note(root, "deep/x/src.md", "见 [[note]]\n");
+    write_note(root, "elsewhere/src.md", "见 [[note]]\n");
+    let pool = open(root).expect("建索引库");
+    full_index(&pool, root, |_, _| {}).expect("全量索引");
+    let judge_of = |src: &str| -> (String, Option<String>) {
+        pool.with_reader(|conn| {
+            conn.query_row(
+                "SELECT l.status, d.rel_path FROM link l \
+                 JOIN file f ON f.id = l.src_file_id \
+                 LEFT JOIN file d ON d.id = l.dst_file_id \
+                 WHERE f.rel_path = ?1 AND l.target_ref = 'note'",
+                rusqlite::params![src],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .map_err(|_| kp_domain::error::AppError::db("读裁决"))
+        })
+        .expect("读裁决")
+    };
+    // ① 同目录优先：sub/src.md 应命中 sub/note.md（尽管根部的 note.md 更浅）
+    let (st, dst) = judge_of("sub/src.md");
+    assert_eq!(st, "resolved", "同目录候选应胜出");
+    assert_eq!(dst.as_deref(), Some("sub/note.md"));
+    // ② 同目录优先：deep/x/src.md 应命中 deep/x/note.md（尽管它最深）
+    let (st, dst) = judge_of("deep/x/src.md");
+    assert_eq!(st, "resolved", "同目录候选应胜出（即使它更深）");
+    assert_eq!(dst.as_deref(), Some("deep/x/note.md"));
+    // ③ 无同目录候选 → 取更浅者：elsewhere/ 的链接应命中根部的 note.md
+    let (st, dst) = judge_of("elsewhere/src.md");
+    assert_eq!(st, "resolved", "无同目录候选时应取路径更浅者");
+    assert_eq!(dst.as_deref(), Some("note.md"));
+    // ④ 等深并列 → 不猜（构造两个等深的同名笔记，来源在第三个目录）
+    write_note(root, "p1/dup.md", "# 甲\n");
+    write_note(root, "p2/dup.md", "# 乙\n");
+    write_note(root, "p3/srcdup.md", "见 [[dup]]\n");
+    full_index(&pool, root, |_, _| {}).expect("再次索引");
+    let dup = pool
+        .with_reader(|conn| {
+            conn.query_row(
+                "SELECT l.status FROM link l JOIN file f ON f.id = l.src_file_id \
+                 WHERE f.rel_path = 'p3/srcdup.md' AND l.target_ref = 'dup'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(|_| kp_domain::error::AppError::db("读裁决"))
+        })
+        .expect("读裁决");
+    assert_eq!(dup, "ambiguous", "等深并列不得猜");
+}
