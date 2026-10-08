@@ -20,7 +20,7 @@ use kp_domain::tokenize;
 
 use crate::storage::pool::DbPool;
 
-/// 遍历时永远跳过的目录（与监听侧共用）。
+/// 遍历时永远跳过的目录（与监听侧共用；文件树也复用它保持同一套真相）。
 pub const IGNORED_DIRS: [&str; 4] = [".knowlpad", ".obsidian", ".git", "node_modules"];
 /// 超过此大小的笔记跳过（SEC-11）。
 pub const MAX_NOTE_BYTES: u64 = 5 * 1024 * 1024;
@@ -55,7 +55,6 @@ fn mtime_ms(path: &Path) -> i64 {
         .unwrap_or(0)
 }
 
-/// 遍历 Vault，产出待索引的 `.md` 清单（跳过忽略目录、临时文件与超限文件）。
 pub fn scan_vault(root: &Path) -> Result<(Vec<ScanEntry>, Vec<String>), AppError> {
     let mut entries = Vec::new();
     let mut warnings = Vec::new();
@@ -105,6 +104,11 @@ pub fn scan_vault(root: &Path) -> Result<(Vec<ScanEntry>, Vec<String>), AppError
     Ok((entries, warnings))
 }
 
+/// 该目录名是否在索引忽略集里（文件树复用，避免两套真相）。
+pub fn is_ignored_dir(name: &str) -> bool {
+    IGNORED_DIRS.iter().any(|d| d.eq_ignore_ascii_case(name))
+}
+
 /// 简易内容指纹（FNV-1a 64）：仅供增量索引判断「内容是否变化」，不承担安全用途。
 pub fn content_fingerprint(bytes: &[u8]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -115,7 +119,6 @@ pub fn content_fingerprint(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
-/// 索引里的 kind 取值：`.md` 为 note，常见附件为 attachment，其余为 other。
 fn kind_of(rel_path: &str) -> &'static str {
     let ext = rel_path.rsplit('.').next().unwrap_or("").to_lowercase();
     if ext == "md" {
@@ -147,7 +150,6 @@ pub enum IndexMode {
     SkipUnchanged,
 }
 
-/// 索引单个文件（调用方负责事务边界）。生产路径走 `index_file_mode`，这里只给测试用。
 #[allow(dead_code)]
 pub fn index_file(conn: &Connection, root: &Path, entry: &ScanEntry) -> Result<(), AppError> {
     index_file_mode(conn, root, entry, IndexMode::Force).map(|_| ())

@@ -1,11 +1,12 @@
 //! 文件树的索引数据源测试（M3 PR-6 / **AC-FILE-06** 的后端度量）。
 
+use kp_domain::file_tree::{FileEntry, FileKind};
 use std::time::Instant;
 
 use rusqlite::params;
 
 use crate::storage::index::open;
-use crate::storage::index_query::{has_rows, list_children};
+use crate::storage::index_query::{has_rows, list_children, merge_scanned_dirs};
 use kp_domain::error::AppError;
 
 fn seed(pool: &crate::storage::pool::DbPool, rel_path: &str, kind: &str) {
@@ -101,4 +102,70 @@ fn ac_file_06_listing_scales_to_10k_files() {
     assert_eq!(sub.len(), 100);
     assert!(root_ms < 2000, "根目录列举 {root_ms} ms 过慢");
     assert!(sub_ms < 2000, "子目录列举 {sub_ms} ms 过慢");
+}
+fn dir_entry(name: &str) -> FileEntry {
+    FileEntry {
+        rel_path: name.to_string(),
+        name: name.to_string(),
+        is_dir: true,
+        kind: FileKind::Other,
+        size_bytes: None,
+        mtime_ms: None,
+        has_children: Some(false),
+    }
+}
+
+/// **M2 复核 blocker 的回归**：索引只记文件，所以"没有任何文件的目录"必须靠单层扫描补进来，
+/// 否则新建空文件夹后文件树里永远不出现（FR-FILE-11 / AC-FILE-10）。
+#[test]
+fn empty_directory_from_scan_is_merged_into_index_view() {
+    let mut entries: Vec<FileEntry> = Vec::new(); // 索引视角：该层什么都没有
+    merge_scanned_dirs(&mut entries, vec![dir_entry("新建文件夹")]);
+    assert_eq!(entries.len(), 1, "空目录必须被并入");
+    assert!(entries[0].is_dir);
+    assert_eq!(entries[0].name, "新建文件夹");
+}
+
+/// 与索引共用同一忽略集：避免"索引模式隐藏、直读模式显示"的两套真相。
+#[test]
+fn ignored_directories_are_not_merged() {
+    let mut entries: Vec<FileEntry> = Vec::new();
+    merge_scanned_dirs(
+        &mut entries,
+        vec![
+            dir_entry("node_modules"),
+            dir_entry(".obsidian"),
+            dir_entry("docs"),
+        ],
+    );
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["docs"],
+        "索引忽略的目录不得由直读补回来；实际 {names:?}"
+    );
+}
+
+/// 索引已经推导出同名目录时不重复；且并入后仍保持"目录在前、名称不区分大小写升序"。
+#[test]
+fn merge_deduplicates_and_keeps_order() {
+    let mut entries: Vec<FileEntry> = vec![
+        FileEntry {
+            rel_path: "b.md".into(),
+            name: "b.md".into(),
+            is_dir: false,
+            kind: FileKind::Note,
+            size_bytes: None,
+            mtime_ms: None,
+            has_children: None,
+        },
+        dir_entry("alpha"),
+    ];
+    merge_scanned_dirs(&mut entries, vec![dir_entry("alpha"), dir_entry("Beta")]);
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["alpha", "Beta", "b.md"],
+        "目录在前、去重、按小写升序；实际 {names:?}"
+    );
 }
