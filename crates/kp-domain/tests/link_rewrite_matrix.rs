@@ -144,3 +144,46 @@ fn link_ids_are_bidirectionally_accounted_for() {
         "夹具引用了 PRD 中不存在的编号：{phantom:?}"
     );
 }
+
+/// **测试集先行终于兑现**：让矩阵里的每一条用例直接驱动 `link_rewrite::rewrite_references`。
+///
+/// 这是 M4 最初那批交付（夹具 + 清点）的用途 —— 实现写完后，15 条用例（含 5 条"必须不动"）
+/// 就是判据：任何一条红都说明改写器会损坏用户文件或漏改。
+#[test]
+fn matrix_cases_drive_the_rewriter() {
+    let json = load_cases();
+    let from = json["meta"]["rename"]["from"]
+        .as_str()
+        .expect("夹具要给出 rename.from");
+    let to = json["meta"]["rename"]["to"]
+        .as_str()
+        .expect("夹具要给出 rename.to");
+    let cases = json["cases"].as_array().expect("cases 必须是数组");
+    let mut failures: Vec<String> = Vec::new();
+    for c in cases {
+        let id = c["id"].as_str().unwrap();
+        let input = c["input"].as_str().unwrap();
+        let expected = c["expected"].as_str().unwrap();
+        let should = c["shouldRewrite"].as_bool().unwrap();
+        let (got, changed) = kp_domain::link_rewrite::rewrite_references(input, from, to);
+        if got != expected {
+            failures.push(format!(
+                "{id}: 期望 {expected:?}，实际 {got:?}（改写 {changed} 处）"
+            ));
+        }
+        if should && changed == 0 {
+            failures.push(format!("{id}: 声明应改写，但实际改写 0 处"));
+        }
+        if !should && changed != 0 {
+            failures.push(format!(
+                "{id}: 声明**不得**改写（受保护上下文），但实际改了 {changed} 处"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "改写矩阵有 {} 条不达标：\n  {}",
+        failures.len(),
+        failures.join("\n  ")
+    );
+}
