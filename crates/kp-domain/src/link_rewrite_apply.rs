@@ -128,3 +128,52 @@ pub fn apply(root: &Path, plan: &RewritePlan, backup_root: &Path) -> Result<Appl
         backup_dir,
     })
 }
+
+/// **重命名 + 链接改写作为一次原子操作**（FR-FILE-22）。
+///
+/// 要求的顺序不是随便定的：如果**先改写再改名**，中间就会出现"链接已指向新名、文件仍是旧名"
+/// 的状态 —— 那正是 FR-FILE-22 明文**严禁**的。因此顺序固定为：
+///
+/// 1. 生成计划（只读，失败不留痕）；
+/// 2. **先改名**（失败则一处链接都不动）；
+/// 3. 再落地改写（失败则由 `apply` 还原已改文件，并把**改名撤销**）。
+///
+/// 返回（落地报告, 改名后的相对路径）。
+pub fn rename_with_rewrite(
+    root: &Path,
+    from_rel: &str,
+    to_rel: &str,
+    rel_paths: &[String],
+    backup_root: &Path,
+) -> Result<(ApplyReport, String), AppError> {
+    // ① 计划：大小写不敏感的匹配由改写器内部按**词干**处理；这里传原样路径，
+    // 新引用的**大小写属于用户的新名**（预先小写会把 B.md 写成 [[b]]）。
+    let plan = plan_rename(root, from_rel, to_rel, rel_paths)?;
+
+    // ② 先改名（含父目录创建，供移动场景复用）
+    let from_abs = root.join(from_rel);
+    let to_abs = root.join(to_rel);
+    if let Some(parent) = to_abs.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AppError::IoFailure(format!("创建目标目录失败：{e}")))?;
+    }
+    if !from_abs.exists() {
+        return Err(AppError::FileNotFound(from_rel.to_string()));
+    }
+    std::fs::rename(&from_abs, &to_abs).map_err(|e| AppError::io_at(to_rel, &e))?;
+
+    // ③ 再改写；失败则撤销改名（apply 内部已把已改文件还原）
+    match apply(root, &plan, backup_root) {
+        Ok(report) => Ok((report, to_rel.to_string())),
+        Err(err) => {
+            if let Err(undo) = std::fs::rename(&to_abs, &from_abs) {
+                return Err(AppError::IoFailure(format!(
+                    "改写失败且撤销改名也失败（{err}）；文件可能停在 {to_rel}：{undo}"
+                )));
+            }
+            Err(AppError::IoFailure(format!(
+                "改写失败，已撤销改名并还原所有文件：{err}"
+            )))
+        }
+    }
+}
