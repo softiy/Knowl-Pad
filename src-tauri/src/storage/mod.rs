@@ -9,6 +9,8 @@ pub mod index_query;
 pub mod index_rebuild;
 pub mod index_schema;
 pub mod link_query;
+pub mod link_query_notes;
+pub mod link_query_types;
 pub mod migrate;
 pub mod pool;
 pub mod pragma;
