@@ -54,6 +54,9 @@ pub async fn note_read(
     let rel_path = args.rel_path;
     let rel_for_result = rel_path.clone();
     let task = tauri::async_runtime::spawn_blocking(move || {
+        // M3 复核 M3-6 / DEBT-16 残余：写笔记此前**绕过**受保护目录护栏
+        // （四个 file_ops 写入口都调 ensure_writable，只有这里没有）。
+        kp_domain::file_ops::ensure_writable(&rel_path)?;
         let path = resolve_in(&root, &rel_path)?;
         let bytes = note_io::read_note(&path)?;
         let content = String::from_utf8(bytes).map_err(|err| {
