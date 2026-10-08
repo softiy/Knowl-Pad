@@ -10,6 +10,7 @@ pub mod fs_atomic;
 pub mod link_rewrite;
 pub mod link_rewrite_apply;
 pub mod link_rewrite_protect;
+pub mod link_rewrite_single;
 pub mod md_parse;
 pub mod note_io;
 pub mod path_guard;

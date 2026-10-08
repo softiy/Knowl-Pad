@@ -4,6 +4,7 @@ pub mod index;
 #[cfg(test)]
 mod index_tests;
 pub mod link;
+pub mod link_resolve;
 pub mod link_rewrite;
 pub mod link_rewrite_store;
 pub mod link_view;

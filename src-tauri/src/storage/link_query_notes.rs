@@ -110,3 +110,31 @@ pub fn files_referencing(pool: &DbPool, target_stem: &str) -> Result<Vec<String>
         Ok(out)
     })
 }
+
+/// 按 `link.id` 取一条链接的来源文件与位置（FR-LINK-22 的 `link_resolve_ambiguous` 用）。
+pub fn link_by_id(
+    pool: &DbPool,
+    link_id: i64,
+) -> Result<Option<(String, u32, u32, String)>, AppError> {
+    pool.with_reader(|conn| {
+        conn.query_row(
+            "SELECT f.rel_path, l.line, l.col, l.target_ref
+             FROM link l JOIN file f ON f.id = l.src_file_id
+             WHERE l.id = ?1",
+            rusqlite::params![link_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, u32>(1)?,
+                    r.get::<_, u32>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(AppError::db(&format!("按 id 取链接失败：{other}"))),
+        })
+    })
+}
