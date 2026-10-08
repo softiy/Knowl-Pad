@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use kp_domain::link_rewrite_apply::{apply, plan_rename};
+use kp_domain::link_rewrite_apply::{apply, plan_rename, rename_with_rewrite};
 
 fn write(root: &Path, rel: &str, content: &str) {
     let path = root.join(rel);
@@ -101,4 +101,84 @@ fn empty_plan_writes_nothing() {
     assert_eq!(report.files, 0);
     assert!(!backups.exists(), "空计划不应产生备份目录");
     assert_eq!(read(&root, "c.md"), "丙没有任何链接\n");
+}
+
+/// **FR-FILE-22 的联合原子性**：重命名与改写同属一次操作，严禁出现
+/// 「链接已指向新名、文件仍旧名」的中间态。
+mod joint {
+    use super::*;
+
+    fn setup() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let root = dir.path().join("vault");
+        let backups = dir.path().join("backups");
+        fs::create_dir_all(&root).expect("建 vault");
+        write(&root, "A.md", "# 甲\n");
+        write(&root, "one.md", "见 [[A]]\n");
+        write(&root, "two.md", "也见 [[A|别名]]\n");
+        (dir, root, backups)
+    }
+
+    /// ① 正常路径：改名成功、链接全部改写、备份都在。
+    #[test]
+    fn success_renames_and_rewrites_together() {
+        let (_d, root, backups) = setup();
+        let rels = vec!["one.md".to_string(), "two.md".to_string()];
+        let (report, new_rel) =
+            rename_with_rewrite(&root, "A.md", "B.md", &rels, &backups).expect("联合操作应成功");
+        assert_eq!(new_rel, "B.md");
+        assert_eq!(report.files, 2, "两个文件各有一处链接");
+        assert!(root.join("B.md").exists(), "文件应已改名");
+        assert!(!root.join("A.md").exists(), "旧名不应再存在");
+        assert!(read(&root, "one.md").contains("[[B]]"));
+        assert!(read(&root, "two.md").contains("[[B|别名]]"), "别名必须保留");
+    }
+
+    /// ② **改写失败 → 撤销改名**（FR-FILE-22 的明文要求）。
+    #[test]
+    #[allow(clippy::permissions_set_readonly_false)] // 见下方注释：仅还原夹具自己设的只读标记
+    fn rewrite_failure_undoes_the_rename() {
+        let (_d, root, backups) = setup();
+        let rels = vec!["one.md".to_string(), "two.md".to_string()];
+        // 让第二个被改写目标写不进去：置为**只读**（换成目录不行 —— 目录会让
+        // plan_rename 的"读不到就跳过"策略把它滤掉，计划里就没有它了）。
+        let two = root.join("two.md");
+        let mut perm = fs::metadata(&two).expect("读权限").permissions();
+        perm.set_readonly(true);
+        fs::set_permissions(&two, perm).expect("置只读");
+
+        let err = rename_with_rewrite(&root, "A.md", "B.md", &rels, &backups)
+            .expect_err("改写失败时整体必须失败");
+        let msg = err.to_string();
+        assert!(msg.contains("撤销改名"), "错误信息要说明已撤销改名：{msg}");
+        assert!(root.join("A.md").exists(), "文件必须回到旧名");
+        assert!(!root.join("B.md").exists(), "不得停在新名上");
+        assert_eq!(read(&root, "one.md"), "见 [[A]]\n", "已改写的文件必须还原");
+        // 复原只读标记，便于临时目录清理。
+        // clippy::permissions_set_readonly_false：这里只是把**测试夹具**自己刚设上的标记还原，
+        // 不涉及"把用户的只读文件改成可写"，因此是本测试内的窄豁免。
+        let mut perm = fs::metadata(&two).expect("读权限").permissions();
+        perm.set_readonly(false);
+        let _ = fs::set_permissions(&two, perm);
+    }
+
+    /// ③ **改名失败 → 一处链接都不改写**。
+    #[test]
+    fn rename_failure_touches_no_link() {
+        let (_d, root, backups) = setup();
+        let rels = vec!["one.md".to_string(), "two.md".to_string()];
+        // 让目标目录无法创建：把 B 的父路径做成一个普通文件
+        write(&root, "blocked", "我是文件不是目录\n");
+        let err = rename_with_rewrite(&root, "A.md", "blocked/B.md", &rels, &backups)
+            .expect_err("改名失败时整体必须失败");
+        let _ = err;
+        assert!(root.join("A.md").exists(), "源文件应原样保留");
+        assert_eq!(read(&root, "one.md"), "见 [[A]]\n", "链接一处都不应改写");
+        assert_eq!(
+            read(&root, "two.md"),
+            "也见 [[A|别名]]\n",
+            "链接一处都不应改写"
+        );
+        assert!(!backups.exists(), "改名都没成功，不应产生备份目录");
+    }
 }
