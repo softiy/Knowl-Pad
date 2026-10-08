@@ -19,8 +19,9 @@ vi.mock('@features/vault', async () => {
 });
 
 const saveAll = vi.fn(async () => {});
+const dirtyFlag = { value: false };
 const hasUnsaved = vi.fn(() => false);
-const buffers = [{ relPath: 'a.md', isDirty: false }];
+const buffers = [{ relPath: 'a.md' }];
 vi.mock('@features/editor', async () => {
   return {
     EditorView: { template: '<div data-testid="editor" />' },
@@ -29,6 +30,7 @@ vi.mock('@features/editor', async () => {
       saveAll,
       hasUnsaved,
       openNote: vi.fn(async () => {}),
+      isDirty: vi.fn(() => dirtyFlag.value),
     }),
   };
 });
@@ -73,13 +75,13 @@ describe('工作区：切换知识库入口（FR-VAULT-04/05、AC-VAULT-03 的�
 
   it('仍有未保存内容时不切换，并给出可见提示（R-07：不静默丢内容）', async () => {
     hasUnsaved.mockReturnValue(true);
-    buffers[0].isDirty = true;
+    dirtyFlag.value = true;
     const w = mount(WorkspaceLayout);
     await flushPromises();
     await w.find('[data-testid="workspace-switch-vault"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-testid="workspace-switch-error"]').text()).toContain('已取消切换');
     expect(w.find('[data-testid="vault-list"]').exists()).toBe(false);
-    buffers[0].isDirty = false;
+    dirtyFlag.value = false;
   });
 });
