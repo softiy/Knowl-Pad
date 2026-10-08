@@ -83,11 +83,13 @@ describe('索引徽标：状态、重建与取消', () => {
   });
 
   it('重建进行中提供取消入口（FR-VAULT-09：大批量操作可取消）', async () => {
-    let release: (() => void) | null = null;
+    // 用对象属性而非 let 变量：赋值发生在回调里，TS 会把 let 变量窄化成 null，
+    // 于是 release?.() 报 TS2349 —— CI 的 pnpm run build 抓到，本地 vue-tsc --noEmit 没抓到。
+    const release: { fn: (() => void) | null } = { fn: null };
     hoisted.indexRebuild.mockImplementation(
       () =>
         new Promise((resolve) => {
-          release = () =>
+          release.fn = () =>
             resolve({ indexed: 0, skipped: 0, durationMs: 1, cancelled: true, warnings: [] });
         }),
     );
@@ -98,7 +100,7 @@ describe('索引徽标：状态、重建与取消', () => {
     const cancel = w.get('[data-testid="index-cancel"]');
     await cancel.trigger('click');
     expect(hoisted.indexCancel).toHaveBeenCalled();
-    release?.();
+    release.fn?.();
     await flushPromises();
   });
 });
