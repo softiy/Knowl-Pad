@@ -5,7 +5,8 @@ vi.mock('@features/vault', async () => {
   // 真实项目用 Pinia store（ref 会被自动解包），这里用 reactive 复现同样的语义：
   // 组件模板写的是 `vaultStore.current.displayName`，裸 ref 会得到 undefined。
   const { ref, reactive } = await import('vue');
-  const current = ref<{ displayName: string } | null>({ displayName: '我的知识库' });
+  const VAULT = { root: 'C:/vaults/notes', displayName: '我的知识库', vaultId: 1, caseInsensitiveFs: true };
+  const current = ref<typeof VAULT | null>({ ...VAULT });
   const error = ref<string | null>(null);
   const store = reactive({
     current,
@@ -54,7 +55,7 @@ describe('工作区：切换知识库入口（FR-VAULT-04/05、AC-VAULT-03 的�
     // mock 是**共享**的 reactive store：上一个用例若切换过，current 会是 null，
     // 于是下一个用例连按钮都渲染不出来。每个用例都恢复成"已打开 Vault"。
     const { useVaultStore } = await import('@features/vault');
-    useVaultStore().current = { displayName: '我的知识库' };
+    useVaultStore().current = { ...VAULT };
   });
 
   it('打开 Vault 时提供切换入口，并把 Vault 名显示出来', async () => {
