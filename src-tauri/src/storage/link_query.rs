@@ -7,20 +7,12 @@ use super::pool::DbPool;
 
 // 行结构拆到 link_query_types，这里 re-export 以保持调用方与测试不变。
 use super::link_query_notes::note_id;
-#[allow(unused_imports)] // 供测试与命令层从 link_query 取用（尚未接入）
 pub use super::link_query_notes::{backlinks_for, outgoing_for};
-#[allow(unused_imports)] // 同上
+#[allow(unused_imports)] // 供后续命令/测试按类型名取用（当前命令层只用值）
 pub use super::link_query_types::{
     AmbiguousRow, BacklinkRow, DanglingGroup, HeadingRow, OutgoingRow,
 };
 
-/// 反链计数（AC-LINK-01 要求面板条数与 SQL 计数一致，这个函数就是"SQL 计数"的单一来源）。
-#[allow(dead_code)] // 命令层接入前暂无调用方
-pub fn backlink_count(pool: &DbPool, dst_rel_path: &str) -> Result<u32, AppError> {
-    Ok(backlinks_for(pool, dst_rel_path)?.len() as u32)
-}
-
-#[allow(dead_code)] // 命令层接入前暂无调用方（移除点：commands/link.rs 落地时）
 pub fn dangling_groups(pool: &DbPool) -> Result<Vec<DanglingGroup>, AppError> {
     pool.with_reader(|conn| {
         let mut stmt = conn
@@ -62,7 +54,6 @@ pub fn dangling_groups(pool: &DbPool) -> Result<Vec<DanglingGroup>, AppError> {
     })
 }
 
-#[allow(dead_code)] // 命令层接入前暂无调用方（移除点：commands/link.rs 落地时）
 pub fn ambiguous_rows(pool: &DbPool) -> Result<Vec<AmbiguousRow>, AppError> {
     pool.with_reader(|conn| {
         let mut stmt = conn
@@ -106,7 +97,6 @@ pub fn ambiguous_rows(pool: &DbPool) -> Result<Vec<AmbiguousRow>, AppError> {
 }
 
 /// 孤立笔记：**没有任何出链且没有任何入链**（FR-LINK-21）；自链接两侧都不计（FR-LINK-07）。
-#[allow(dead_code)] // 命令层接入前暂无调用方（移除点：commands/link.rs 落地时）
 pub fn orphan_notes(pool: &DbPool) -> Result<Vec<String>, AppError> {
     pool.with_reader(|conn| {
         let mut stmt = conn
@@ -127,7 +117,6 @@ pub fn orphan_notes(pool: &DbPool) -> Result<Vec<String>, AppError> {
     })
 }
 
-#[allow(dead_code)] // 命令层接入前暂无调用方（移除点：commands/link.rs 落地时）
 pub fn headings_of(pool: &DbPool, rel_path: &str) -> Result<Vec<HeadingRow>, AppError> {
     pool.with_reader(|conn| {
         let Some(id) = note_id(conn, rel_path)? else {

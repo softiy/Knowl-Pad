@@ -113,7 +113,6 @@ fn backlinks_only_count_resolved_and_are_ordered() {
     );
     let rows = backlinks_for(&f.pool, "B.md").expect("反链查询");
     assert_eq!(rows.len(), 2, "只算 resolved 反链");
-    assert_eq!(backlink_count(&f.pool, "B.md").expect("计数"), 2);
     assert_eq!(
         rows[0].src_rel_path, "乙.md",
         "按来源路径排序（乙 > 甲 的码位顺序）"
