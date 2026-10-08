@@ -40,7 +40,8 @@ async function onSwitchVault(): Promise<void> {
   switchError.value = null;
   await editor.saveAll();
   if (editor.hasUnsaved()) {
-    const dirty = editor.buffers.filter((b) => b.isDirty).length;
+    // 脏判定用 store 的派生函数（buffer 本身没有 isDirty 字段）。
+    const dirty = editor.buffers.filter((b) => editor.isDirty(b.relPath)).length;
     switchError.value = `仍有 ${dirty} 个标签保存失败，已取消切换；请处理后重试。`;
     return;
   }
