@@ -79,9 +79,18 @@ fn main() {
                                     .set_global_db(std::sync::Arc::new(pool));
                                 // FR-VAULT-06：恢复上次打开的 Vault（失败或路径失效都不阻断启动，
                                 // 且绝不创建目录——AC-VAULT-02）
-                                let _ = commands::vault_lifecycle::restore_last_vault(
+                                // M3 复核 blocker 修复：启动自动恢复路径此前只 activate_vault，
+                                // 既不跑对账也不起监听 → 重启后外部改动完全不被感知。
+                                if commands::vault_lifecycle::restore_last_vault(
                                     &app.state::<AppState>(),
-                                );
+                                )
+                                .is_some()
+                                {
+                                    commands::vault::reconcile_after_open(
+                                        &app.state::<AppState>(),
+                                        app.handle(),
+                                    );
+                                }
                                 tracing::debug!(
                                     ready = app.state::<AppState>().global_db().is_some(),
                                     "全局库句柄已登记"

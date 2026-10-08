@@ -11,7 +11,7 @@ use crate::commands::paths::root_of;
 use crate::error_wrapper::KpError;
 use crate::index_engine::{full_index_cancellable, IndexMode};
 use crate::state::AppState;
-use crate::storage::index::{self, IndexSignature};
+use crate::storage::index::IndexSignature;
 
 /// 签名字段视图（PRD §5.3.7 的 `SignatureInfo`）。
 #[derive(Serialize)]
@@ -65,19 +65,6 @@ pub struct IndexStats {
     pub fts_rows: i64,
 }
 
-/// 解析存储侧写入的签名 JSON。**不可信即 None**（不猜测、不放过）——纯函数，便于单测。
-pub(crate) fn parse_stored_signature(raw: Option<&str>) -> Option<SignatureParts> {
-    let value: serde_json::Value = serde_json::from_str(raw?).ok()?;
-    Some(SignatureParts {
-        schema_version: value.get("schema_version")?.as_u64()? as u32,
-        parser_version: value.get("parser_version")?.as_u64()? as u32,
-        tokenizer_version: value.get("tokenizer_version")?.as_str()?.to_string(),
-        tokenizer_dict_hash: value.get("tokenizer_dict_hash")?.as_str()?.to_string(),
-        vault_root: value.get("vault_root")?.as_str()?.to_string(),
-        digest: value.get("digest")?.as_str()?.to_string(),
-    })
-}
-
 /// 读取各表实体计数（脱离 Tauri State，便于用真实临时索引库单测）。
 pub(crate) fn read_stats(
     pool: &crate::storage::pool::DbPool,
@@ -105,27 +92,26 @@ pub(crate) fn signature_info(
     pool: Option<&crate::storage::pool::DbPool>,
 ) -> SignatureInfo {
     let expected = IndexSignature::current(root);
-    let stored_raw = pool.and_then(|p| {
-        p.with_reader(|conn| index::read_meta(conn, "index_signature"))
+    // M3 复核 M3：此前把 meta 里的 64 位十六进制 digest 当 JSON 解析 → 恒 None →
+    // matched 恒 false → 每次打开 Vault 都误发 kp://index/rebuild-required。
+    // 改为按字段读取（复用 storage 层的 stored_signature，它对每个字段分别 read_meta）。
+    let stored = pool.and_then(|p| {
+        p.with_reader(crate::storage::index::stored_signature)
             .ok()
             .flatten()
     });
-    let stored = parse_stored_signature(stored_raw.as_deref());
     let matched = stored.as_ref().is_some_and(|s| s.digest == expected.digest);
     let reason = if matched {
         None
-    } else if stored.is_none() {
-        Some(if stored_raw.is_none() {
-            "索引库中还没有签名记录（首次打开或索引尚未完成），将触发全量索引".to_string()
-        } else {
-            "索引库中的签名无法解析，按不可信处理，将触发全量索引".to_string()
-        })
     } else {
-        Some(stored_raw.clone().unwrap_or_default())
+        Some(match &stored {
+            None => "索引库中还没有签名记录（首次打开或索引尚未完成），将触发全量索引".to_string(),
+            Some(s) => s.diff_reason(&expected),
+        })
     };
     SignatureInfo {
         expected: SignatureParts::from(&expected),
-        stored,
+        stored: stored.as_ref().map(SignatureParts::from),
         matched,
         reason,
     }
@@ -240,9 +226,12 @@ pub async fn index_rebuild(
         Ok(outcome) => {
             // 索引完成后再启动监听：确保监听期间的增量写库建立在完整索引之上。
             // 监听启动失败（如 inotify watch 耗尽）则退化为 5s 轮询对账（NFR-PLAT-09）。
-            if !state.has_watcher() {
+            if !state.has_watcher_for(&root) {
+                state.stop_watcher();
+            } // 按 root 判定并先停旧监听
+            if !state.has_watcher_for(&root) {
                 match crate::index_watch::start_watcher(pool.clone(), root.clone(), app.clone()) {
-                    Ok(handle) => state.set_watcher(handle),
+                    Ok(handle) => state.set_watcher(handle, root.clone()),
                     Err(err) => {
                         tracing::warn!(error = %err, "文件监听启动失败，退化为轮询对账");
                         crate::index_watch::start_polling_fallback(pool.clone(), root.clone());

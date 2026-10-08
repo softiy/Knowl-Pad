@@ -17,6 +17,9 @@ pub struct AppState {
     index_cancel: AtomicBool,
     /// 当前 Vault 的文件监听句柄（M3 WP5）；关闭 Vault 或重新打开时替换/停止。
     watcher: Mutex<Option<crate::index_watch::WatcherHandle>>,
+    /// 该句柄监听的 Vault 根（M3 复核 blocker 修复）：
+    /// 只有带上 root 才能区分「同一个 Vault 重开」与「切换到另一个 Vault」。
+    watcher_root: Mutex<Option<PathBuf>>,
 }
 
 impl AppState {
@@ -58,27 +61,42 @@ impl AppState {
         self.index_cancel.swap(false, Ordering::SeqCst)
     }
 
-    /// 是否已在监听。
-    pub fn has_watcher(&self) -> bool {
-        self.watcher.lock().map(|g| g.is_some()).unwrap_or(false)
-    }
-
-    /// 记录监听句柄（替换旧的会先停止它）。
-    pub fn set_watcher(&self, handle: crate::index_watch::WatcherHandle) {
+    /// 记录监听句柄与它监听的 root（替换旧的会先停止它）。
+    pub fn set_watcher(&self, handle: crate::index_watch::WatcherHandle, root: PathBuf) {
         if let Ok(mut guard) = self.watcher.lock() {
             if let Some(old) = guard.take() {
                 old.stop();
             }
             *guard = Some(handle);
         }
+        if let Ok(mut guard) = self.watcher_root.lock() {
+            *guard = Some(root);
+        }
     }
 
-    /// 停止监听（关闭 Vault 时调用）。
+    /// 当前监听指向的 Vault 根。
+    pub fn watcher_root(&self) -> Option<PathBuf> {
+        self.watcher_root.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// 是否**已经**为这个 root 起了监听。
+    ///
+    /// M3 复核 blocker：此前只有不带 root 的 `has_watcher()`，打开第二个 Vault 时
+    /// 会被误判为"已在监听"，于是新 Vault 永不启动监听、旧 watcher 继续写旧库。
+    pub fn has_watcher_for(&self, root: &std::path::Path) -> bool {
+        self.watcher_root().map(|r| r == root).unwrap_or(false)
+            && self.watcher.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+
+    /// 停止监听（关闭或**切换** Vault 时调用）。
     pub fn stop_watcher(&self) {
         if let Ok(mut guard) = self.watcher.lock() {
             if let Some(old) = guard.take() {
                 old.stop();
             }
+        }
+        if let Ok(mut guard) = self.watcher_root.lock() {
+            *guard = None;
         }
     }
 

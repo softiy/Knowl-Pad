@@ -1,9 +1,11 @@
 //! 索引域命令的测试（DEBT-14 的第一刀：命令体已抽成可注入状态的函数 + 纯函数）。
 
-use crate::commands::index::{parse_stored_signature, read_stats};
+use crate::commands::index::read_stats;
 
+/// 本模块自带的临时 Vault 夹具（存储层的同名助手是模块私有，跨模块不可见）。
 fn temp_vault() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("临时目录");
+    std::fs::create_dir_all(dir.path().join(".knowlpad")).expect("建 .knowlpad");
     let root = dir.path().to_path_buf();
     (dir, root)
 }
@@ -27,25 +29,31 @@ fn stats_requires_open_vault() {
     assert_eq!(err.code(), "E_VAULT_NOT_OPEN");
 }
 
-/// 签名解析：合法 JSON → 结构化；缺字段/非法 JSON/None → 一律 None（不可信即重建）。
+/// M3 复核 M3 的回归：签名诊断不得把十六进制 digest 当 JSON 解析。
+/// 修好前 `matched` 恒为 false → 每次打开 Vault 都误发 kp://index/rebuild-required。
 #[test]
-fn stored_signature_parsing_is_strict() {
-    let ok = r#"{"schema_version":1,"parser_version":2,"tokenizer_version":"0.11.0","tokenizer_dict_hash":"ab","vault_root":"C:/v","digest":"ff"}"#;
-    let parsed = parse_stored_signature(Some(ok)).expect("合法签名应解析成功");
-    assert_eq!(parsed.schema_version, 1);
-    assert_eq!(parsed.digest, "ff");
-
-    assert!(parse_stored_signature(None).is_none(), "无记录 → None");
+fn signature_info_reports_matched_for_same_root() {
+    let (_d, root) = temp_vault();
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    // ① 同一个根：索引库建好即带一致签名 → 必须 matched（这正是"不再误报重建"的条件）
+    let same = crate::commands::index::signature_info(&root, Some(&pool));
     assert!(
-        parse_stored_signature(Some("not json")).is_none(),
-        "非法 JSON → None"
+        same.matched,
+        "同一 Vault 根必须 matched=true；reason={:?}",
+        same.reason
     );
-    assert!(
-        parse_stored_signature(Some(r#"{"schema_version":1}"#)).is_none(),
-        "缺字段 → None（不可信）"
+    assert!(same.reason.is_none(), "matched 时不应给原因");
+    // ② 换个 Vault 根：期望签名变化（含 vault_root）→ 必须不可信且给出原因
+    let other = crate::commands::index::signature_info(
+        std::path::Path::new("C:/another-vault"),
+        Some(&pool),
     );
+    assert!(!other.matched, "换根后必须不可信");
+    assert!(other.reason.is_some(), "不可信时必须给出原因");
+    // ③ 没有索引库（None）→ 不可信且不 panic
+    let none = crate::commands::index::signature_info(&root, None);
+    assert!(!none.matched, "没有索引库时必须不可信");
 }
-
 /// 期望签名随 Vault 根变化（签名含 vault_root，防止把 .knowlpad 拷到别处误用）。
 #[test]
 fn expected_signature_depends_on_vault_root() {
