@@ -8,6 +8,7 @@ pub mod file_trash;
 pub mod file_tree;
 pub mod fs_atomic;
 pub mod link_rewrite;
+pub mod link_rewrite_apply;
 pub mod link_rewrite_protect;
 pub mod md_parse;
 pub mod note_io;
