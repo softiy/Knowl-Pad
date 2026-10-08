@@ -3,6 +3,8 @@ pub mod file_write;
 pub mod index;
 #[cfg(test)]
 mod index_tests;
+pub mod link;
+pub mod link_view;
 pub mod note;
 pub mod paths;
 pub mod settings;

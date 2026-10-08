@@ -7,7 +7,6 @@ use rusqlite::Connection;
 use super::link_query_types::{BacklinkRow, OutgoingRow};
 use super::pool::DbPool;
 
-#[allow(dead_code)] // 命令层接入前暂无调用方（移除点：commands/link.rs 落地时）
 pub(crate) fn note_id(conn: &Connection, rel_path: &str) -> Result<Option<i64>, AppError> {
     conn.query_row(
         "SELECT id FROM file WHERE rel_path = ?1",
@@ -22,7 +21,6 @@ pub(crate) fn note_id(conn: &Connection, rel_path: &str) -> Result<Option<i64>, 
 }
 
 /// 指向 `dst_rel_path` 的**已解析**反链（AC-LINK-01 的计数口径就是本函数的行数）。
-#[allow(dead_code)] // 命令层接入前暂无调用方（移除点：commands/link.rs 落地时）
 pub fn backlinks_for(pool: &DbPool, dst_rel_path: &str) -> Result<Vec<BacklinkRow>, AppError> {
     pool.with_reader(|conn| {
         let Some(dst) = note_id(conn, dst_rel_path)? else {
@@ -55,7 +53,6 @@ pub fn backlinks_for(pool: &DbPool, dst_rel_path: &str) -> Result<Vec<BacklinkRo
     })
 }
 
-#[allow(dead_code)] // 命令层接入前暂无调用方（移除点：commands/link.rs 落地时）
 pub fn outgoing_for(pool: &DbPool, src_rel_path: &str) -> Result<Vec<OutgoingRow>, AppError> {
     pool.with_reader(|conn| {
         let Some(src) = note_id(conn, src_rel_path)? else {
