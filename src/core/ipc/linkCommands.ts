@@ -62,6 +62,8 @@ export interface AmbiguousItem {
   targetRef: string;
   candidates: string[];
   refCount: number;
+  /** 这些歧义链接各自的 link.id —— 逐条指定目标时要用（FR-LINK-22 / AC-LINK-05） */
+  linkIds: number[];
 }
 export interface AmbiguousPage {
   items: AmbiguousItem[];

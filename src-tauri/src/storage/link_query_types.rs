@@ -58,6 +58,8 @@ pub struct AmbiguousRow {
     pub candidates: Vec<String>,
 
     pub ref_count: u32,
+    /// 这些歧义链接各自的 link.id —— `link_resolve_ambiguous { link_id, .. }` 要用它逐条指定目标
+    pub link_ids: Vec<i64>,
 }
 
 /// 标题（link_headings 用）。
