@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useVaultStore } from '@features/vault';
 import { EditorView, useEditorStore } from '@features/editor';
 import { FileOpsDialog, FileTree, useFileOpsStore, type MenuAction } from '@features/file-tree';
@@ -26,6 +26,27 @@ onMounted(() => {
   void vaultStore.init();
 });
 
+/** 切换失败时的可见提示（R-07：不静默丢内容，也不假装成功）。 */
+const switchError = ref<string | null>(null);
+
+/**
+ * FR-VAULT-04/05：回到欢迎页以切换知识库。
+ *
+ * 顺序很关键：**先刷盘，再关闭** —— 否则未保存内容会随 Vault 关闭一起消失
+ * （AC-VAULT-03 的"编辑内容被写入磁盘"也正是这条路径）。
+ * 若仍有标签保存失败，则**取消切换**并给出可见提示：宁可不切，也不丢内容。
+ */
+async function onSwitchVault(): Promise<void> {
+  switchError.value = null;
+  await editor.saveAll();
+  if (editor.hasUnsaved()) {
+    const dirty = editor.buffers.filter((b) => b.isDirty).length;
+    switchError.value = `仍有 ${dirty} 个标签保存失败，已取消切换；请处理后重试。`;
+    return;
+  }
+  await vaultStore.closeCurrent();
+}
+
 function onOpen(relPath: string): void {
   void editor.openNote(relPath);
 }
@@ -48,6 +69,22 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
 <template>
   <div class="kp-workspace">
     <p v-if="vaultStore.error" class="kp-workspace__error">{{ vaultStore.error }}</p>
+    <header v-if="vaultStore.current" class="kp-workspace__bar">
+      <span class="kp-workspace__vault" data-testid="workspace-vault-name">
+        {{ vaultStore.current.displayName }}
+      </span>
+      <button
+        type="button"
+        class="kp-workspace__switch"
+        data-testid="workspace-switch-vault"
+        @click="onSwitchVault"
+      >
+        切换知识库
+      </button>
+    </header>
+    <p v-if="switchError" class="kp-workspace__error" data-testid="workspace-switch-error">
+      {{ switchError }}
+    </p>
     <div class="kp-workspace__body">
       <template v-if="vaultStore.current">
         <aside class="kp-workspace__side">
