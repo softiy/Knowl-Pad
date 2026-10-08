@@ -220,3 +220,41 @@ fn headings_are_returned_in_document_order() {
         .expect("不应报错")
         .is_empty());
 }
+
+/// **FR-FILE-21 的候选集**：按词干（大小写不敏感）反查引用了目标的来源文件，
+/// 并允许目标写成 folder/名（改写器的匹配口径如此，候选集必须一致，否则会漏改）。
+#[test]
+fn files_referencing_matches_stem_case_insensitively() {
+    let f = fixture(
+        &[
+            ("a.md", "a.md", "a", "note"),
+            ("b.md", "b.md", "b", "note"),
+            ("sub/c.md", "c.md", "c", "note"),
+        ],
+        &[
+            ("a.md", Some("b.md"), "B", "resolved", "wikilink", 1, 1),
+            (
+                "sub/c.md",
+                Some("b.md"),
+                "folder/B",
+                "resolved",
+                "wikilink",
+                1,
+                1,
+            ),
+            ("b.md", None, "别的目标", "dangling", "wikilink", 1, 1),
+        ],
+    );
+    let hit = files_referencing(&f.pool, "b").expect("查询引用");
+    assert_eq!(
+        hit,
+        vec!["a.md".to_string(), "sub/c.md".to_string()],
+        "大小写不同的 B 与带目录的 folder/B 都要命中，且按路径排序"
+    );
+    assert!(
+        files_referencing(&f.pool, "zzz")
+            .expect("查询引用")
+            .is_empty(),
+        "无关词干不得命中"
+    );
+}

@@ -83,3 +83,30 @@ pub fn outgoing_for(pool: &DbPool, src_rel_path: &str) -> Result<Vec<OutgoingRow
             .map_err(|_| AppError::db("读取出链结果失败"))
     })
 }
+
+/// 找出**引用了某个目标词干**的全部来源文件（FR-FILE-21 的候选集）。
+///
+/// 匹配口径与改写器一致：按**词干、大小写不敏感**，并允许目标写作 folder/名
+/// （因此比较的是 target_ref 的整串与带目录前缀两种写法，而不是只比相等）。
+pub fn files_referencing(pool: &DbPool, target_stem: &str) -> Result<Vec<String>, AppError> {
+    let want = target_stem.to_lowercase();
+    pool.with_reader(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT f.rel_path FROM link l
+                 JOIN file f ON f.id = l.src_file_id
+                 WHERE lower(l.target_ref) = ?1
+                    OR lower(l.target_ref) LIKE '%/' || ?1
+                 ORDER BY f.rel_path",
+            )
+            .map_err(|e| AppError::db(&format!("准备引用查询失败：{e}")))?;
+        let rows = stmt
+            .query_map(rusqlite::params![want], |r| r.get::<_, String>(0))
+            .map_err(|e| AppError::db(&format!("查询引用失败：{e}")))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| AppError::db(&format!("读取引用行失败：{e}")))?);
+        }
+        Ok(out)
+    })
+}

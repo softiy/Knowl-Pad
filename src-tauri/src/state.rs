@@ -1,4 +1,5 @@
 use crate::storage::pool::DbPool;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -25,9 +26,25 @@ pub struct AppState {
     /// 该句柄监听的 Vault 根（M3 复核 blocker 修复）：
     /// 只有带上 root 才能区分「同一个 Vault 重开」与「切换到另一个 Vault」。
     watcher_root: Mutex<Option<PathBuf>>,
+    // 改写预览缓存与操作登记（技术方案 §6.1.1：preview_id → 明细，TTL 10 分钟，执行时一次性消费；
+    // 操作登记供 link_rewrite_rollback 回滚）。类型定义在 commands::link_rewrite_store。
+    previews: Mutex<HashMap<String, crate::commands::link_rewrite_store::StoredPreview>>,
+    operations: Mutex<HashMap<String, crate::commands::link_rewrite_store::StoredOperation>>,
 }
 
 impl AppState {
+    pub fn previews_lock(
+        &self,
+    ) -> &Mutex<HashMap<String, crate::commands::link_rewrite_store::StoredPreview>> {
+        &self.previews
+    }
+
+    pub fn operations_lock(
+        &self,
+    ) -> &Mutex<HashMap<String, crate::commands::link_rewrite_store::StoredOperation>> {
+        &self.operations
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

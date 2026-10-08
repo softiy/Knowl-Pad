@@ -34,6 +34,12 @@ pub enum AppError {
     PermissionDenied(String),
     #[error("{0}")]
     DbError(String),
+    /// PRD §5.2 / §5.3.3：改写预览已过期或已被消费（一次性使用）。
+    #[error("改写预览已过期或已被消费，请重新执行预览")]
+    PreviewExpired,
+    /// PRD §5.2：批量链接改写失败（**已回滚**）——消息里带失败文件清单。
+    #[error("批量链接改写失败（已回滚）：{0}")]
+    RewriteFailed(String),
 }
 
 impl AppError {
@@ -54,6 +60,8 @@ impl AppError {
             Self::PermissionDenied(_) => "E_PERMISSION_DENIED",
             Self::IoFailure(_) => "E_IO_FAILURE",
             Self::DbError(_) => "E_DB_ERROR",
+            Self::PreviewExpired => "E_PREVIEW_EXPIRED",
+            Self::RewriteFailed(_) => "E_REWRITE_FAILED",
         }
     }
 }
@@ -61,8 +69,6 @@ impl AppError {
 impl AppError {
     /// 存储层失败的统一构造（PRD ERR-02）。
     ///
-    /// 用户可见 message 必须是**中文、非技术性、含可操作建议**；SQL 原文等技术细节
-    /// 由调用方写日志（kc-domain 不依赖日志框架，故日志在存储层完成），**绝不进 message**。
     pub fn db(context: &str) -> Self {
         Self::DbError(format!(
             "{context}失败。请重试；若持续出现，请检查应用数据目录是否可写，或重启应用。"
@@ -82,7 +88,6 @@ impl AppError {
     }
 
     /// 变体名（**不含用户数据**）。用于日志的「上下文」字段——SEC-09 禁止在日志中
-    /// 记录笔记正文与 Vault 绝对路径，故此处只暴露错误**类别**。
     pub fn kind(&self) -> &'static str {
         match self {
             Self::VaultNotOpen => "VaultNotOpen",
@@ -100,6 +105,8 @@ impl AppError {
             Self::PermissionDenied(_) => "PermissionDenied",
             Self::IoFailure(_) => "IoFailure",
             Self::DbError(_) => "DbError",
+            Self::PreviewExpired => "PreviewExpired",
+            Self::RewriteFailed(_) => "RewriteFailed",
         }
     }
 }
@@ -107,7 +114,6 @@ impl AppError {
 impl From<std::io::Error> for AppError {
     /// ERR-02：用户可见文案必须**中文、可操作**——**绝不把 io 原文（英文 + os error 码）放进 message**。
     ///
-    /// 这些变体的载荷会直接插进 message，因此这里放的是「给用户的处置建议」；
     /// 原始 io 细节由调用方写日志（ERR-04），需要路径上下文时用 [`AppError::io_at`]。
     fn from(err: std::io::Error) -> Self {
         match err.kind() {
@@ -127,87 +133,5 @@ impl From<std::io::Error> for AppError {
 }
 
 #[cfg(test)]
-mod err02_tests {
-    use super::*;
-
-    /// ERR-02 回归：由 io::Error 派生的用户可见文案必须是中文，且**不含 io 原文**
-    /// （曾出现「文件不存在：No such file or directory (os error 2)」）。
-    #[test]
-    fn io_errors_are_chinese() {
-        let cases = [
-            std::io::Error::from(std::io::ErrorKind::NotFound),
-            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
-            std::io::Error::other("disk exploded"),
-        ];
-        for err in cases {
-            let message = AppError::from(err).to_string();
-            assert!(
-                message
-                    .chars()
-                    .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
-                "用户可见文案必须含中文：{message}"
-            );
-            assert!(!message.contains("os error"), "不得出现 io 原文：{message}");
-            assert!(
-                !message.contains("disk exploded"),
-                "不得出现 io 原文：{message}"
-            );
-        }
-    }
-
-    /// 带路径上下文时，message 里出现的是**相对路径**，仍然不出现 io 原文。
-    #[test]
-    fn io_at_uses_relative_path_as_context() {
-        let err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
-        let message = AppError::io_at("dir/a.md", &err).to_string();
-        assert!(message.contains("dir/a.md"));
-        assert!(!message.contains("Permission denied"));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::AppError;
-
-    #[test]
-    fn error_codes_are_stable() {
-        assert_eq!(AppError::VaultNotOpen.code(), "E_VAULT_NOT_OPEN");
-        assert_eq!(
-            AppError::VaultPathInvalid("x".into()).code(),
-            "E_VAULT_PATH_INVALID"
-        );
-        assert_eq!(AppError::PathEmpty.code(), "E_PATH_ESCAPE_DENY");
-        assert_eq!(AppError::PathAbsolute.code(), "E_PATH_OUTSIDE_VAULT");
-        assert_eq!(AppError::PathOutsideVault.code(), "E_PATH_OUTSIDE_VAULT");
-        assert_eq!(AppError::PathEscapeDeny.code(), "E_PATH_ESCAPE_DENY");
-        assert_eq!(
-            AppError::InvalidFilename("x".into()).code(),
-            "E_INVALID_FILENAME"
-        );
-        assert_eq!(
-            AppError::FileNotFound("x".into()).code(),
-            "E_FILE_NOT_FOUND"
-        );
-        assert_eq!(AppError::FileExists("x".into()).code(), "E_FILE_EXISTS");
-        assert_eq!(
-            AppError::WriteConflict("x".into()).code(),
-            "E_WRITE_CONFLICT"
-        );
-        assert_eq!(AppError::IoFailure("x".into()).code(), "E_IO_FAILURE");
-        assert_eq!(AppError::DbError("x".into()).code(), "E_DB_ERROR");
-    }
-
-    #[test]
-    fn io_errors_map_by_kind() {
-        let nf = AppError::from(std::io::Error::new(std::io::ErrorKind::NotFound, "gone"));
-        assert_eq!(nf.code(), "E_FILE_NOT_FOUND");
-        let denied = AppError::from(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "deny",
-        ));
-        // PRD §5.2：权限被拒是独立错误码，前端据此提示「检查文件权限」
-        assert_eq!(denied.code(), "E_PERMISSION_DENIED");
-        let other = AppError::from(std::io::Error::other("disk full"));
-        assert_eq!(other.code(), "E_IO_FAILURE");
-    }
-}
+#[path = "error_tests.rs"]
+mod tests;
