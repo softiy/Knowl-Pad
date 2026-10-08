@@ -14,7 +14,7 @@ const hoisted = vi.hoisted(() => ({
   openNote: vi.fn(async () => {}),
   closeNote: vi.fn(),
   closeUnder: vi.fn(),
-  followRename: vi.fn(),
+  followRenameUnder: vi.fn(),
 }));
 
 vi.mock('@features/file-tree/stores/fileTree', () => ({
@@ -27,7 +27,7 @@ vi.mock('@features/editor', () => ({
     openNote: hoisted.openNote,
     closeNote: hoisted.closeNote,
     closeUnder: hoisted.closeUnder,
-    followRename: hoisted.followRename,
+    followRenameUnder: hoisted.followRenameUnder,
     dirtyAmong: () => [],
   }),
 }));
@@ -122,7 +122,7 @@ describe('useFileOpsStore（AC-FILE-03/04/05）', () => {
     ops.dialog!.value = 'b.md';
     await ops.submit();
     expect(mRename).toHaveBeenCalledWith('dir/a.md', 'dir/b.md', 'cancel');
-    expect(hoisted.followRename).toHaveBeenCalledWith('a.md', 'b.md');
+    expect(hoisted.followRenameUnder).toHaveBeenCalledWith('a.md', 'b.md');
     expect(hoisted.refresh).toHaveBeenCalledTimes(1);
   });
 
@@ -149,7 +149,7 @@ describe('useFileOpsStore（AC-FILE-03/04/05）', () => {
       save: vi.fn(async () => {}),
       openNote: hoisted.openNote,
       closeNote: hoisted.closeNote,
-      followRename: hoisted.followRename,
+      followRenameUnder: hoisted.followRenameUnder,
     } as never);
     await ops.submit();
     expect(ops.pendingDelete?.target).toBe('dir');

@@ -188,3 +188,35 @@ describe('useEditorStore', () => {
     expect(store.hasUnsaved()).toBe(false);
   });
 });
+
+describe('目录重命名跟随子树（M1/M2 复核 major：FR-FILE-28）', () => {
+  it('目录改名后，子树下所有已打开标签都指向新路径，且未保存内容不丢', async () => {
+    const store = useEditorStore();
+    await store.openNote('dir/a.md');
+    await store.openNote('dir/sub/b.md');
+    await store.openNote('other/c.md');
+    const a = store.buffers.find((b) => b.relPath === 'dir/a.md');
+    if (a) a.content = '改了没保存';
+    const changed = store.followRenameUnder('dir', 'newdir');
+    expect(changed).toBe(2);
+    // 不断言"整个列表等于什么"（同一文件里的 store 是共享的，前面的用例可能留有标签），
+    // 只断言本次改写的**定向结果**与旧路径不再存在。
+    const paths = store.buffers.map((b) => b.relPath);
+    expect(paths).toContain('newdir/a.md');
+    expect(paths).toContain('newdir/sub/b.md');
+    expect(paths).toContain('other/c.md');
+    expect(paths).not.toContain('dir/a.md');
+    expect(paths).not.toContain('dir/sub/b.md');
+    const moved = store.buffers.find((b) => b.relPath === 'newdir/a.md');
+    expect(moved?.content).toBe('改了没保存');
+    expect(store.isDirty('newdir/a.md')).toBe(true);
+  });
+
+  it('不在该目录下的标签不受影响', async () => {
+    const store = useEditorStore();
+    await store.openNote('other/c.md');
+    const before = store.buffers.map((b) => b.relPath);
+    expect(store.followRenameUnder('dir', 'newdir')).toBe(0);
+    expect(store.buffers.map((b) => b.relPath)).toEqual(before);
+  });
+});
