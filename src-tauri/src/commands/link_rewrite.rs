@@ -8,7 +8,6 @@ use crate::commands::link_rewrite_store::{
     next_id, now_ms, put_operation, put_preview, take_preview,
 };
 use crate::commands::link_rewrite_store::{StoredOperation, StoredPreview};
-use crate::commands::paths::root_of;
 use crate::error_wrapper::KpError;
 use crate::state::AppState;
 use kp_domain::error::AppError;
@@ -22,7 +21,7 @@ pub struct RenameSpec {
     pub to: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RewriteEdit {
     pub rel_path: String,
@@ -30,7 +29,7 @@ pub struct RewriteEdit {
 }
 
 /// PRD §5.3.3 的 \`RewritePreview\`：\`preview_id\` + 明细（文件数、处数、逐文件处数）。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RewritePreview {
     pub preview_id: String,
@@ -45,7 +44,7 @@ pub struct RewritePreview {
 }
 
 /// PRD §5.3.3 的 \`RewriteResult\`。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RewriteResult {
     pub operation_id: String,
@@ -53,9 +52,7 @@ pub struct RewriteResult {
     pub span_count: usize,
 }
 
-fn pool_of(
-    state: &State<'_, AppState>,
-) -> Result<std::sync::Arc<crate::storage::pool::DbPool>, KpError> {
+fn pool_of(state: &AppState) -> Result<std::sync::Arc<crate::storage::pool::DbPool>, KpError> {
     state.index_db().ok_or(KpError(AppError::VaultNotOpen))
 }
 
@@ -70,15 +67,17 @@ fn candidates(pool: &crate::storage::pool::DbPool, from_ref: &str) -> Result<Vec
 }
 
 /// **预览**（只读）：定位将改写的处数并冻结，返回 \`preview_id\`（FR-FILE-21 ②）。
-#[tauri::command]
-pub async fn link_rewrite_preview(
+/// 命令体（把状态作为参数传入，便于测试 —— 项目既有做法，见 DEBT-14）。
+pub(crate) fn link_rewrite_preview_impl(
+    state: &AppState,
     from_ref: String,
     to_ref: String,
     rename: Option<RenameSpec>,
-    state: State<'_, AppState>,
 ) -> Result<RewritePreview, KpError> {
-    let root = root_of(&state)?;
-    let pool = pool_of(&state)?;
+    let root = state
+        .current_root()
+        .ok_or(KpError(AppError::VaultNotOpen))?;
+    let pool = pool_of(state)?;
     let cands = candidates(&pool, &from_ref)?;
     let plan = plan_rename(&root, &from_ref, &to_ref, &cands).map_err(KpError)?;
 
@@ -100,7 +99,7 @@ pub async fn link_rewrite_preview(
         created_at_ms: now_ms(),
     };
     put_preview(
-        &state,
+        state,
         preview.preview_id.clone(),
         StoredPreview {
             created_at_ms: preview.created_at_ms,
@@ -114,15 +113,19 @@ pub async fn link_rewrite_preview(
     Ok(preview)
 }
 
-#[tauri::command]
-pub async fn link_rewrite_apply(
+/// 命令体（把状态作为参数传入，便于测试 —— 项目既有做法，见 DEBT-14）。
+pub(crate) fn link_rewrite_apply_impl(
+    state: &AppState,
     preview_id: String,
     rename: Option<RenameSpec>,
-    state: State<'_, AppState>,
 ) -> Result<RewriteResult, KpError> {
     // 一次性取出：取不到（未知/已消费/过期）统一是 E_PREVIEW_EXPIRED（PRD §5.2）。
-    let stored = take_preview(&state, &preview_id).ok_or(KpError(AppError::PreviewExpired))?;
-    if stored.vault_root != root_of(&state)? {
+    let stored = take_preview(state, &preview_id).ok_or(KpError(AppError::PreviewExpired))?;
+    if stored.vault_root
+        != state
+            .current_root()
+            .ok_or(KpError(AppError::VaultNotOpen))?
+    {
         return Err(KpError(AppError::PreviewExpired));
     }
     let rename_spec = rename
@@ -171,7 +174,7 @@ pub async fn link_rewrite_apply(
     );
 
     put_operation(
-        &state,
+        state,
         operation_id.clone(),
         StoredOperation {
             backup_dir: report.backup_dir.clone(),
@@ -191,4 +194,23 @@ pub async fn link_rewrite_apply(
         file_count: report.files,
         span_count: report.hits,
     })
+}
+
+#[tauri::command]
+pub async fn link_rewrite_preview(
+    from_ref: String,
+    to_ref: String,
+    rename: Option<RenameSpec>,
+    state: State<'_, AppState>,
+) -> Result<RewritePreview, KpError> {
+    link_rewrite_preview_impl(&state, from_ref, to_ref, rename)
+}
+
+#[tauri::command]
+pub async fn link_rewrite_apply(
+    preview_id: String,
+    rename: Option<RenameSpec>,
+    state: State<'_, AppState>,
+) -> Result<RewriteResult, KpError> {
+    link_rewrite_apply_impl(&state, preview_id, rename)
 }

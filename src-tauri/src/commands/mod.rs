@@ -7,6 +7,8 @@ pub mod link;
 pub mod link_resolve;
 pub mod link_rewrite;
 pub mod link_rewrite_store;
+#[cfg(test)]
+mod link_rewrite_tests;
 pub mod link_view;
 pub mod note;
 pub mod paths;

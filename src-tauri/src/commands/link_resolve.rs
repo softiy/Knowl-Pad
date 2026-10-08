@@ -10,7 +10,6 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::commands::link_rewrite_store::{next_id, put_operation, StoredOperation};
-use crate::commands::paths::root_of;
 use crate::error_wrapper::KpError;
 use crate::state::AppState;
 use kp_domain::error::AppError;
@@ -18,7 +17,7 @@ use kp_domain::link_rewrite_apply::{apply, FileChange, RewritePlan};
 use kp_domain::link_rewrite_single::rewrite_occurrence_at;
 
 /// 与 PRD §5.3.3 的 `RewriteResult` 同形（歧义消解也返回它）。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RewriteResult {
     pub operation_id: String,
@@ -27,13 +26,15 @@ pub struct RewriteResult {
 }
 
 /// 把某条歧义链接改写为指定的**完整相对路径**。
-#[tauri::command]
-pub async fn link_resolve_ambiguous(
+/// 命令体（把状态作为参数传入，便于测试 —— 项目既有做法，见 DEBT-14）。
+pub(crate) fn link_resolve_ambiguous_impl(
+    state: &AppState,
     link_id: i64,
     target_rel_path: String,
-    state: State<'_, AppState>,
 ) -> Result<RewriteResult, KpError> {
-    let root = root_of(&state)?;
+    let root = state
+        .current_root()
+        .ok_or(KpError(AppError::VaultNotOpen))?;
     let pool = state.index_db().ok_or(KpError(AppError::VaultNotOpen))?;
 
     let (src_rel, line, col, _old_target) = crate::storage::link_query::link_by_id(&pool, link_id)
@@ -68,7 +69,7 @@ pub async fn link_resolve_ambiguous(
 
     let operation_id = next_id("op");
     put_operation(
-        &state,
+        state,
         operation_id.clone(),
         StoredOperation {
             backup_dir: report.backup_dir.clone(),
@@ -84,4 +85,13 @@ pub async fn link_resolve_ambiguous(
         file_count: report.files,
         span_count: report.hits,
     })
+}
+
+#[tauri::command]
+pub async fn link_resolve_ambiguous(
+    link_id: i64,
+    target_rel_path: String,
+    state: State<'_, AppState>,
+) -> Result<RewriteResult, KpError> {
+    link_resolve_ambiguous_impl(&state, link_id, target_rel_path)
 }

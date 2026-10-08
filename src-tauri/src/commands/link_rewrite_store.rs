@@ -76,12 +76,12 @@ pub fn get_operation(state: &AppState, id: &str) -> Option<StoredOperation> {
 
 /// **回滚**：从备份恢复该操作改过的文件；若该操作含重命名，**先**恢复链接、**再**把文件改回原名
 /// （技术方案 §6.1.3 步骤 4 明文要求这个顺序）。
-#[tauri::command]
-pub async fn link_rewrite_rollback(
+/// 命令体（把状态作为参数传入，便于测试 —— 项目既有做法，见 DEBT-14）。
+pub(crate) fn link_rewrite_rollback_impl(
+    state: &AppState,
     operation_id: String,
-    state: State<'_, AppState>,
 ) -> Result<(), KpError> {
-    let op = get_operation(&state, &operation_id)
+    let op = get_operation(state, &operation_id)
         .ok_or_else(|| KpError(AppError::FileNotFound(operation_id.clone())))?;
 
     for (i, rel) in op.modified.iter().enumerate() {
@@ -131,4 +131,12 @@ pub struct StoredOperation {
     pub modified: Vec<String>,
     /// 该操作顺带做过的重命名（先恢复链接、再把文件改回原名，见技术方案 §6.1.3 步骤 4）。
     pub renamed: Option<(String, String)>,
+}
+
+#[tauri::command]
+pub async fn link_rewrite_rollback(
+    operation_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), KpError> {
+    link_rewrite_rollback_impl(&state, operation_id)
 }
