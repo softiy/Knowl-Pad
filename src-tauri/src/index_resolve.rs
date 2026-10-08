@@ -3,8 +3,8 @@
 //! 候选来源（技术方案 §5.3.4 的三步）：`stem` → `rel_path`（含/不含 `.md`）→ `file_alias.alias`，
 //! 均**大小写不敏感**。
 //!
-//! 判定：候选恰好 1 个 → `resolved` 并写入 `dst_file_id`；0 个 → `dangling`；≥2 个 → `ambiguous`。
-//! **本切片不自动消歧**（MD-WL-04 的自动消解规则待补）——宁可标 ambiguous 让人看见，也不猜错。
+//! 判定：候选恰好 1 个 → `resolved` 并写入 `dst_file_id`；0 个 → `dangling`；
+//! ≥2 个时按 **MD-WL-04** 消歧：**同目录优先 → 最短路径优先**；仍不唯一 → `ambiguous`（不猜）。
 //!
 //! **性能（DEBT-04 实测逼出来的实现）**：候选表**一次性建好**（O(N)），随后每条链接 O(1) 查表。
 //! 早期实现是「每条链接一条 SQL」，在 10 万文件 / 1 万链接下实测 **750 秒**（`lower(stem) = lower(?1)`
@@ -25,13 +25,16 @@ pub struct ResolveOutcome {
     pub ambiguous: usize,
 }
 
-/// 小写键 → 候选文件 id 列表。
-type CandidateMap = HashMap<String, Vec<i64>>;
+/// 候选：(文件 id, 相对路径)。**路径是 MD-WL-04 消歧所必需的**。
+type Candidate = (i64, String);
 
-fn push(map: &mut CandidateMap, key: String, id: i64) {
+/// 小写键 → 候选列表。
+type CandidateMap = HashMap<String, Vec<Candidate>>;
+
+fn push(map: &mut CandidateMap, key: String, id: i64, rel_path: &str) {
     let entry = map.entry(key).or_default();
-    if !entry.contains(&id) {
-        entry.push(id);
+    if !entry.iter().any(|(existing, _)| *existing == id) {
+        entry.push((id, rel_path.to_string()));
     }
 }
 
@@ -48,25 +51,27 @@ fn build_candidates(conn: &Connection) -> Result<(CandidateMap, CandidateMap), A
             let id: i64 = row.get(0).map_err(|_| AppError::db("读取文件表"))?;
             let stem: String = row.get(1).map_err(|_| AppError::db("读取文件表"))?;
             let rel_path: String = row.get(2).map_err(|_| AppError::db("读取文件表"))?;
-            push(&mut by_name, stem.to_lowercase(), id);
+            push(&mut by_name, stem.to_lowercase(), id, &rel_path);
             let rel_lower = rel_path.to_lowercase();
-            push(&mut by_name, rel_lower.clone(), id);
+            push(&mut by_name, rel_lower.clone(), id, &rel_path);
             if let Some(stripped) = rel_lower.strip_suffix(".md") {
-                push(&mut by_name, stripped.to_string(), id);
+                push(&mut by_name, stripped.to_string(), id, &rel_path);
             }
         }
     }
     {
         let mut stmt = conn
             .prepare(
-                "SELECT fa.file_id, fa.alias FROM file_alias fa JOIN file f ON f.id = fa.file_id WHERE f.deleted = 0",
+                "SELECT fa.file_id, fa.alias, f.rel_path FROM file_alias fa \
+                 JOIN file f ON f.id = fa.file_id WHERE f.deleted = 0",
             )
             .map_err(|_| AppError::db("读取别名表"))?;
         let mut rows = stmt.query([]).map_err(|_| AppError::db("读取别名表"))?;
         while let Some(row) = rows.next().map_err(|_| AppError::db("读取别名表"))? {
             let id: i64 = row.get(0).map_err(|_| AppError::db("读取别名表"))?;
             let alias: String = row.get(1).map_err(|_| AppError::db("读取别名表"))?;
-            push(&mut by_alias, alias.to_lowercase(), id);
+            let rel_path: String = row.get(2).map_err(|_| AppError::db("读取别名表"))?;
+            push(&mut by_alias, alias.to_lowercase(), id, &rel_path);
         }
     }
     Ok((by_name, by_alias))
@@ -76,18 +81,21 @@ fn build_candidates(conn: &Connection) -> Result<(CandidateMap, CandidateMap), A
 pub fn resolve_links(conn: &Connection) -> Result<ResolveOutcome, AppError> {
     let (by_name, by_alias) = build_candidates(conn)?;
     let mut stmt = conn
-        .prepare("SELECT id, target_ref FROM link")
+        .prepare(
+            "SELECT l.id, l.target_ref, f.rel_path FROM link l \
+             JOIN file f ON f.id = l.src_file_id",
+        )
         .map_err(|_| AppError::db("读取待裁决链接"))?;
-    let rows: Vec<(i64, String)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+    let rows: Vec<(i64, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
         .map_err(|_| AppError::db("读取待裁决链接"))?
         .filter_map(Result::ok)
         .collect();
     drop(stmt);
 
     let mut out = ResolveOutcome::default();
-    for (link_id, target) in rows {
-        let (status, dst) = judge(&by_name, &by_alias, &target);
+    for (link_id, target, src_rel_path) in rows {
+        let (status, dst) = judge(&by_name, &by_alias, &target, &src_rel_path);
         conn.execute(
             "UPDATE link SET status = ?1, dst_file_id = ?2 WHERE id = ?3",
             rusqlite::params![status, dst, link_id],
@@ -152,20 +160,21 @@ pub fn resolve_links_matching(
     let (by_name, by_alias) = build_candidates(conn)?;
     let mut stmt = conn
         .prepare(
-            "SELECT l.id, l.target_ref FROM link l \
+            "SELECT l.id, l.target_ref, f.rel_path FROM link l \
+             JOIN file f ON f.id = l.src_file_id \
               WHERE l.src_file_id IN (SELECT id FROM _kp_changed) \
                  OR lower(l.target_ref) IN (SELECT key FROM _kp_targets)",
         )
         .map_err(|_| AppError::db("读取受影响链接"))?;
-    let rows: Vec<(i64, String)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+    let rows: Vec<(i64, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
         .map_err(|_| AppError::db("读取受影响链接"))?
         .filter_map(Result::ok)
         .collect();
     drop(stmt);
     let mut out = ResolveOutcome::default();
-    for (link_id, target) in rows {
-        let (status, dst) = judge(&by_name, &by_alias, &target);
+    for (link_id, target, src_rel_path) in rows {
+        let (status, dst) = judge(&by_name, &by_alias, &target, &src_rel_path);
         conn.execute(
             "UPDATE link SET status = ?1, dst_file_id = ?2 WHERE id = ?3",
             rusqlite::params![status, dst, link_id],
@@ -180,35 +189,74 @@ pub fn resolve_links_matching(
     Ok(out)
 }
 
-/// 裁决单条：候选 1 个 → resolved；0 → dangling；≥2 → ambiguous（不猜）。
+/// 取相对路径的目录部分（无 `/` 表示 Vault 根）。
+fn dir_of(rel_path: &str) -> &str {
+    rel_path.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
+}
+
+/// **MD-WL-04 消歧**：① 与源文件**同目录**的候选唯一 → 选它；
+/// ② 否则（或同目录有多个）在候选集里取**路径最短**者（按路径段数）；
+/// ③ 仍不唯一 → `None`（保持 `ambiguous`，不猜）。
+fn disambiguate(candidates: &[Candidate], src_rel_path: &str) -> Option<i64> {
+    let src_dir = dir_of(src_rel_path);
+    let same_dir: Vec<&Candidate> = candidates
+        .iter()
+        .filter(|(_, path)| dir_of(path) == src_dir)
+        .collect();
+    if same_dir.len() == 1 {
+        return Some(same_dir[0].0);
+    }
+    let pool: Vec<&Candidate> = if same_dir.is_empty() {
+        candidates.iter().collect()
+    } else {
+        same_dir
+    };
+    // "最短路径"取**层数**（路径段数），不拿字符长度当决胜 —— 那会在等深的候选之间
+    // 凭一两个字符的偶然差异替用户做选择，违背"宁可 ambiguous 也不猜"。
+    let depth = |p: &str| p.matches('/').count();
+    let best = pool.iter().map(|(_, p)| depth(p)).min()?;
+    let mut winners = pool.iter().filter(|(_, p)| depth(p) == best);
+    let first = winners.next()?;
+    if winners.next().is_some() {
+        return None; // 等深并列 → 不猜
+    }
+    Some(first.0)
+}
+
+/// 裁决单条：1 个候选 → resolved；0 → dangling；
+/// ≥2 → 先按 MD-WL-04 消歧（同目录 → 最短路径），仍不唯一才 ambiguous（不猜）。
 fn judge(
     by_name: &CandidateMap,
     by_alias: &CandidateMap,
     target: &str,
+    src_rel_path: &str,
 ) -> (&'static str, Option<i64>) {
     let key = target.trim().to_lowercase();
     if key.is_empty() {
         return ("dangling", None);
     }
     let without_md = key.strip_suffix(".md").unwrap_or(&key).to_string();
-    let mut candidates: Vec<i64> = Vec::new();
+    let mut candidates: Vec<Candidate> = Vec::new();
     for map_key in [&key, &without_md] {
-        if let Some(ids) = by_name.get(map_key) {
-            for id in ids {
-                if !candidates.contains(id) {
-                    candidates.push(*id);
+        if let Some(found) = by_name.get(map_key) {
+            for (id, path) in found {
+                if !candidates.iter().any(|(existing, _)| existing == id) {
+                    candidates.push((*id, path.clone()));
                 }
             }
         }
     }
     if candidates.is_empty() {
-        if let Some(ids) = by_alias.get(&key) {
-            candidates.extend(ids.iter().copied());
+        if let Some(found) = by_alias.get(&key) {
+            candidates.extend(found.iter().cloned());
         }
     }
     match candidates.len() {
-        1 => ("resolved", Some(candidates[0])),
+        1 => ("resolved", Some(candidates[0].0)),
         0 => ("dangling", None),
-        _ => ("ambiguous", None),
+        _ => match disambiguate(&candidates, src_rel_path) {
+            Some(id) => ("resolved", Some(id)),
+            None => ("ambiguous", None),
+        },
     }
 }
