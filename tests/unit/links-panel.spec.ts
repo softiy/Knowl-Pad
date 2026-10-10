@@ -186,3 +186,35 @@ describe('改写两步确认（FR-FILE-21 / PRD 的 preview_id）', () => {
     expect(hoisted.rollback).toHaveBeenCalledWith('op1');
   });
 });
+
+describe('反链面板的分组折叠与展开（FR-LINK-14 / FR-LINK-18）', () => {
+  it('点击来源可折叠/展开该组；超过默认上限时可展开更多', async () => {
+    setActivePinia(createPinia());
+    const many = Array.from({ length: 55 }, (_, i) => ({
+      srcRelPath: 'n' + i + '.md',
+      srcName: 'n' + i + '.md',
+      linkCount: 1,
+      embedCount: 0,
+      items: [{ line: 1, col: 1, linkKind: 'wikilink', snippet: null }],
+    }));
+    hoisted.backlinks.mockReset().mockResolvedValue(many);
+    hoisted.dangling.mockReset().mockResolvedValue({ items: [], total: 0 });
+    hoisted.ambiguous.mockReset().mockResolvedValue({ items: [], total: 0 });
+    hoisted.orphans.mockReset().mockResolvedValue({ items: [], total: 0 });
+
+    const w = mount(LinksPanel, { props: { activeRelPath: 'b.md' } });
+    await flushPromises();
+    // 默认只渲染前 50 组，其余折叠
+    const more = w.get('[data-testid="backlink-show-more"]');
+    expect(more.text()).toContain('还有 5 个来源');
+    await more.trigger('click');
+    expect(w.findAll('[data-testid="backlink-counts"]').length).toBe(55);
+
+    // 折叠/展开某一组
+    const toggle = w.get('[data-testid="backlink-toggle-n0.md"]');
+    await toggle.trigger('click');
+    expect(w.findAll('[data-testid="backlink-item"]').length).toBe(54);
+    await toggle.trigger('click');
+    expect(w.findAll('[data-testid="backlink-item"]').length).toBe(55);
+  });
+});

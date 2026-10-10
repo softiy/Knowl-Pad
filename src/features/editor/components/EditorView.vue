@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { asKpError } from '@core/ipc/errors';
 import { bindShortcuts } from '@core/shortcut';
 import { createEditorAdapter, type KpEditorAdapter } from '../adapter';
+import { consumeReveal } from '../adapter/consumeReveal';
 import { AUTOSAVE_DEFAULT_MS, useEditorStore, type ConflictChoice, type EditorMode } from '../stores/editor';
 import ConflictDialog from './ConflictDialog.vue';
 import EditorTabs from './EditorTabs.vue';
@@ -76,6 +77,8 @@ function toggleFind(): void {
   findOpen.value = !findOpen.value;
   if (findOpen.value) runFind();
 }
+
+consumeReveal({ current: () => store.pendingReveal, active: () => store.activeRelPath, clear: () => store.clearReveal(), adapter: () => adapter });
 
 onMounted(() => {
   adapter = createEditorAdapter();

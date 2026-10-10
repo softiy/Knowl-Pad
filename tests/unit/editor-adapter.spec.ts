@@ -127,3 +127,21 @@ describe('内核工厂（ED-05）', () => {
     }
   });
 });
+
+describe('行定位的纯函数实现（FR-LINK-13）', () => {
+  it('按 1-based 选中目标行；越界收敛；无宿主/无可编辑元素时返回 false', async () => {
+    const { revealLineIn } = await import('@features/editor/adapter/revealLine');
+    expect(revealLineIn(null, 'a\nb', 1)).toBe(false);
+    const host = document.createElement('div');
+    expect(revealLineIn(host, 'a\nb', 1)).toBe(false); // 还没有 textarea
+    const ta = document.createElement('textarea');
+    ta.value = '第一行\n第二行\n第三行';
+    host.appendChild(ta);
+    expect(revealLineIn(host, ta.value, 2)).toBe(true);
+    expect(ta.value.slice(ta.selectionStart, ta.selectionEnd)).toBe('第二行');
+    expect(revealLineIn(host, ta.value, 99)).toBe(true);
+    expect(ta.value.slice(ta.selectionStart, ta.selectionEnd)).toBe('第三行');
+    expect(revealLineIn(host, ta.value, -5)).toBe(true);
+    expect(ta.value.slice(ta.selectionStart, ta.selectionEnd)).toBe('第一行');
+  });
+});

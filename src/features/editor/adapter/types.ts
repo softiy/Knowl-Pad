@@ -45,6 +45,11 @@ export interface KpEditorAdapter {
   triggerSuggest(kind: 'link' | 'tag' | 'heading'): void;
   find(query: string, opts: FindOptions): InFileMatch[];
   replace(matches: InFileMatch[], replacement: string): ReplaceResult;
+  /**
+   * 滚动到第 line 行（**1-based**，与索引口径一致）并选中该行文本（FR-LINK-13）。
+   * 返回是否真的定位成功：引擎能力不足时返回 false，由调用方**如实降级**，绝不假装定位过。
+   */
+  revealLine(line: number): boolean;
   /** 释放全部资源（DOM 监听器、定时器、编辑器实例）——ED-01。 */
   destroy(): void;
 }
