@@ -61,6 +61,11 @@ function toBuffer(relPath: string, content: string, mtimeMs: number): EditorBuff
 export const useEditorStore = defineStore('editor', () => {
   const buffers = ref<EditorBuffer[]>([]);
   const activeRelPath = ref<string | null>(null);
+/**
+ * 待定位行（FR-LINK-13）：点击反链后由 store 记下，视图侧消费一次。
+ * 之所以放在 store：**打开笔记是异步的**，组件可能还没挂上，定位请求不能丢。
+ */
+const pendingReveal = ref<{ relPath: string; line: number } | null>(null);
   const mode = ref<EditorMode>('edit');
   const autosaveDelayMs = ref(AUTOSAVE_DEFAULT_MS);
   /** 每个缓冲区的自动保存定时器（关闭/卸载时必须清掉，ED-01 的同源约束） */
@@ -288,7 +293,22 @@ export const useEditorStore = defineStore('editor', () => {
     activeRelPath.value = null;
   }
 
+
+  /** 打开来源笔记并请求定位到该行（FR-LINK-13）。 */
+  async function reveal(relPath: string, line: number): Promise<void> {
+    await openNote(relPath);
+    pendingReveal.value = { relPath, line };
+  }
+
+  /** 视图消费完定位请求后清除（避免重复定位）。 */
+  function clearReveal(): void {
+    pendingReveal.value = null;
+  }
+
   return {
+    pendingReveal,
+    reveal,
+    clearReveal,
     buffers,
     activeRelPath,
     mode,

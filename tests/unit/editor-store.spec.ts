@@ -220,3 +220,45 @@ describe('目录重命名跟随子树（M1/M2 复核 major：FR-FILE-28）', () 
     expect(store.buffers.map((b) => b.relPath)).toEqual(before);
   });
 });
+
+describe('反链点击定位（FR-LINK-13）', () => {
+  it('reveal 打开来源笔记并记下待定位行；clearReveal 清空', async () => {
+    const store = useEditorStore();
+    await store.reveal('dir/a.md', 7);
+    expect(store.activeRelPath).toBe('dir/a.md');
+    expect(store.pendingReveal).toEqual({ relPath: 'dir/a.md', line: 7 });
+    store.clearReveal();
+    expect(store.pendingReveal).toBeNull();
+  });
+
+  it('consumeReveal：只在该笔记活动时定位一次；能力不足则如实降级', async () => {
+    const { consumeReveal } = await import('@features/editor/adapter/consumeReveal');
+    const seen: number[] = [];
+    let degraded = 0;
+    let req: { relPath: string; line: number } | null = { relPath: 'a.md', line: 5 };
+    const stop = consumeReveal({
+      current: () => req,
+      active: () => 'a.md',
+      clear: () => { req = null; },
+      adapter: () => ({ revealLine: (line: number) => { seen.push(line); return false; } }),
+      onDegrade: () => { degraded += 1; },
+    });
+    expect(seen).toEqual([5]);
+    expect(degraded).toBe(1);
+    expect(req).toBeNull();
+    stop();
+  });
+
+  it('consumeReveal：活动笔记还不是请求的那篇时不消费', async () => {
+    const { consumeReveal } = await import('@features/editor/adapter/consumeReveal');
+    let calls = 0;
+    const stop = consumeReveal({
+      current: () => ({ relPath: 'b.md', line: 1 }),
+      active: () => 'a.md',
+      clear: () => {},
+      adapter: () => ({ revealLine: () => { calls += 1; return true; } }),
+    });
+    expect(calls).toBe(0);
+    stop();
+  });
+});

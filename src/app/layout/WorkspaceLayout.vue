@@ -55,7 +55,7 @@ function onOpen(relPath: string): void {
 
 /** 点击反链/孤立项：打开来源笔记（FR-LINK-13 的第一半；滚动定位与高亮见遗留项）。 */
 function onOpenLink(payload: { relPath: string; line: number }): void {
-  void editor.openNote(payload.relPath);
+  void editor.reveal(payload.relPath, payload.line);
 }
 
 function parentOf(relPath: string, isDir: boolean): string {

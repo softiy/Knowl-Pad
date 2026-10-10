@@ -1,3 +1,4 @@
+import { revealLineIn } from './revealLine';
 import { createApp, defineComponent, h, ref, watch, type App } from 'vue';
 import { MdEditor } from 'md-editor-v3';
 import 'md-editor-v3/lib/style.css';
@@ -24,6 +25,8 @@ export const CHANGE_THROTTLE_MS = 16;
  */
 export class MdEditorV3Adapter implements KpEditorAdapter {
   private app: App<Element> | null = null;
+  /** 宿主元素（mount 时记下；revealLine 靠它找到可编辑元素）。 */
+  private host: HTMLElement | null = null;
   private value = '';
   private readonly handlers = new Map<EditorEvent, Set<(...args: unknown[]) => void>>();
   private applyExternal: ((next: string) => void) | null = null;
@@ -34,6 +37,7 @@ export class MdEditorV3Adapter implements KpEditorAdapter {
   private suppressChange = false;
 
   mount(el: HTMLElement, opts: EditorOptions): void {
+    this.host = el;
     if (this.app) {
       return; // 已挂载：复用实例（ED-01）
     }
@@ -134,7 +138,12 @@ export class MdEditorV3Adapter implements KpEditorAdapter {
     return { replaced: matches.length };
   }
 
+  revealLine(line: number): boolean {
+    return revealLineIn(this.host, this.value, line);
+  }
+
   destroy(): void {
+    this.host = null;
     if (this.pendingTimer !== null) {
       clearTimeout(this.pendingTimer);
       this.pendingTimer = null;
