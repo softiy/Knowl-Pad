@@ -93,6 +93,55 @@ describe('链接面板', () => {
   });
 });
 
+describe('链接面板：其余页签与边界', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    hoisted.backlinks.mockReset().mockResolvedValue([]);
+    hoisted.dangling.mockReset().mockResolvedValue({ items: [{ targetRef: 'missing', refCount: 4, sourceCount: 2, sampleSources: ['a.md'] }], total: 1 });
+    hoisted.ambiguous.mockReset().mockResolvedValue({ items: [], total: 0 });
+    hoisted.orphans.mockReset().mockResolvedValue({ items: ['solo.md'], total: 1 });
+  });
+
+  it('悬空页签列出处数与来源数（FR-LINK-20）', async () => {
+    const w = mount(LinksPanel, { props: {} });
+    await flushPromises();
+    await w.get('[data-testid="links-tab-dangling"]').trigger('click');
+    const item = w.get('[data-testid="dangling-item"]');
+    expect(item.text()).toContain('missing');
+    expect(item.text()).toContain('被 4 处引用');
+    expect(item.text()).toContain('2 篇');
+  });
+
+  it('孤立页签点击即打开该笔记（FR-LINK-21 / FR-LINK-13）', async () => {
+    const w = mount(LinksPanel, { props: {} });
+    await flushPromises();
+    await w.get('[data-testid="links-tab-orphans"]').trigger('click');
+    const btn = w.get('[data-testid="orphan-item"] button');
+    expect(btn.text()).toBe('solo.md');
+    await btn.trigger('click');
+    expect(w.emitted('open')?.[0]?.[0]).toEqual({ relPath: 'solo.md', line: 1 });
+  });
+
+  it('空清单给出提示而不是空白（悬空与歧义都为空时）', async () => {
+    hoisted.dangling.mockResolvedValue({ items: [], total: 0 });
+    hoisted.ambiguous.mockResolvedValue({ items: [], total: 0 });
+    const w = mount(LinksPanel, { props: {} });
+    await flushPromises();
+    await w.get('[data-testid="links-tab-dangling"]').trigger('click');
+    expect(w.get('[data-testid="links-dangling"]').text()).toContain('没有悬空链接');
+    await w.get('[data-testid="links-tab-ambiguous"]').trigger('click');
+    expect(w.get('[data-testid="links-ambiguous"]').text()).toContain('没有歧义链接');
+  });
+
+  it('查询失败时面板显示可见错误（R-15），卸载时退订（不留悬挂订阅）', async () => {
+    hoisted.dangling.mockRejectedValue(new Error('boom'));
+    const w = mount(LinksPanel, { props: {} });
+    await flushPromises();
+    expect(w.get('[data-testid="links-error"]').text()).toBeTruthy();
+    w.unmount(); // 覆盖 onUnmounted → links.dispose()
+  });
+});
+
 describe('改写两步确认（FR-FILE-21 / PRD 的 preview_id）', () => {
   beforeEach(() => {
     setActivePinia(createPinia());

@@ -1,4 +1,16 @@
 import { mount, flushPromises } from '@vue/test-utils';
+
+// 该 spec 挂载整个布局 → 其中的 IndexBadge / LinksPanel 会订阅索引与文件事件。
+// 全局 setup 已兜底，这里仍显式 mock：把依赖写在用例里，读的人一眼能看到。
+vi.mock('@core/ipc/events', () => ({
+  onIndexProgress: vi.fn(async () => () => {}),
+  onIndexCompleted: vi.fn(async () => () => {}),
+  onIndexFailed: vi.fn(async () => () => {}),
+  onFsCreated: vi.fn(async () => () => {}),
+  onFsModified: vi.fn(async () => () => {}),
+  onFsRemoved: vi.fn(async () => () => {}),
+  onFsRenamed: vi.fn(async () => () => {}),
+}));
 import { defineComponent } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
