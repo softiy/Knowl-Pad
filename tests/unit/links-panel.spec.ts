@@ -187,34 +187,68 @@ describe('改写两步确认（FR-FILE-21 / PRD 的 preview_id）', () => {
   });
 });
 
-describe('反链面板的分组折叠与展开（FR-LINK-14 / FR-LINK-18）', () => {
-  it('点击来源可折叠/展开该组；超过默认上限时可展开更多', async () => {
+describe('反链分组折叠（FR-LINK-14）', () => {
+  beforeEach(() => {
     setActivePinia(createPinia());
-    const many = Array.from({ length: 55 }, (_, i) => ({
+    hoisted.backlinks.mockReset().mockResolvedValue([
+      { srcRelPath: 'n0.md', srcName: 'n0.md', linkCount: 1, embedCount: 0, items: [{ line: 1, col: 1, linkKind: 'wikilink', snippet: null }] },
+      { srcRelPath: 'n1.md', srcName: 'n1.md', linkCount: 1, embedCount: 0, items: [{ line: 2, col: 1, linkKind: 'wikilink', snippet: null }] },
+    ]);
+    hoisted.dangling.mockReset().mockResolvedValue({ items: [], total: 0 });
+    hoisted.ambiguous.mockReset().mockResolvedValue({ items: [], total: 0 });
+    hoisted.orphans.mockReset().mockResolvedValue({ items: [], total: 0 });
+  });
+
+  it('点击来源可折叠/展开该组', async () => {
+    const w = mount(LinksPanel, { props: { activeRelPath: 'b.md' } });
+    await flushPromises();
+    expect(w.findAll('[data-testid="backlink-item"]').length).toBe(2);
+    await w.get('[data-testid="backlink-toggle-n0.md"]').trigger('click');
+    expect(w.findAll('[data-testid="backlink-item"]').length).toBe(1);
+    await w.get('[data-testid="backlink-toggle-n0.md"]').trigger('click');
+    expect(w.findAll('[data-testid="backlink-item"]').length).toBe(2);
+  });
+});
+
+describe('反链虚拟滚动（FR-LINK-18：超过 500 条）', () => {
+  const make = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
       srcRelPath: 'n' + i + '.md',
       srcName: 'n' + i + '.md',
       linkCount: 1,
       embedCount: 0,
       items: [{ line: 1, col: 1, linkKind: 'wikilink', snippet: null }],
     }));
-    hoisted.backlinks.mockReset().mockResolvedValue(many);
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    hoisted.backlinks.mockReset().mockResolvedValue(make(600));
     hoisted.dangling.mockReset().mockResolvedValue({ items: [], total: 0 });
     hoisted.ambiguous.mockReset().mockResolvedValue({ items: [], total: 0 });
     hoisted.orphans.mockReset().mockResolvedValue({ items: [], total: 0 });
+  });
 
-    const w = mount(LinksPanel, { props: { activeRelPath: 'b.md' } });
+  it('600 个来源时只渲染视口内的少数分组，并给出虚拟滚动提示', async () => {
+    const w = mount(LinksPanel, { props: { activeRelPath: 'b.md' }, attachTo: document.body });
     await flushPromises();
-    // 默认只渲染前 50 组，其余折叠
-    const more = w.get('[data-testid="backlink-show-more"]');
-    expect(more.text()).toContain('还有 5 个来源');
-    await more.trigger('click');
-    expect(w.findAll('[data-testid="backlink-counts"]').length).toBe(55);
+    const rendered = w.findAll('[data-testid="backlink-group"]').length;
+    expect(rendered).toBeGreaterThan(0);
+    expect(rendered).toBeLessThan(60);
+    expect(w.get('[data-testid="backlink-virtual-hint"]').text()).toContain('共 600 个来源');
+    w.unmount();
+  });
 
-    // 折叠/展开某一组
-    const toggle = w.get('[data-testid="backlink-toggle-n0.md"]');
-    await toggle.trigger('click');
-    expect(w.findAll('[data-testid="backlink-item"]').length).toBe(54);
-    await toggle.trigger('click');
-    expect(w.findAll('[data-testid="backlink-item"]').length).toBe(55);
+  it('滚动后渲染的窗口跟着移动（首组不再渲染）', async () => {
+    const w = mount(LinksPanel, { props: { activeRelPath: 'b.md' }, attachTo: document.body });
+    await flushPromises();
+    const host = w.get('[data-testid="backlink-panel"]');
+    const el = host.element as HTMLElement;
+    el.scrollTop = 4000;
+    await host.trigger('scroll');
+    await flushPromises();
+    const names = w.findAll('[data-testid="backlink-group"]').map((n) => n.text());
+    expect(names.length).toBeGreaterThan(0);
+    expect(names.some((x) => x.includes('n0.md'))).toBe(false);
+    w.unmount();
   });
 });
