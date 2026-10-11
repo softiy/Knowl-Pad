@@ -320,3 +320,44 @@ fn ac_link_03_rename_keeps_all_backlinks_and_leaves_no_dead_links() {
     let old = link_backlinks_impl(&state, "A.md", true).expect("旧名反链");
     assert!(old.is_empty(), "旧名不应再有反链");
 }
+
+/// **技术方案 §6.1.1 的"逐处 diff 片段"**：预览必须给出每一处的**原文 → 新文**，
+/// 而不是只有逐文件处数；并且每处带上 1-based 行号、保留别名/锚点。
+#[test]
+fn preview_carries_per_occurrence_diffs() {
+    let (dir, state) = fixture(&[
+        ("A.md", "# 甲\n"),
+        ("one.md", "第一行\n见 [[A]] 与别的字\n见 [[A|别名]]\n"),
+    ]);
+    let preview =
+        link_rewrite_preview_impl(&state, "A.md".into(), "B.md".into(), None).expect("预览");
+    assert_eq!(preview.file_count, 1);
+    assert_eq!(preview.span_count, 2);
+
+    let edit = &preview.edits[0];
+    assert_eq!(edit.rel_path, "one.md");
+    assert_eq!(edit.hits, 2, "处数仍以 hits 为准");
+    assert_eq!(edit.occurrences.len(), 2, "两处各给一条差异");
+    assert_eq!(edit.occurrences[0].line, 2, "1-based 行号");
+    assert_eq!(edit.occurrences[0].before, "[[A]]", "给出的是整条链接");
+    assert_eq!(edit.occurrences[0].after, "[[B]]");
+    assert_eq!(edit.occurrences[1].line, 3);
+    assert_eq!(edit.occurrences[1].before, "[[A|别名]]", "别名一起带上");
+    assert_eq!(edit.occurrences[1].after, "[[B|别名]]");
+    let _ = dir;
+}
+
+/// 载荷控制：单文件差异最多 20 条（完整处数看 hits），避免把上千处全传给前端。
+#[test]
+fn preview_caps_occurrences_per_file() {
+    let mut content = String::from("# 头\n");
+    for _ in 0..30 {
+        content.push_str("见 [[A]]\n");
+    }
+    let (_d, state) = fixture(&[("A.md", "# 甲\n"), ("many.md", content.as_str())]);
+    let preview =
+        link_rewrite_preview_impl(&state, "A.md".into(), "B.md".into(), None).expect("预览");
+    let edit = &preview.edits[0];
+    assert_eq!(edit.hits, 30, "完整处数不截断");
+    assert_eq!(edit.occurrences.len(), 20, "逐处差异截断到 20 条");
+}

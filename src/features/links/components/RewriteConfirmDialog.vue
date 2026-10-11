@@ -85,7 +85,14 @@ async function doRollback(): Promise<void> {
       将修改 {{ preview.fileCount }} 个文件中的 {{ preview.spanCount }} 处链接
     </p>
     <ul v-if="preview" data-testid="rewrite-preview-items">
-      <li v-for="e in preview.edits" :key="e.relPath">{{ e.relPath }}（{{ e.hits }} 处）</li>
+      <li v-for="e in preview.edits" :key="e.relPath">
+        {{ e.relPath }}（{{ e.hits }} 处）
+        <ul v-if="e.occurrences.length" data-testid="rewrite-preview-diff">
+          <li v-for="(o, i) in e.occurrences" :key="e.relPath + '-' + i">
+            第 {{ o.line }} 行：<code>{{ o.before }}</code> → <code>{{ o.after }}</code>
+          </li>
+        </ul>
+      </li>
     </ul>
     <button v-if="preview" type="button" :disabled="busy" data-testid="rewrite-apply" @click="doApply">
       确认执行

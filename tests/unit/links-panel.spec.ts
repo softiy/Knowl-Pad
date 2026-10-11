@@ -161,7 +161,13 @@ describe('改写两步确认（FR-FILE-21 / PRD 的 preview_id）', () => {
     setActivePinia(createPinia());
     hoisted.preview.mockReset().mockResolvedValue({
       previewId: 'p1', fromRef: 'A', toRef: 'B', fileCount: 2, spanCount: 3,
-      edits: [{ relPath: 'a.md', hits: 2 }, { relPath: 'b.md', hits: 1 }], createdAtMs: 1,
+      edits: [
+        { relPath: 'a.md', hits: 2, occurrences: [
+          { line: 3, before: '[[A]]', after: '[[B]]' },
+          { line: 5, before: '[[A|别名]]', after: '[[B|别名]]' },
+        ] },
+        { relPath: 'b.md', hits: 1, occurrences: [] },
+      ], createdAtMs: 1,
     });
     hoisted.apply.mockReset().mockResolvedValue({ operationId: 'op1', fileCount: 2, spanCount: 3 });
     hoisted.rollback.mockReset().mockResolvedValue(undefined);
@@ -174,6 +180,13 @@ describe('改写两步确认（FR-FILE-21 / PRD 的 preview_id）', () => {
     await w.get('[data-testid="rewrite-preview"]').trigger('click');
     await flushPromises();
     expect(w.get('[data-testid="rewrite-preview-summary"]').text()).toContain('将修改 2 个文件中的 3 处链接');
+    // 逐处差异：让人看到每一处的原文 → 新文（§6.1.1）
+    const diffs = w.findAll('[data-testid="rewrite-preview-diff"] li');
+    expect(diffs.length).toBe(2);
+    expect(diffs[0].text()).toContain('第 3 行');
+    expect(diffs[0].text()).toContain('[[A]]');
+    expect(diffs[0].text()).toContain('[[B]]');
+    expect(diffs[1].text()).toContain('[[A|别名]]');
     expect(hoisted.apply).not.toHaveBeenCalled();
 
     await w.get('[data-testid="rewrite-apply"]').trigger('click');
