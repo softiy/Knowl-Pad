@@ -5,7 +5,9 @@
 
 use std::sync::Arc;
 
-use crate::commands::link::{link_ambiguous_list_impl, link_backlinks_impl};
+use crate::commands::link::{
+    link_ambiguous_list_impl, link_backlinks_impl, link_dangling_list_impl,
+};
 use crate::commands::link_resolve::link_resolve_ambiguous_impl;
 use crate::commands::link_rewrite::{
     link_rewrite_apply_impl, link_rewrite_preview_impl, RenameSpec,
@@ -254,4 +256,67 @@ fn ac_link_04_ten_ambiguous_links_specify_one() {
         back.iter().any(|g| g.src_rel_path == "src.md"),
         "f2/note.md 应拿到来自 src.md 的反链"
     );
+}
+
+/// **AC-LINK-03 的计数断言（端到端）**：重命名并改写后，**反链条数必须保持**且**不得出现死链**。
+///
+/// 场景：300 篇笔记各有一条 `[[A]]` → 把 `A.md` 改名为 `B.md`（联合操作，FR-FILE-22）→
+/// 重新索引后断言：① `B.md` 的反链仍是 **300 组**（每篇一处）；② 悬空清单为**空**（没有死链）；
+/// ③ 歧义清单为空；④ 旧名 `A.md` 不再有任何反链。
+#[test]
+fn ac_link_03_rename_keeps_all_backlinks_and_leaves_no_dead_links() {
+    let mut files: Vec<(String, String)> = vec![("A.md".into(), "# 甲\n".into())];
+    for i in 0..300 {
+        files.push((
+            format!("notes/n{i:03}.md"),
+            format!("# 笔记 {i}\n\n见 [[A]]\n"),
+        ));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let (dir, state) = fixture(&refs);
+    let root = dir.path();
+
+    // ① 改名前的反链：300 组
+    let before = link_backlinks_impl(&state, "A.md", true).expect("反链");
+    assert_eq!(before.len(), 300, "300 篇各有一条反链");
+    assert_eq!(before.iter().map(|g| g.link_count).sum::<usize>(), 300);
+
+    // ② 改名 + 改写（一次可回滚操作）
+    let rename = RenameSpec {
+        from: "A.md".into(),
+        to: "B.md".into(),
+    };
+    let preview =
+        link_rewrite_preview_impl(&state, "A.md".into(), "B.md".into(), Some(rename.clone()))
+            .expect("预览");
+    assert_eq!(preview.file_count, 300, "300 个文件都要改写");
+    assert_eq!(preview.span_count, 300, "共 300 处");
+    link_rewrite_apply_impl(&state, preview.preview_id.clone(), Some(rename)).expect("执行");
+    assert!(root.join("B.md").exists(), "文件已改名");
+
+    // ③ 重新索引后：反链仍 300 组、无死链、无歧义、旧名无残留
+    let pool = state.index_db().expect("索引库");
+    crate::index_engine::full_index(&pool, root, |_, _| {}).expect("重新索引");
+    let after = link_backlinks_impl(&state, "B.md", true).expect("反链");
+    assert_eq!(after.len(), 300, "改名后反链条数必须保持（AC-LINK-03）");
+    assert_eq!(
+        after.iter().map(|g| g.link_count).sum::<usize>(),
+        300,
+        "总数也不能少"
+    );
+    assert!(
+        after
+            .iter()
+            .all(|g| g.items.iter().all(|i| i.snippet.is_some())),
+        "每条反链都还能取到片段，说明指向的是真实文件"
+    );
+    let dangling = link_dangling_list_impl(&state).expect("悬空");
+    assert_eq!(dangling.total, 0, "改名 + 改写后不得留下死链");
+    let ambiguous = link_ambiguous_list_impl(&state).expect("歧义");
+    assert_eq!(ambiguous.total, 0, "也不应变成歧义");
+    let old = link_backlinks_impl(&state, "A.md", true).expect("旧名反链");
+    assert!(old.is_empty(), "旧名不应再有反链");
 }
