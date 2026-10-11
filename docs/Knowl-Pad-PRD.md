@@ -2068,7 +2068,7 @@ interface KpError {
 | `CODE-08` | 每个 feature 模块与 Rust domain 模块必须有 `README.md` 说明职责边界（对应 FE/RS 约束） |
 | `CODE-09` | Git 提交遵循 Conventional Commits（见技术方案 §9）；**禁止**直接推送到 `main`，须经 PR + Code Review |
 | `CODE-10` | 代码注释解释「为什么」而非「做什么」；复杂算法（链接改写、分词、索引一致性）必须有设计说明注释 |
-| `CODE-11` | 单文件行数限制：**警告阈值 200 行**，**硬性上限 350 行**。超出警告阈值时 linter 报 warning；超出硬性上限时 CI 门禁报 error 并拒绝合并。Rust 文件同样适用（含 `mod.rs`）。测试文件与 `schema.rs`（DDL 定义）豁免硬性上限 |
+| `CODE-11` | 单文件行数限制：**警告阈值 200 行**，**硬性上限 350 行**。超出警告阈值时 linter 报 warning；超出硬性上限时 CI 门禁报 error 并拒绝合并。Rust 文件同样适用（含 `mod.rs`）。测试文件与 `schema.rs`（DDL 定义）**两级阈值均豁免**（实现见 `scripts/check-file-length.mjs` 的 `isExempt`）。**目的**：让单文件职责单一、便于审查与拆分，防止代码随迭代退化为"大泥球"（§2.5）——文件是模块的物理载体，单文件过长通常意味着职责不止一个。**200 与 350 是经验阈值，不是测量结论**；预警区另受"只降不升"的预算约束（`WARN_BUDGET`，见 DEBT-21）。 |
 
 ### 8.2 禁止事项（红线）
 
