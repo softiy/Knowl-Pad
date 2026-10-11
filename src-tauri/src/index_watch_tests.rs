@@ -12,16 +12,55 @@ use crate::storage::index::open;
 use kp_domain::error::AppError;
 
 /// 读取某目标的裁决状态。
-fn link_status(pool: &crate::storage::pool::DbPool, target: &str) -> String {
+/// 读某目标的裁决状态；**"还没有这一行"返回 None 而不是报错** ——
+/// 端到端用例里"写盘 → 监听 → 增量写库 → 裁决"是分步的，中间态是正常的。
+fn link_status_opt(pool: &crate::storage::pool::DbPool, target: &str) -> Option<String> {
     pool.with_reader(|conn| {
         conn.query_row(
             "SELECT status FROM link WHERE target_ref = ?1",
             rusqlite::params![target],
             |r| r.get::<_, String>(0),
         )
-        .map_err(|_| AppError::db("读裁决"))
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(AppError::db(&format!("读裁决：{other}"))),
+        })
     })
-    .expect("读裁决")
+    .ok()
+    .flatten()
+}
+
+fn link_status(pool: &crate::storage::pool::DbPool, target: &str) -> String {
+    link_status_opt(pool, target).expect("读裁决")
+}
+
+/// **等待**某目标的裁决变成期望值（带截止时间）。
+///
+/// 为什么必须等：`apply_changes` 的顺序是"增量写库 → 事件回调 → 一次裁决与计数重算"，
+/// 也就是说**事件到达时裁决还没做完**；用例收到事件后立刻读库，就会偶发读到旧状态
+/// 甚至读到"这一行还没写进来"。CI 上已经因此红过一次（ac_search_04），
+/// 本地也偶发过一次 —— 单次读取本身就是错的读法，不是机器慢。
+fn wait_for_status(
+    pool: &crate::storage::pool::DbPool,
+    target: &str,
+    want: &str,
+    deadline: std::time::Duration,
+) -> String {
+    let started = std::time::Instant::now();
+    let mut last = String::from("<尚无该行>");
+    loop {
+        if let Some(s) = link_status_opt(pool, target) {
+            if s == want {
+                return s;
+            }
+            last = s;
+        }
+        if started.elapsed() >= deadline {
+            panic!("等待 {target} 的裁决变为 {want} 超时（当前：{last}，已等 {deadline:?}）");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 fn count(pool: &crate::storage::pool::DbPool, sql: &str) -> i64 {
@@ -114,13 +153,14 @@ fn ac_search_04_external_change_is_indexed_and_searchable() {
         .expect("FTS 查询");
     assert!(hits >= 1, "外部新增的内容应可检索（expr = {expr}）");
     // 增量裁决：a.md 里有一条指向 `未来.md` 的链接，此刻应为 dangling
-    let status_before = link_status(&pool, "未来");
+    let status_before = wait_for_status(&pool, "未来", "dangling", Duration::from_secs(10));
     assert_eq!(status_before, "dangling", "文件还不存在时链接应为 dangling");
     fs::write(root.join("未来.md"), "# 未来\n").expect("外部写入第二篇");
     let _ = rx
         .recv_timeout(Duration::from_secs(15))
         .expect("应收到第二次变更");
-    let status_after = link_status(&pool, "未来");
+    // 事件到达 ≠ 裁决完成（apply_changes 的顺序是写库 → 回调 → 裁决），所以这里**等**
+    let status_after = wait_for_status(&pool, "未来", "resolved", Duration::from_secs(10));
     assert_eq!(
         status_after, "resolved",
         "增量裁决：目标文件出现后，原本悬空的链接应转为 resolved"
