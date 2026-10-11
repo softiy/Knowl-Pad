@@ -111,7 +111,12 @@ export interface RewritePreview {
   rename?: RenameSpec | null;
   fileCount: number;
   spanCount: number;
-  edits: { relPath: string; hits: number }[];
+  edits: {
+    relPath: string;
+    hits: number;
+    /** 逐处差异（技术方案 §6.1.1：每一处的原文 → 新文）；每个文件最多 20 处 */
+    occurrences: { line: number; before: string; after: string }[];
+  }[];
   createdAtMs: number;
 }
 /** 第一步：**只读**预览（FR-FILE-21 ②：将修改 N 个文件中的 M 处）。 */

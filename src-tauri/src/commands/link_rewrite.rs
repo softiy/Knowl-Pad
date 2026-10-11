@@ -21,11 +21,23 @@ pub struct RenameSpec {
     pub to: String,
 }
 
+/// 一处改写的前后片段（如 `[[A]]` → `[[B]]`）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OccurrenceDiffView {
+    pub line: u32,
+    pub before: String,
+    pub after: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RewriteEdit {
     pub rel_path: String,
     pub hits: usize,
+    /// 逐处差异（技术方案 §6.1.1：每一处的原文 → 新文）。为控 IPC 载荷，每个文件最多 20 处；
+    /// 完整处数仍看 `hits`。
+    pub occurrences: Vec<OccurrenceDiffView>,
 }
 
 /// PRD §5.3.3 的 \`RewritePreview\`：\`preview_id\` + 明细（文件数、处数、逐文件处数）。
@@ -68,6 +80,31 @@ fn candidates(pool: &crate::storage::pool::DbPool, from_ref: &str) -> Result<Vec
 
 /// **预览**（只读）：定位将改写的处数并冻结，返回 \`preview_id\`（FR-FILE-21 ②）。
 /// 命令体（把状态作为参数传入，便于测试 —— 项目既有做法，见 DEBT-14）。
+/// 把改写计划映射成预览用的逐文件条目（含逐处差异）。
+fn plan_to_edits(plan: &kp_domain::link_rewrite_apply::RewritePlan) -> Vec<RewriteEdit> {
+    /// 每个文件最多展示多少处差异（IPC 载荷控制）。
+    const MAX_PER_FILE: usize = 20;
+    plan.changes
+        .iter()
+        .map(|c| RewriteEdit {
+            rel_path: c.rel_path.clone(),
+            hits: c.hits,
+            occurrences: kp_domain::link_rewrite_diff::occurrence_diffs(
+                &c.old_content,
+                &c.new_content,
+                MAX_PER_FILE,
+            )
+            .into_iter()
+            .map(|d| OccurrenceDiffView {
+                line: d.line,
+                before: d.before,
+                after: d.after,
+            })
+            .collect(),
+        })
+        .collect()
+}
+
 pub(crate) fn link_rewrite_preview_impl(
     state: &AppState,
     from_ref: String,
@@ -88,14 +125,7 @@ pub(crate) fn link_rewrite_preview_impl(
         rename: rename.clone(),
         file_count: plan.changes.len(),
         span_count: plan.total_hits(),
-        edits: plan
-            .changes
-            .iter()
-            .map(|c| RewriteEdit {
-                rel_path: c.rel_path.clone(),
-                hits: c.hits,
-            })
-            .collect(),
+        edits: plan_to_edits(&plan),
         created_at_ms: now_ms(),
     };
     put_preview(

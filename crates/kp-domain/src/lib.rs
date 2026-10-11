@@ -9,6 +9,7 @@ pub mod file_tree;
 pub mod fs_atomic;
 pub mod link_rewrite;
 pub mod link_rewrite_apply;
+pub mod link_rewrite_diff;
 pub mod link_rewrite_protect;
 pub mod link_rewrite_single;
 pub mod md_parse;
