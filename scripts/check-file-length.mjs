@@ -4,6 +4,9 @@
 //
 // PRD CODE-11 原文：超警告阈值报 warning；超硬性上限 CI 报 error 并拒绝合并；
 // 「测试文件与 schema.rs（DDL 定义）豁免硬性上限」。
+// 对齐说明：豁免在**实现上对两级都生效**（measure() 里 exempt 的文件 level 恒为 "ok"，
+// 既不报 warning 也不报 error）。此前注释只提"硬性上限"，比实现窄 —— 这里与实现对齐，
+// 免得读的人以为测试文件还会被预警计数（它们不计入 WARN_BUDGET）。
 //
 // 豁免规则（本脚本的口径）：
 //   - 路径含 /tests/ 或文件名以 _tests.rs / _test.rs 结尾（测试文件）
