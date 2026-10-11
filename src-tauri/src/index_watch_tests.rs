@@ -349,3 +349,53 @@ fn ac_file_07_external_rename_reindexes_old_and_new_path() {
     let _ = rx.recv_timeout(Duration::from_secs(2)); // 事件内容已由上面的索引状态覆盖
     handle.stop();
 }
+
+/// **AC-LINK-02 的规模断言**：知识库到达规模后，**新建**一篇被大量链接指向的笔记，
+/// 增量路径必须在 **2 秒内**把那些链接判为 resolved，且**不是全量重建**。
+///
+/// 走的是**真实增量入口** `index_watch::apply_changes`（增量写库 → 一次增量裁决 → 计数重算），
+/// 不是直接调裁决函数，因此计时覆盖了 AC 关心的整条链路。
+/// 另外打印"全量索引"的对照耗时（按计划 §8 的做法：宽松断言 + 打印实测，避免慢机器 flaky）。
+#[test]
+fn ac_link_02_incremental_resolve_scales() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    const N: usize = 2000;
+    for i in 0..N {
+        std::fs::write(
+            root.join(format!("n{i:04}.md")),
+            format!("# 笔记 {i}\n\n见 [[future]]\n"),
+        )
+        .expect("写笔记");
+    }
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    let t_full = std::time::Instant::now();
+    crate::index_engine::full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    let full_ms = t_full.elapsed().as_millis();
+
+    let before: i64 = count(&pool, "SELECT count(*) FROM link WHERE status = 'dangling'");
+    assert_eq!(before as usize, N, "初始应全部悬空");
+
+    std::fs::write(root.join("future.md"), "# 目标\n").expect("写目标");
+    let t = std::time::Instant::now();
+    crate::index_watch::apply_changes(
+        &pool,
+        &root,
+        &[crate::index_watch::Change::Created("future.md".into())],
+        |_| {},
+    );
+    let inc_ms = t.elapsed().as_millis();
+    println!(
+        "AC-LINK-02 实测：{N} 篇 + {N} 条链接 —— 全量索引 {full_ms} ms；\
+         新建一篇被 {N} 条链接指向的笔记后的**增量**路径 {inc_ms} ms（红线 2s）"
+    );
+    assert!(inc_ms < 2000, "增量路径必须在 2 秒内（实测 {inc_ms} ms）");
+
+    let dangling: i64 = count(&pool, "SELECT count(*) FROM link WHERE status = 'dangling'");
+    let resolved: i64 = count(&pool, "SELECT count(*) FROM link WHERE status = 'resolved'");
+    assert_eq!(
+        dangling, 0,
+        "目标出现后不得再有悬空（一次增量裁决到位的证明）"
+    );
+    assert_eq!(resolved as usize, N, "2000 条全部转为 resolved");
+}
