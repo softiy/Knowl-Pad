@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use crate::commands::link::{link_ambiguous_list_impl, link_backlinks_impl};
 use crate::commands::link_resolve::link_resolve_ambiguous_impl;
 use crate::commands::link_rewrite::{
     link_rewrite_apply_impl, link_rewrite_preview_impl, RenameSpec,
@@ -192,4 +193,65 @@ fn resolve_unknown_link_errors() {
     let (_d, state) = fixture(&[("a.md", "# 甲\n")]);
     let err = link_resolve_ambiguous_impl(&state, 999_999, "x/y".into()).expect_err("必须失败");
     assert_eq!(err.0.code(), "E_FILE_NOT_FOUND");
+}
+
+/// **AC-LINK-04 的 10 条场景（端到端）**：
+/// 知识库里有 10 条 `[[note]]`、而 `note.md` 在两个目录下各有一个（2 个候选）→
+/// 用户为**其中一条**指定目标 → **只有那一条**被改写为 `[[f2/note]]`，其余 9 条保持 `[[note]]`
+/// 且**仍是歧义**（重新索引后 ref_count 从 10 降到 9），并且源文件已备份（FR-FILE-21）。
+#[test]
+fn ac_link_04_ten_ambiguous_links_specify_one() {
+    let mut src = String::from("# 来源\n");
+    for i in 0..10 {
+        src.push_str(&format!("第 {i} 行见 [[note]]\n"));
+    }
+    let (dir, state) = fixture(&[
+        ("f1/note.md", "# 候选一\n"),
+        ("f2/note.md", "# 候选二\n"),
+        ("src.md", src.as_str()),
+    ]);
+    let root = dir.path();
+
+    // ① 歧义清单：1 组、10 处引用、2 个候选、10 个 link_id
+    let page = link_ambiguous_list_impl(&state).expect("歧义清单");
+    assert_eq!(page.total, 1, "同目标名归一组");
+    let item = &page.items[0];
+    assert_eq!(item.target_ref, "note");
+    assert_eq!(item.ref_count, 10, "10 条歧义链接");
+    assert_eq!(
+        item.candidates,
+        vec!["f1/note.md", "f2/note.md"],
+        "2 个候选"
+    );
+    assert_eq!(item.link_ids.len(), 10, "每条都要有 id 才能逐条指定");
+
+    // ② 为**其中一条**（第 3 条）指定 f2/note.md
+    let chosen = item.link_ids[2];
+    let result = link_resolve_ambiguous_impl(&state, chosen, "f2/note.md".into()).expect("消解");
+    assert_eq!(result.file_count, 1, "只改一个文件");
+    assert_eq!(result.span_count, 1, "只改一处");
+
+    // ③ 源文件：恰好一条变成 [[f2/note]]，其余 9 条保持 [[note]]
+    let after = read(root, "src.md");
+    assert_eq!(after.matches("[[f2/note]]").count(), 1, "只改指定那一条");
+    assert_eq!(after.matches("[[note]]").count(), 9, "其余 9 条不动");
+    assert!(
+        after.contains("第 2 行见 [[f2/note]]"),
+        "改的是第 3 行（0-based 第 2 条）"
+    );
+
+    // ④ 备份必须产生（AC-LINK-04 的"已备份"）
+    let backup_root = root.join(".knowlpad/backup");
+    assert!(backup_root.exists(), "改写前必须备份");
+
+    // ⑤ 重新索引后：歧义只剩 9 条，且 f2/note 有了这条反链（闭环）
+    let pool = state.index_db().expect("索引库");
+    crate::index_engine::full_index(&pool, root, |_, _| {}).expect("重新索引");
+    let page2 = link_ambiguous_list_impl(&state).expect("歧义清单");
+    assert_eq!(page2.items[0].ref_count, 9, "被指定的那条已不再是歧义");
+    let back = link_backlinks_impl(&state, "f2/note.md", true).expect("反链");
+    assert!(
+        back.iter().any(|g| g.src_rel_path == "src.md"),
+        "f2/note.md 应拿到来自 src.md 的反链"
+    );
 }
