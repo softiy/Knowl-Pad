@@ -9,7 +9,7 @@ use kp_domain::path_guard::PathGuard;
 use kp_domain::snippet::{extract_snippet, DEFAULT_CONTEXT_LINES};
 
 /// 片段里的一行。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnippetLineView {
     pub line: u32,
@@ -18,7 +18,7 @@ pub struct SnippetLineView {
 }
 
 /// 反链的上下文片段（FR-LINK-11/12）。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnippetView {
     pub lines: Vec<SnippetLineView>,
@@ -28,7 +28,7 @@ pub struct SnippetView {
 }
 
 /// 一条反链（FR-LINK-11）。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BacklinkItem {
     pub line: u32,
@@ -40,7 +40,7 @@ pub struct BacklinkItem {
 }
 
 /// 按来源分组的一组反链（FR-LINK-14/15：按来源分组，嵌入与普通分开计数）。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BacklinkGroup {
     pub src_rel_path: String,
@@ -51,7 +51,7 @@ pub struct BacklinkGroup {
 }
 
 /// 出链（含状态）。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutgoingLink {
     pub target_ref: String,
@@ -65,7 +65,7 @@ pub struct OutgoingLink {
 }
 
 /// 标题（`link_headings`）。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HeadingItem {
     pub level: u32,
@@ -75,7 +75,7 @@ pub struct HeadingItem {
 }
 
 /// 悬空链接一项（FR-LINK-20）。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DanglingItem {
     pub target_ref: String,
@@ -84,7 +84,7 @@ pub struct DanglingItem {
     pub sample_sources: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DanglingPage {
     pub items: Vec<DanglingItem>,
@@ -92,7 +92,7 @@ pub struct DanglingPage {
 }
 
 /// 歧义链接一项（FR-LINK-22 / AC-LINK-04）。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AmbiguousItem {
     pub target_ref: String,
@@ -102,7 +102,7 @@ pub struct AmbiguousItem {
     pub link_ids: Vec<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AmbiguousPage {
     pub items: Vec<AmbiguousItem>,
@@ -110,7 +110,7 @@ pub struct AmbiguousPage {
 }
 
 /// 孤立笔记清单（FR-LINK-21）。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrphanPage {
     pub items: Vec<String>,
