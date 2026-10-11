@@ -9,6 +9,8 @@ pub mod link_rewrite;
 pub mod link_rewrite_store;
 #[cfg(test)]
 mod link_rewrite_tests;
+#[cfg(test)]
+mod link_tests;
 pub mod link_view;
 pub mod note;
 pub mod paths;
