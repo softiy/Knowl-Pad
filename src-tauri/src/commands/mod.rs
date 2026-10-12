@@ -13,6 +13,7 @@ pub mod link_rewrite_store;
 mod link_rewrite_tests;
 #[cfg(test)]
 mod link_tests;
+mod link_text;
 mod link_view;
 pub mod note;
 pub mod paths;

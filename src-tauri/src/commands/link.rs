@@ -5,9 +5,10 @@
 
 use tauri::State;
 
+use crate::commands::link_text::link_text_len;
 use crate::commands::link_view::{
-    link_text_len, read_note, snippet_of, AmbiguousItem, AmbiguousPage, BacklinkGroup,
-    BacklinkItem, HeadingItem, OrphanPage, OutgoingLink,
+    read_note, snippet_of, AmbiguousItem, AmbiguousPage, BacklinkGroup, BacklinkItem, HeadingItem,
+    OrphanPage, OutgoingLink,
 };
 use crate::commands::paths::root_of;
 use crate::error_wrapper::KpError;
