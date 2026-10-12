@@ -105,6 +105,7 @@ fn expired_preview_is_dropped() {
             from_ref: "A".into(),
             to_ref: "B".into(),
             rename: None,
+            mtimes: Vec::new(),
             plan: kp_domain::link_rewrite_apply::RewritePlan::default(),
         },
     );
@@ -360,4 +361,42 @@ fn preview_caps_occurrences_per_file() {
     let edit = &preview.edits[0];
     assert_eq!(edit.hits, 30, "完整处数不截断");
     assert_eq!(edit.occurrences.len(), 20, "逐处差异截断到 20 条");
+}
+
+/// **H2 的判据（技术方案 §6.1.5 的陈旧检测）**：预览之后文件被**外部改过**，
+/// 执行必须**中止**，并且**磁盘零改动** —— 不能按旧内容整文件覆盖（P-2 / R-07）。
+#[test]
+fn apply_aborts_when_a_file_changed_after_preview() {
+    let (dir, state) = fixture(&[
+        ("A.md", "# 甲\n"),
+        ("one.md", "见 [[A]]\n"),
+        ("two.md", "也见 [[A]]\n"),
+    ]);
+    let root = dir.path();
+    let p = link_rewrite_preview_impl(&state, "A.md".into(), "B.md".into(), None).expect("预览");
+    assert_eq!(p.file_count, 2);
+
+    // 外部改了其中一个文件（模拟用户切到编辑器/同步工具）
+    std::thread::sleep(std::time::Duration::from_millis(1100)); // 保证 mtime 真的变化
+    std::fs::write(root.join("two.md"), "也见 [[A]]\n外加一行外部修改\n").expect("外部改写");
+
+    let err = link_rewrite_apply_impl(&state, p.preview_id.clone(), None)
+        .expect_err("预览后文件被改过，执行必须中止");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("已被外部修改"),
+        "错误信息应说明是外部修改导致的（实际：{msg}）"
+    );
+
+    // 磁盘零改动：两个文件都还是原样，且没有产生备份
+    assert_eq!(
+        read(root, "one.md"),
+        "见 [[A]]\n",
+        "未被外部改的文件也不能动"
+    );
+    assert_eq!(
+        read(root, "two.md"),
+        "也见 [[A]]\n外加一行外部修改\n",
+        "外部修改必须原样保留"
+    );
 }
