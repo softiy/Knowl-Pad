@@ -87,10 +87,17 @@ pub fn move_to_trash(
 
     std::fs::rename(abs, &trash_abs)?;
     if let Err(err) = append_trash_manifest(root, &id, rel_path, is_dir, stamp, &trash_rel) {
-        let _ = std::fs::rename(&trash_abs, abs);
-        return Err(AppError::IoFailure(format!(
-            "回收站清单写入失败，已回滚删除（未删除任何文件）：{err}"
-        )));
+        // FR-TRASH-12 的清单是**权威来源**：绝不能留下「文件已从原位置消失、而清单里没有它」。
+        // 因此回滚移动**必须**成功；它失败时要**如实说出来** —— 此前是 let _ = rename(...) + 固定文案
+        // 「已回滚删除（未删除任何文件）」，用户会以为什么都没删，而文件其实躺在回收站目录里且清单不知情（审计 R4）。
+        return match std::fs::rename(&trash_abs, abs) {
+            Ok(()) => Err(AppError::IoFailure(format!(
+                "回收站清单写入失败，已回滚删除（未删除任何文件）：{err}"
+            ))),
+            Err(back) => Err(AppError::IoFailure(format!(
+                "回收站清单写入失败，且回滚删除也失败（{back}）：{rel_path} 现在位于回收站目录但清单里没有记录，请把它手动移回原位后再重试，不要直接删除它"
+            ))),
+        };
     }
     Ok(trash_rel)
 }
