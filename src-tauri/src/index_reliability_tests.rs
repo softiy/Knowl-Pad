@@ -124,14 +124,25 @@ fn ac_rel_03_rebuild_after_deleting_index_files_is_identical() {
         snapshot(&pool)
     };
     let index_dir = dir.path().join(".knowlpad");
-    let removed = fs::remove_dir_all(&index_dir).is_ok();
-    println!("AC-REL-03：物理删除索引目录成功 = {removed}");
+    // 审计 T-14：此前只把删除结果 **println** 出来，从不断言 ——
+    // 若 remove_dir_all 失败（占用/权限），下面比对的其实是"在**已有**索引上重建"，
+    // 也就是**形式一**，而这条用例自称"形式二"。关键前提必须断言。
+    let removed = fs::remove_dir_all(&index_dir);
+    assert!(
+        removed.is_ok(),
+        "物理删除索引目录必须成功，否则本用例退化成另一种情形：{removed:?}"
+    );
+    assert!(
+        !index_dir.exists(),
+        "remove_dir_all 返回 Ok 之后目录不应仍然存在（平台异常）"
+    );
     let pool = open(dir.path()).expect("重建索引库");
     full_index(&pool, dir.path(), |_, _| {}).expect("重建索引");
     assert_eq!(
         first,
         snapshot(&pool),
-        "AC-REL-03：重建后必须逐项一致（removed={removed}）"
+        "AC-REL-03：重建后必须逐项一致（删除成功={}）",
+        removed.is_ok()
     );
 }
 
