@@ -58,15 +58,29 @@ watch(
   () => {
     hintDismissed.value = false;
     copied.value = false;
+    copyError.value = null;
     gitCheckFailed.value = false;
     gitError.value = null;
     void refresh();
   },
 );
 
+/** 复制失败时的可操作提示（审计 F4：此前失败也显示"已复制"）。 */
+const copyError = ref<string | null>(null);
+
 async function copyRule(): Promise<void> {
-  copied.value = true;
-  await navigator.clipboard?.writeText(GITIGNORE_RULE);
+  // 审计 F4：此前先置 copied=true 再 await —— 剪贴板被浏览器拒绝（非安全上下文/无权限）时，
+  // 界面照旧显示"已复制"，用户以为规则已在剪贴板里；而且那条 rejection 也无人接。
+  // 现在只有**确实写成功**才算复制，失败给出可操作提示（FR-GIT-02 的提示本来就要求用户手工改）。
+  try {
+    if (!navigator.clipboard) throw new Error('当前环境未提供剪贴板 API');
+    await navigator.clipboard.writeText(GITIGNORE_RULE);
+    copied.value = true;
+    copyError.value = null;
+  } catch {
+    copied.value = false;
+    copyError.value = '复制失败，请手动把 .knowlpad/ 加入 .gitignore';
+  }
 }
 
 async function dismissHint(): Promise<void> {
@@ -90,6 +104,7 @@ async function dismissHint(): Promise<void> {
       <button type="button" data-testid="git-hint-copy" @click="copyRule">
         {{ copied ? '已复制' : '复制忽略规则' }}
       </button>
+      <span v-if="copyError" class="kp-status__hint" data-testid="git-hint-copy-error">{{ copyError }}</span>
       <button type="button" data-testid="git-hint-dismiss" @click="dismissHint">知道了</button>
     </div>
   </footer>
