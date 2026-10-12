@@ -383,7 +383,8 @@ fn ac_link_02_incremental_resolve_scales() {
         &root,
         &[crate::index_watch::Change::Created("future.md".into())],
         |_| {},
-    );
+    )
+    .expect("增量批次应当成功（失败会连事件一起不发，见 I1）");
     let inc_ms = t.elapsed().as_millis();
     println!(
         "AC-LINK-02 实测：{N} 篇 + {N} 条链接 —— 全量索引 {full_ms} ms；\
@@ -398,4 +399,52 @@ fn ac_link_02_incremental_resolve_scales() {
         "目标出现后不得再有悬空（一次增量裁决到位的证明）"
     );
     assert_eq!(resolved as usize, N, "2000 条全部转为 resolved");
+}
+
+/// **锁死"写连接不得卡在打开事务里"**（审计 I2）。
+///
+/// 背景（已在修复前**实测复现**）：`apply_changes` 原先是
+/// `conn.execute_batch("BEGIN IMMEDIATE")` **手工**开事务 + 结尾 COMMIT，闭包中途用 `?`
+/// 提前返回时**没有任何 ROLLBACK**（全仓 ROLLBACK 只出现在命令名里）。rusqlite 不跟踪
+/// execute_batch 开的事务，SQLite 也只在 IOERR/FULL/BUSY 这类错误上自动回滚 ——
+/// **纯 Rust 侧的 Err 绝不回滚**。实测到的后果：
+///   第二次开启事务失败：cannot start a transaction within a transaction
+/// 即写线程复用同一条连接后，**之后每一次增量索引写入都失败**（而 I1 又把失败吞掉，
+/// 徽标仍显示"就绪"），直到应用重启。
+///
+/// 修法：改用 `conn.unchecked_transaction()` —— `Transaction` **drop 即回滚**，
+/// 无论闭包从哪条路径返回。本用例锁住这条不变式：事务中途失败后，下一次事务必须开得起来。
+#[test]
+fn failed_batch_does_not_leave_the_connection_stuck_in_a_transaction() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲\n").expect("写笔记");
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+
+    // ① 事务中途失败（模拟 apply_changes 里任意一处 `?` 提前返回）
+    let first = pool.with_writer(|conn| {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|_| AppError::db("开启事务"))?;
+        let _ = &tx; // 事务里什么都没做就失败
+        Err::<(), _>(AppError::db("模拟中途失败"))
+    });
+    assert!(first.is_err(), "这一步就是「中途失败」");
+
+    // ② 下一次写事务必须仍能开起来 —— 修好前这里会报
+    //    "cannot start a transaction within a transaction"
+    let second = pool.with_writer(|conn| {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::db(&format!("第二次开启事务失败：{e}")))?;
+        tx.commit()
+            .map_err(|e| AppError::db(&format!("第二次提交失败：{e}")))?;
+        Ok(())
+    });
+    assert!(
+        second.is_ok(),
+        "一次失败的事务不得让写连接永久卡在打开事务上（当前：{:?}）",
+        second.err().map(|e| e.to_string())
+    );
 }
