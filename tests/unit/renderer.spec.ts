@@ -81,6 +81,14 @@ describe('renderMarkdown（§7.2 管线）', () => {
   });
 });
 
+/** 去掉块注释与行注释，**保留行号**（块注释整体替换成等量空白，换行不变）。 */
+const stripComments = (text: string): string =>
+  text
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .split('\n')
+    .map((l) => l.split('//')[0] ?? '')
+    .join('\n');
+
 describe('R-05 / FR-EDITOR-42：禁止 setConfig', () => {
   it('src 中不存在 DOMPurify.setConfig 调用（净化配置必须逐次传参）', () => {
     const offenders: string[] = [];
@@ -90,14 +98,43 @@ describe('R-05 / FR-EDITOR-42：禁止 setConfig', () => {
         if (statSync(path).isDirectory()) {
           walk(path);
         } else if (/\.(ts|vue)$/.test(name)) {
-          const text = readFileSync(path, 'utf8');
-          if (/\.setConfig\s*\(/.test(text) && !/禁止/.test(text)) {
-            offenders.push(path);
-          }
+          // **逐行判定**（审计 T-01）：此前用的是整文件白名单 `!/禁止/.test(text)` ——
+          // 而 sanitize.ts / renderer.ts 的注释里恰好写着"禁止 setConfig"，于是这两个
+          // **唯一可能出现 setConfig 的文件**被整体豁免，R-05 守卫等于不存在。
+          // 现在：注释行不算违规；确需豁免必须在**同一行**写 `// r05-ok: 理由`（强制留痕）。
+          stripComments(readFileSync(path, 'utf8'))
+            .split('\n')
+            .forEach((line, i) => {
+              const code = line.split('//')[0] ?? '';
+              if (!/\.setConfig\s*\(/.test(code)) return;
+              if (/r05-ok:/.test(line)) return;
+              offenders.push(`${path}:${i + 1}`);
+            });
         }
       }
     };
     walk('src');
     expect(offenders).toEqual([]);
+  });
+
+  it('**守卫自检**：能抓到真实调用、不误伤注释、尊重行内豁免（防止它再次静默失效）', () => {
+    const scan = (text: string, path = 'x.ts'): string[] => {
+      const out: string[] = [];
+      stripComments(text)
+        .split('\n')
+        .forEach((code, i) => {
+          if (!/\.setConfig\s*\(/.test(code)) return;
+          if (/r05-ok:/.test(text.split('\n')[i] ?? '')) return;
+          out.push(`${path}:${i + 1}`);
+        });
+      return out;
+    };
+    // ① 真实调用必须被抓到（哪怕是"含禁止二字"的文件 —— 这正是此前漏掉的情形）
+    expect(scan('// 禁止使用 DOMPurify.setConfig()\nDOMPurify.setConfig({});\n')).toEqual(['x.ts:2']);
+    // ② 纯注释不算违规（行注释与**块注释**都要覆盖 —— sanitize.ts:3 就是块注释里的说明）
+    expect(scan('// 禁止使用 DOMPurify.setConfig()\nconst x = 1;\n')).toEqual([]);
+    expect(scan('/** 禁止使用 DOMPurify.setConfig()（红线 R-05） */\nconst y = 2;\n')).toEqual([]);
+    // ③ 行内豁免必须带理由标记才生效
+    expect(scan('DOMPurify.setConfig({}); // r05-ok: 迁移期临时\n')).toEqual([]);
   });
 });
