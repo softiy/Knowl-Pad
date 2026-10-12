@@ -68,7 +68,7 @@ pub fn apply_changes<F: Fn(&[Change])>(
         // 复现见 index_watch_tests::failed_batch_does_not_leave_the_connection_stuck_in_a_transaction。
         let tx = conn
             .unchecked_transaction()
-            .map_err(|_| AppError::db("开启增量事务"))?;
+            .map_err(|e| AppError::db_with("开启增量事务", &e))?;
         let conn = &tx;
         // ① 写库前采集目标键（被删/改名的旧行也在此时还能读到别名）
         let mut target_keys: Vec<String> = Vec::new();
@@ -85,18 +85,18 @@ pub fn apply_changes<F: Fn(&[Change])>(
                         "DELETE FROM note_fts WHERE rowid = (SELECT id FROM file WHERE rel_path = ?1)",
                         rusqlite::params![rel],
                     )
-                    .map_err(|_| AppError::db("增量删除 FTS"))?;
+                    .map_err(|e| AppError::db_with("增量删除 FTS", &e))?;
                     conn.execute("DELETE FROM file WHERE rel_path = ?1", rusqlite::params![rel])
-                        .map_err(|_| AppError::db("增量删除文件"))?;
+                        .map_err(|e| AppError::db_with("增量删除文件", &e))?;
                 }
                 Change::Renamed(from, to) => {
                     conn.execute(
                         "DELETE FROM note_fts WHERE rowid = (SELECT id FROM file WHERE rel_path = ?1)",
                         rusqlite::params![from],
                     )
-                    .map_err(|_| AppError::db("增量删除 FTS"))?;
+                    .map_err(|e| AppError::db_with("增量删除 FTS", &e))?;
                     conn.execute("DELETE FROM file WHERE rel_path = ?1", rusqlite::params![from])
-                        .map_err(|_| AppError::db("增量删除旧路径"))?;
+                        .map_err(|e| AppError::db_with("增量删除旧路径", &e))?;
                     if is_markdown(to) {
                         if let Some(entry) = scan_entry(&root_owned, to) {
                             index_engine::index_file_mode(conn, &root_owned, &entry, IndexMode::Force)?;
@@ -129,7 +129,7 @@ pub fn apply_changes<F: Fn(&[Change])>(
         crate::index_resolve::resolve_links_matching(conn, &changed_ids, &target_keys)?;
         crate::index_resolve::recount_tags(conn)?;
         tx.commit()
-            .map_err(|_| AppError::db("提交增量事务"))?;
+            .map_err(|e| AppError::db_with("提交增量事务", &e))?;
         Ok(())
     });
     match write {

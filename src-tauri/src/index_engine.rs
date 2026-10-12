@@ -200,9 +200,9 @@ pub fn index_file_mode(
         .ok();
     if let Some(id) = old_id {
         conn.execute("DELETE FROM note_fts WHERE rowid = ?1", params![id])
-            .map_err(|_| AppError::db("清理旧 FTS 行"))?;
+            .map_err(|e| AppError::db_with("清理旧 FTS 行", &e))?;
         conn.execute("DELETE FROM file WHERE id = ?1", params![id])
-            .map_err(|_| AppError::db("清理旧文件行"))?;
+            .map_err(|e| AppError::db_with("清理旧文件行", &e))?;
     }
 
     let (name, stem, ext) = split_name(&entry.rel_path);
@@ -211,7 +211,7 @@ pub fn index_file_mode(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)",
         params![entry.rel_path, name, stem, ext, kind, entry.size_bytes as i64, entry.mtime_ms, fingerprint, now],
     )
-    .map_err(|_| AppError::db("写入文件行"))?;
+    .map_err(|e| AppError::db_with("写入文件行", &e))?;
     let file_id = conn.last_insert_rowid();
 
     if is_note {
@@ -219,7 +219,7 @@ pub fn index_file_mode(
             "INSERT INTO note_fts(rowid, plain_text) VALUES (?1, ?2)",
             params![file_id, indexed_text],
         )
-        .map_err(|_| AppError::db("写入全文索引"))?;
+        .map_err(|e| AppError::db_with("写入全文索引", &e))?;
     }
 
     let Some(note) = note.as_ref() else {
@@ -230,14 +230,14 @@ pub fn index_file_mode(
             "INSERT INTO heading (file_id, level, text, anchor, line, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![file_id, h.level as i64, h.text, h.text, h.line as i64, i as i64],
         )
-        .map_err(|_| AppError::db("写入标题"))?;
+        .map_err(|e| AppError::db_with("写入标题", &e))?;
     }
     for b in &note.block_ids {
         conn.execute(
             "INSERT OR IGNORE INTO block_id (file_id, bid, line_start, line_end) VALUES (?1, ?2, ?3, ?4)",
             params![file_id, b.id, b.start_line as i64, b.end_line as i64],
         )
-        .map_err(|_| AppError::db("写入块 ID"))?;
+        .map_err(|e| AppError::db_with("写入块 ID", &e))?;
     }
     for l in &note.links {
         let kind = match l.kind {
@@ -249,7 +249,7 @@ pub fn index_file_mode(
              VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'dangling', ?6, ?7)",
             params![file_id, l.target, l.anchor, l.alias, kind, l.line as i64, l.col as i64],
         )
-        .map_err(|_| AppError::db("写入链接"))?;
+        .map_err(|e| AppError::db_with("写入链接", &e))?;
     }
     for t in &note.tags {
         let depth = t.name.split('/').count() as i64;
@@ -258,17 +258,17 @@ pub fn index_file_mode(
              ON CONFLICT(norm) DO UPDATE SET display = excluded.display, depth = excluded.depth, is_leaf = excluded.is_leaf",
             params![t.norm, t.name, depth, if t.is_leaf { 1 } else { 0 }],
         )
-        .map_err(|_| AppError::db("写入标签"))?;
+        .map_err(|e| AppError::db_with("写入标签", &e))?;
         let tag_id: i64 = conn
             .query_row("SELECT id FROM tag WHERE norm = ?1", params![t.norm], |r| {
                 r.get(0)
             })
-            .map_err(|_| AppError::db("读取标签 id"))?;
+            .map_err(|e| AppError::db_with("读取标签 id", &e))?;
         conn.execute(
             "INSERT INTO file_tag (file_id, tag_id, line, col) VALUES (?1, ?2, ?3, ?4)",
             params![file_id, tag_id, t.line, t.col as i64],
         )
-        .map_err(|_| AppError::db("写入文件标签关联"))?;
+        .map_err(|e| AppError::db_with("写入文件标签关联", &e))?;
     }
     if let Some(fm) = note.frontmatter.as_ref() {
         for alias in &fm.aliases {
@@ -276,7 +276,7 @@ pub fn index_file_mode(
                 "INSERT OR IGNORE INTO file_alias (file_id, alias) VALUES (?1, ?2)",
                 params![file_id, alias],
             )
-            .map_err(|_| AppError::db("写入别名"))?;
+            .map_err(|e| AppError::db_with("写入别名", &e))?;
         }
     }
     Ok(true)
@@ -319,7 +319,7 @@ pub fn full_index_cancellable<F: FnMut(usize, usize), C: Fn() -> bool>(
         let root_owned = root.to_path_buf();
         let indexed = pool.with_writer(move |conn| {
             conn.execute_batch("BEGIN IMMEDIATE")
-                .map_err(|_| AppError::db("开启索引事务"))?;
+                .map_err(|e| AppError::db_with("开启索引事务", &e))?;
             let mut n = 0usize;
             for entry in &chunk {
                 if index_file_mode(conn, &root_owned, entry, mode)? {
@@ -327,7 +327,7 @@ pub fn full_index_cancellable<F: FnMut(usize, usize), C: Fn() -> bool>(
                 }
             }
             conn.execute_batch("COMMIT")
-                .map_err(|_| AppError::db("提交索引事务"))?;
+                .map_err(|e| AppError::db_with("提交索引事务", &e))?;
             Ok(n)
         })?;
         outcome.indexed += indexed;
@@ -337,11 +337,11 @@ pub fn full_index_cancellable<F: FnMut(usize, usize), C: Fn() -> bool>(
     // 全部文件写完后统一裁决（此时候选行才齐）；裁决与计数在同一事务内完成
     pool.with_writer(|conn| {
         conn.execute_batch("BEGIN IMMEDIATE")
-            .map_err(|_| AppError::db("开启裁决事务"))?;
+            .map_err(|e| AppError::db_with("开启裁决事务", &e))?;
         crate::index_resolve::resolve_links(conn)?;
         crate::index_resolve::recount_tags(conn)?;
         conn.execute_batch("COMMIT")
-            .map_err(|_| AppError::db("提交裁决事务"))?;
+            .map_err(|e| AppError::db_with("提交裁决事务", &e))?;
         Ok(())
     })?;
     outcome.duration_ms = started.elapsed().as_millis() as u64;

@@ -160,7 +160,7 @@ pub fn backup_before_migrate(
         "VACUUM INTO ?1",
         rusqlite::params![target.to_string_lossy()],
     )
-    .map_err(|_| AppError::db("迁移前备份数据库"))?;
+    .map_err(|e| AppError::db_with("迁移前备份数据库", &e))?;
     tracing::info!(backup = %target.display(), from_version, "迁移前已备份全局库");
     Ok(target)
 }
