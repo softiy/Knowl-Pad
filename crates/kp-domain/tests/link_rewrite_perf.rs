@@ -1,7 +1,18 @@
 //! NFR-PERF-16：**重命名 + 链接改写（300 处引用）< 3s / 5s / 15s**。
 //!
-//! 按 M4 计划 §8 的做法：**给宽松上限 + 打印实测**（CI 机器比开发机慢，硬编码 3s 会变成 flaky；
-//! 真正的回归靠打印值与基线对比，而不是让用例在慢机器上红）。
+//! **本文件的墙钟数字只打印、不断言**（2026-10-12 修正）。
+//!
+//! 原本这里还断言了"总耗时 < 15s"，理由是"给宽松上限就不会 flaky" —— 实测被证伪：
+//! Windows CI runner 在并发负载下写 300 个文件（每个都是 临时文件+rename+fsync）会超过 15s，
+//! 于是 Windows 冒烟 job 随机变红（#112 就跑出过 `link_rewrite_perf.rs:50` 与 `:80` 两处失败），
+//! 而同一提交在别的 runner 上是绿的 —— 这正是"用墙钟断言做回归"的经典失效模式。
+//!
+//! 与 M4 计划 §8 的原意一致：单元测试只负责**正确性**（300 个文件都命中、都真的被改写、改名到位），
+//! 墙钟数字打印出来供人看日志。
+//!
+//! **注意（不许含糊）**：墙钟回归目前**还没有**任何自动门禁在管 —— 门禁 10b
+//! （scripts/run-index-perf.mjs + perf/ 基线）只覆盖**索引侧**，链接改写侧尚未纳入。
+//! 这一点登记在 docs/history/M1-M4复核台账-2026-10-11.md 的 T-30 条目里，属未完成项。
 //!
 //! 300 处引用分布到 300 个文件（更接近真实：一次改名会牵动大量文件）。
 
@@ -47,11 +58,7 @@ fn nfr_perf_16_rewrites_three_hundred_references_quickly() {
         "NFR-PERF-16 实测：计划 {plan_ms} ms + 落地 {apply_ms} ms = {} ms（阈值 3s/5s/15s）",
         plan_ms + apply_ms
     );
-    assert!(
-        plan_ms + apply_ms < 15_000,
-        "300 处改写的总耗时不得超过最宽档 15s（实测 {} ms）",
-        plan_ms + apply_ms
-    );
+    // 刻意**不**断言墙钟：见文件头。正确性由下面两条与 hits 断言保证。
     // 抽查首尾两个文件确实被改到
     assert!(fs::read_to_string(root.join("notes/n000.md"))
         .unwrap()
@@ -77,5 +84,5 @@ fn nfr_perf_16_rename_with_rewrite_scales() {
     assert_eq!(new_rel, "B.md");
     assert_eq!(report.files, 300);
     assert!(root.join("B.md").exists() && !root.join("A.md").exists());
-    assert!(ms < 15_000, "联合操作不得超过 15s（实测 {ms} ms）");
+    // 同样刻意不断言墙钟（见文件头）；正确性由 new_rel / files / 改名结果保证。
 }
