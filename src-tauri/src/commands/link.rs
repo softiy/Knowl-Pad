@@ -6,15 +6,17 @@
 use tauri::State;
 
 use crate::commands::link_view::{
-    read_note, snippet_of, AmbiguousItem, AmbiguousPage, BacklinkGroup, BacklinkItem, DanglingItem,
-    DanglingPage, HeadingItem, OrphanPage, OutgoingLink,
+    link_text_len, read_note, snippet_of, AmbiguousItem, AmbiguousPage, BacklinkGroup,
+    BacklinkItem, HeadingItem, OrphanPage, OutgoingLink,
 };
 use crate::commands::paths::root_of;
 use crate::error_wrapper::KpError;
 use crate::state::AppState;
 use kp_domain::error::AppError;
 
-fn pool_of(state: &AppState) -> Result<std::sync::Arc<crate::storage::pool::DbPool>, KpError> {
+pub(crate) fn pool_of(
+    state: &AppState,
+) -> Result<std::sync::Arc<crate::storage::pool::DbPool>, KpError> {
     state.index_db().ok_or(KpError(AppError::VaultNotOpen))
 }
 
@@ -38,7 +40,13 @@ pub(crate) fn link_backlinks_impl(
         let content = cache
             .entry(row.src_rel_path.clone())
             .or_insert_with(|| read_note(&root, &row.src_rel_path));
-        let link_len = row.target_ref.chars().count() + 4; // [[目标]] 的字符数，供高亮区间用
+        // 审计 L1：长度按各部件精确算（别名/锚点/嵌入），见 link_text_len 的文档。
+        let link_len = link_text_len(
+            &row.target_ref,
+            row.anchor.as_deref(),
+            row.alias.as_deref(),
+            is_embed,
+        );
         let snippet = content
             .as_deref()
             .and_then(|c| snippet_of(c, row.line, row.col, link_len));
@@ -109,29 +117,6 @@ pub async fn link_outgoing(
     state: State<'_, AppState>,
 ) -> Result<Vec<OutgoingLink>, KpError> {
     link_outgoing_impl(&state, &rel_path)
-}
-
-/// 悬空链接清单（FR-LINK-20：按目标名分组 + 引用次数）。
-pub(crate) fn link_dangling_list_impl(state: &AppState) -> Result<DanglingPage, KpError> {
-    let pool = pool_of(state)?;
-    let items: Vec<DanglingItem> = crate::storage::link_query::dangling_groups(&pool)
-        .map_err(KpError)?
-        .into_iter()
-        .map(|g| DanglingItem {
-            target_ref: g.target_ref,
-            ref_count: g.ref_count,
-            source_count: g.source_count,
-            sample_sources: g.sample_sources,
-        })
-        .collect();
-    Ok(DanglingPage {
-        total: items.len(),
-        items,
-    })
-}
-#[tauri::command]
-pub async fn link_dangling_list(state: State<'_, AppState>) -> Result<DanglingPage, KpError> {
-    link_dangling_list_impl(&state)
 }
 
 /// 歧义链接清单（FR-LINK-22 / AC-LINK-04）。

@@ -124,6 +124,35 @@ pub fn read_note(root: &std::path::Path, rel_path: &str) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+/// 链接在**原文里的字符数**，供反链片段的高亮区间使用（审计 L1）。
+///
+/// 此前调用点固定按 `[[目标]]` 估算（target + 4），于是带**别名/锚点/嵌入**的链接高亮区间
+/// 一律偏短 —— 例如 `[[目标|别名]]` 会少掉 `|别名` 那一段。反链片段已经在用这个值，
+/// 所以它不是"接线才错"，而是**现在就是错的**。
+///
+/// 按各部件精确累加（**字符数**而非字节，与 extract_snippet 的口径一致）：
+/// `[[目标]]` = target + 4；带锚点再 + 1 + 锚点；带别名再 + 1 + 别名；嵌入再 + 1（叹号）。
+///
+/// 抽成纯函数是为了可回归：命令层无法单测（DEBT-14），纯函数可以。
+pub(crate) fn link_text_len(
+    target: &str,
+    anchor: Option<&str>,
+    alias: Option<&str>,
+    is_embed: bool,
+) -> usize {
+    let mut len = target.chars().count() + 4;
+    if let Some(anchor) = anchor {
+        len += 1 + anchor.chars().count();
+    }
+    if let Some(alias) = alias {
+        len += 1 + alias.chars().count();
+    }
+    if is_embed {
+        len += 1;
+    }
+    len
+}
+
 /// 取链接所在行的上下文片段（默认前后各 2 行，FR-LINK-11）。
 pub fn snippet_of(content: &str, line: u32, col: u32, link_len: usize) -> Option<SnippetView> {
     extract_snippet(

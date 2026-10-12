@@ -23,9 +23,9 @@ use commands::file_write::{
 };
 use commands::index::{index_cancel, index_rebuild, index_signature_get, index_stats};
 use commands::link::{
-    link_ambiguous_list, link_backlinks, link_dangling_list, link_headings, link_orphan_list,
-    link_outgoing,
+    link_ambiguous_list, link_backlinks, link_headings, link_orphan_list, link_outgoing,
 };
+use commands::link_list::link_dangling_list;
 use commands::link_resolve::link_resolve_ambiguous;
 use commands::link_rewrite::{link_rewrite_apply, link_rewrite_preview};
 use commands::link_rewrite_store::link_rewrite_rollback;
