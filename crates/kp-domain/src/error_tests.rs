@@ -79,7 +79,6 @@ fn io_errors_map_by_kind() {
     assert_eq!(other.code(), "E_IO_FAILURE");
 }
 
-
 /// 技术方案 §6.1.6：回滚失败必须是**专用错误**且点名文件 —— 复用 E_REWRITE_FAILED 码靠 context 区分。
 #[test]
 fn rollback_failed_contract() {
@@ -96,6 +95,7 @@ fn rollback_failed_contract() {
         "必须点名哪些文件可能不一致：{msg}"
     );
     assert!(msg.contains("link-rewrite-1"), "必须给出备份位置：{msg}");
+}
 
 /// **审计 R5/G3 的判据**：底层细节必须**能进日志**，但**不得**出现在面向用户的文案里（ERR-02 + ERR-04）。
 #[test]
@@ -116,5 +116,4 @@ fn db_with_keeps_detail_out_of_user_message() {
 
     // 普通 DbError 没有细节，接口保持一致
     assert_eq!(AppError::db("别的操作").log_detail(), None);
-
 }

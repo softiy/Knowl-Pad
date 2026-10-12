@@ -12,15 +12,32 @@ use kp_domain::file_tree::{classify, FileEntry, FileKind};
 use crate::storage::pool::DbPool;
 
 /// 索引库里是否有可用数据（用于决定走索引还是回退直读）。
+///
+/// **审计 I6**：此前结尾是 `unwrap_or(false)` —— 读池错误、连接取不到、锁中毒……一律被当成
+/// **"索引是空的"**，于是命令层静默回退直读：功能上还能用（直读是对的），但"索引坏了"与
+/// "索引还没建"在日志里**长得一模一样**，事后无从区分；而状态徽标可能仍显示"已就绪"。
+///
+/// 修法：仍然是"失败即 false"（降级方向正确、签名不变、调用方无需改动），
+/// 但**降级前留痕**：真出问题时日志里有据可查，而不是只剩一个"树是空的"的现象。
 pub fn has_rows(pool: &DbPool) -> bool {
-    pool.with_reader(|conn| {
+    match pool.with_reader(|conn| {
         conn.query_row("SELECT count(*) FROM file WHERE deleted = 0", [], |r| {
             r.get::<_, i64>(0)
         })
         .map(|n| n > 0)
-        .map_err(|e| kp_domain::error::AppError::db_with("721", &e))
-    })
-    .unwrap_or(false)
+        .map_err(|e| AppError::db_with("探测索引库", &e))
+    }) {
+        Ok(has) => has,
+        Err(err) => {
+            // 注意文案：这不是"索引为空"，而是"问不出来" —— 两者对上层都表现为"回退直读"，
+            // 但对排查问题的人意义完全不同。
+            tracing::warn!(
+                kind = err.kind(),
+                "探测索引库失败，本次回退直读（注意：这与「索引为空」不是一回事）"
+            );
+            false
+        }
+    }
 }
 
 /// 把**直读扫描**到的目录并入索引推导出的条目（M2 复核 blocker 的修法）。
@@ -70,12 +87,12 @@ pub fn list_children(pool: &DbPool, parent_rel: &str) -> Result<Vec<FileEntry>, 
                   WHERE deleted = 0 AND (?1 = 0 OR substr(rel_path, 1, ?1) = ?2) \
                   ORDER BY rel_path",
             )
-            .map_err(|e| kp_domain::error::AppError::db_with("2597", &e))?;
+            .map_err(|e| kp_domain::error::AppError::db_with("准备文件树查询", &e))?;
         let rows = stmt
             .query_map(rusqlite::params![prefix_chars, prefix], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
             })
-            .map_err(|e| kp_domain::error::AppError::db_with("2823", &e))?;
+            .map_err(|e| kp_domain::error::AppError::db_with("查询文件树", &e))?;
         Ok(rows.filter_map(Result::ok).collect())
     })?;
 
