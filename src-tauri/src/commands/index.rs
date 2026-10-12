@@ -71,7 +71,7 @@ pub(crate) fn read_stats(
     pool.with_reader(|conn| {
         let count = |sql: &str| -> Result<i64, kp_domain::error::AppError> {
             conn.query_row(sql, [], |row| row.get::<_, i64>(0))
-                .map_err(|_| kp_domain::error::AppError::db("统计索引实体"))
+                .map_err(|e| kp_domain::error::AppError::db_with("统计索引实体", &e))
         };
         Ok(IndexStats {
             files: count("SELECT count(*) FROM file WHERE deleted = 0")?,

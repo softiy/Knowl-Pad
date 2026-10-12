@@ -24,7 +24,16 @@ impl serde::Serialize for KpError {
         // ERR-04：全部错误必须写入日志（错误码 + 类别 + 时间戳由日志框架补）。
         // SEC-09：此处**只记类别不记消息**——消息可能含 Vault 绝对路径等不该入日志的内容；
         // 需要更细上下文的调用点自行记录（如路径校验记相对路径）。
-        tracing::warn!(code = self.0.code(), kind = self.0.kind(), "命令失败");
+        // 审计 R5/G3：细节（SQLite 原文）只进日志 —— 面向用户的结构体里**不含**它（ERR-02）。
+        match self.0.log_detail() {
+            Some(detail) => tracing::error!(
+                code = self.0.code(),
+                kind = self.0.kind(),
+                detail = detail,
+                "命令失败（含底层细节）"
+            ),
+            None => tracing::warn!(code = self.0.code(), kind = self.0.kind(), "命令失败"),
+        }
         let mut state = serializer.serialize_struct("KpError", 3)?;
         state.serialize_field("code", &self.0.code())?;
         state.serialize_field("message", &self.0.to_string())?;

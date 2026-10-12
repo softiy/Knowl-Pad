@@ -79,6 +79,7 @@ fn io_errors_map_by_kind() {
     assert_eq!(other.code(), "E_IO_FAILURE");
 }
 
+
 /// 技术方案 §6.1.6：回滚失败必须是**专用错误**且点名文件 —— 复用 E_REWRITE_FAILED 码靠 context 区分。
 #[test]
 fn rollback_failed_contract() {
@@ -95,4 +96,25 @@ fn rollback_failed_contract() {
         "必须点名哪些文件可能不一致：{msg}"
     );
     assert!(msg.contains("link-rewrite-1"), "必须给出备份位置：{msg}");
+
+/// **审计 R5/G3 的判据**：底层细节必须**能进日志**，但**不得**出现在面向用户的文案里（ERR-02 + ERR-04）。
+#[test]
+fn db_with_keeps_detail_out_of_user_message() {
+    let raw = "no such table: file (code 1 SQLITE_ERROR)";
+    let e = AppError::db_with("统计索引实体", raw);
+
+    assert_eq!(e.code(), "E_DB_ERROR", "与 DbError 同码");
+    assert_eq!(e.kind(), "DbError", "kind 不变（日志上下文按 kind 聚合）");
+    assert_eq!(e.log_detail(), Some(raw), "细节必须能被日志出口取到");
+
+    let msg = e.to_string();
+    assert!(msg.contains("统计索引实体"), "文案要含上下文：{msg}");
+    assert!(
+        !msg.contains("no such table") && !msg.contains("SQLITE_ERROR"),
+        "SQLite 原文绝不能出现在用户文案里（ERR-02）：{msg}"
+    );
+
+    // 普通 DbError 没有细节，接口保持一致
+    assert_eq!(AppError::db("别的操作").log_detail(), None);
+
 }
