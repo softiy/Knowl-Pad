@@ -118,10 +118,36 @@ pub struct OrphanPage {
 }
 
 /// 读笔记正文（片段用）。路径经 PathGuard 七步校验（SEC-02）；读不到就返回 None（索引与磁盘短暂不一致时降级）。
+///
+/// **审计 R7**：此前三处 `.ok()?` 把**路径校验的拒绝**与"文件读不到"混为一谈，且零日志 ——
+/// 一次路径穿越尝试（`../../etc/passwd`、含 \0、编码穿越……）在日志里**不留任何痕迹**，
+/// 事后既无法发现攻击，也无法排查"为什么反链片段是空的"。
+/// 现在：拒绝走 warn（带变体名，**不带用户数据**，遵守 SEC-09）；读失败走 debug。
 pub fn read_note(root: &std::path::Path, rel_path: &str) -> Option<String> {
-    let guard = PathGuard::new(root).ok()?;
-    let path = guard.resolve(rel_path).ok()?;
-    std::fs::read_to_string(path).ok()
+    let guard = match PathGuard::new(root) {
+        Ok(g) => g,
+        Err(err) => {
+            tracing::warn!(kind = err.kind(), "读笔记被拒绝：Vault 根无法建立路径守卫");
+            return None;
+        }
+    };
+    let path = match guard.resolve(rel_path) {
+        Ok(p) => p,
+        Err(err) => {
+            // 这条最要紧：SEC-02 拒绝（越界/非法字符/编码穿越）必须留痕。
+            tracing::warn!(kind = err.kind(), "读笔记被拒绝：路径未通过校验（SEC-02）");
+            return None;
+        }
+    };
+    match std::fs::read_to_string(path) {
+        Ok(s) => Some(s),
+        Err(err) => {
+            // 索引与磁盘短暂不一致是常见情形，不该刷 warn。
+            // io::ErrorKind 不实现 tracing::Value，直接记 Display（英文原文，不含用户数据，SEC-09 允许）
+            tracing::debug!(error = %err, "读笔记失败：文件暂不可读");
+            None
+        }
+    }
 }
 
 /// 链接在**原文里的字符数**，供反链片段的高亮区间使用（审计 L1）。

@@ -1,4 +1,5 @@
 pub mod file;
+pub mod file_index_view;
 pub mod file_write;
 pub mod index;
 #[cfg(test)]
