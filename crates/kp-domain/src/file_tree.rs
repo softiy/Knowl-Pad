@@ -69,8 +69,14 @@ pub struct FileEntry {
 }
 
 /// `.knowlpad/` 永远隐藏（内部数据目录；AC-FILE-09）。
+///
+/// **审计 L4**：此处此前用 `name == INTERNAL_DIR`（大小写敏感），而保护写路径的
+/// `vault_paths::is_internal_path` 用的是 `eq_ignore_ascii_case` —— 两者不一致。
+/// 在**大小写不敏感**的文件系统上（Windows / macOS 默认，见 `platform::case_insensitive_fs`）
+/// 名为 `.KnowlPad` 的目录**就是**那个内部目录：写操作会被正确拒绝，文件树却会把它显示出来。
+/// AC-FILE-09 的措辞是"**无论如何**都隐藏"，所以这里也必须不区分大小写。
 fn is_always_hidden(name: &str) -> bool {
-    name == INTERNAL_DIR
+    name.eq_ignore_ascii_case(INTERNAL_DIR)
 }
 
 /// 默认隐藏的条目：以 `.` 开头（含 `.obsidian/`、`.git/`）。
