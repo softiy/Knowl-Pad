@@ -138,3 +138,42 @@ describe('StatusBar（FR-VAULT-11/12、FR-STORAGE-03）', () => {
     expect(wrapper.find('[data-testid="git-hint"]').exists()).toBe(false);
   });
 });
+
+describe('复制忽略规则要如实反馈（审计 F4）', () => {
+  // 本 describe 必须自己重建 mock：上面那个 beforeEach 里的 vi.resetAllMocks()
+  // 会把 mock 工厂的实现也清掉（preferenceGet 变 undefined → 组件内部报错 → 提示条不渲染）。
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mTree.mockResolvedValue([]);
+    vi.mocked(preferenceGet).mockResolvedValue({ values: {} });
+  });
+
+  it('复制失败不得显示"已复制"，要给可操作提示', async () => {
+    // 让 writeText 抛（浏览器拒绝剪贴板是常见情形）
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    // 与既有 git-hint 用例同样的构造：索引就绪 + 文件树里有 .git，提示条才会渲染
+    mIndex.mockResolvedValue({ indexDir: 'd', indexDb: 'db', ready: true });
+    mTree.mockResolvedValue([{ relPath: '.git', name: '.git', isDir: true, kind: 'other' }]);
+    const w = mountBar();
+    await flushPromises();
+    await w.get('[data-testid="git-hint-copy"]').trigger('click');
+    await flushPromises();
+    expect(w.get('[data-testid="git-hint-copy"]').text()).toContain('复制忽略规则');
+    expect(w.get('[data-testid="git-hint-copy"]').text()).not.toContain('已复制');
+    expect(w.get('[data-testid="git-hint-copy-error"]').text()).toContain('手动');
+  });
+
+  it('复制成功才显示"已复制"', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    mIndex.mockResolvedValue({ indexDir: 'd', indexDb: 'db', ready: true });
+    mTree.mockResolvedValue([{ relPath: '.git', name: '.git', isDir: true, kind: 'other' }]);
+    const w = mountBar();
+    await flushPromises();
+    await w.get('[data-testid="git-hint-copy"]').trigger('click');
+    await flushPromises();
+    expect(writeText).toHaveBeenCalled();
+    expect(w.get('[data-testid="git-hint-copy"]').text()).toContain('已复制');
+  });
+});
