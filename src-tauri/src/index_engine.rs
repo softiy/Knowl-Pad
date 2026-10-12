@@ -142,7 +142,7 @@ fn split_name(rel_path: &str) -> (String, String, String) {
 
 /// 跳过策略：Force 一律重建；SkipUnchanged 时 mtime 与大小都未变的文件直接跳过。
 ///
-/// 说明：mtime + size 相同但内容被改的情况检测不到（完整指纹比对待 PR-5 的增量索引补），
+/// 说明：mtime + size 相同但内容被改的情况检测不到；此前注释写"待 PR-5 补"**已过期**（PR-5 只交付了增量索引本身），现登记为 DEBT-35。
 /// 因此 index_rebuild(force = true) 始终提供一条可靠的全量路径。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexMode {
