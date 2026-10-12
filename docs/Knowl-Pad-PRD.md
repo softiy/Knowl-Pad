@@ -2145,7 +2145,7 @@ interface KpError {
 
 ## 9. 实施路线
 
-项目状态：**M0 / M1 / M2 已完成**（详见 `docs/AGENTS.md` §10 与 `docs/history/`）。按以下里程碑推进，每个里程碑有明确的阶段验收标准（Definition of Done）。
+项目状态：**M0 / M1 / M2 / M3 / M4 已完成**（M4 = 链接域；M1~M4 的遗留陷阱核查见 `docs/history/M1-M4复核台账-2026-10-11.md`）。按以下里程碑推进，每个里程碑有明确的阶段验收标准（Definition of Done）。
 
 ### 9.1 里程碑规划
 
