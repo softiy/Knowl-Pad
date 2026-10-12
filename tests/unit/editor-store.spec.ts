@@ -262,3 +262,26 @@ describe('反链点击定位（FR-LINK-13）', () => {
     stop();
   });
 });
+
+describe('打开/冲突失败要可见，不能只是"点了没反应"（审计 F1/F3）', () => {
+  // 本 describe 必须自己重置 pinia：否则上一个用例的 store 状态会泄漏进来
+  // （第一版就栽在这——断言看到的是别的用例留下的 activeRelPath 与 openError）。
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('openNote 失败时写进 store.openError，且不再向上抛（调用方用 void 也不会产生未处理 rejection）', async () => {
+    const { noteRead } = await import('@core/ipc/commands');
+    (noteRead as unknown as { mockRejectedValueOnce: (e: unknown) => void }).mockRejectedValueOnce(
+      new Error('E_FILE_NOT_FOUND'),
+    );
+    const store = useEditorStore();
+    await expect(store.openNote('gone.md')).resolves.toBeUndefined();
+    expect(store.openError).toBeTruthy();
+    expect(store.activeRelPath).toBeNull();
+  });
+
+  it('打开成功后清除 openError', async () => {
+    const store = useEditorStore();
+    await store.openNote('a.md');
+    expect(store.openError).toBeNull();
+  });
+});

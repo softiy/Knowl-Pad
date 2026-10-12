@@ -1,8 +1,9 @@
+import { resolveConflictWith } from './editor_conflict';
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { asKpError } from '@core/ipc/errors';
 import { noteRead, noteWrite } from '@core/ipc/commands';
-import { diffLines, type DiffLine } from '@core/utils/diff';
+import type { DiffLine } from '@core/utils/diff';
 
 export type EditorMode = 'edit' | 'split' | 'read';
 export type ConflictChoice = 'loadExternal' | 'keepMine' | 'viewDiff';
@@ -61,6 +62,8 @@ function toBuffer(relPath: string, content: string, mtimeMs: number): EditorBuff
 export const useEditorStore = defineStore('editor', () => {
   const buffers = ref<EditorBuffer[]>([]);
   const activeRelPath = ref<string | null>(null);
+/** 打开笔记失败时的可见原因（审计 F1：此前 rejection 被调用方 void 掉，界面毫无反应）。 */
+const openError = ref<string | null>(null);
 /**
  * 待定位行（FR-LINK-13）：点击反链后由 store 记下，视图侧消费一次。
  * 之所以放在 store：**打开笔记是异步的**，组件可能还没挂上，定位请求不能丢。
@@ -90,7 +93,16 @@ const pendingReveal = ref<{ relPath: string; line: number } | null>(null);
       activeRelPath.value = relPath;
       return;
     }
-    const note = await noteRead(relPath);
+    let note;
+    try {
+      note = await noteRead(relPath);
+    } catch (err) {
+      // 文件被外部删除/索引里有幽灵行时，noteRead 会抛。此前调用方用 void 丢弃 →
+      // 点一下"什么都没发生"（审计 F1）。这里收敛成可见错误，并按 save 的既有做法处理。
+      openError.value = asKpError(err).message;
+      return;
+    }
+    openError.value = null;
     buffers.value = [...buffers.value, toBuffer(relPath, note.content, note.mtimeMs)];
     activeRelPath.value = relPath;
   }
@@ -164,30 +176,9 @@ const pendingReveal = ref<{ relPath: string; line: number } | null>(null);
   }
 
   /** 冲突处理三选项（FR-EDITOR-34）：加载外部 / 保留我的并覆盖 / 查看差异。 */
+  /** 冲突处理三选项（FR-EDITOR-34）：实现见 editor_conflict.ts（审计 F3 的可见错误也在那里）。 */
   async function resolveConflict(relPath: string, choice: ConflictChoice): Promise<void> {
-    const buffer = find(relPath);
-    if (!buffer) return;
-    if (choice === 'loadExternal') {
-      const note = await noteRead(relPath);
-      buffer.content = note.content;
-      buffer.savedContent = note.content;
-      buffer.mtimeMs = note.mtimeMs;
-      buffer.conflict = false;
-      buffer.error = null;
-      buffer.replacedAt += 1; // 显式通知视图回灌内核
-      return;
-    }
-    if (choice === 'keepMine') {
-      // 基线刷新为磁盘当前版本，再强制覆盖（用户已明确选择「保留我的」）
-      const note = await noteRead(relPath);
-      buffer.mtimeMs = note.mtimeMs;
-      buffer.savedContent = note.content;
-      await save(relPath);
-      return;
-    }
-    // 查看差异：拉取外部版本与当前内容做行级比较
-    const note = await noteRead(relPath);
-    buffer.diff = diffLines(note.content, buffer.content).lines;
+    await resolveConflictWith(find, save, relPath, choice);
   }
 
   /** 编辑器跟随重命名（FR-FILE-28 / AC-FILE-05）：不丢未保存内容、不报「文件不存在」。 */
@@ -293,7 +284,6 @@ const pendingReveal = ref<{ relPath: string; line: number } | null>(null);
     activeRelPath.value = null;
   }
 
-
   /** 打开来源笔记并请求定位到该行（FR-LINK-13）。 */
   async function reveal(relPath: string, line: number): Promise<void> {
     await openNote(relPath);
@@ -311,6 +301,7 @@ const pendingReveal = ref<{ relPath: string; line: number } | null>(null);
     clearReveal,
     buffers,
     activeRelPath,
+    openError,
     mode,
     autosaveDelayMs,
     openNote,
