@@ -378,6 +378,10 @@ fn ac_file_07_external_rename_reindexes_old_and_new_path() {
 /// 另外打印"全量索引"的对照耗时（按计划 §8 的做法：宽松断言 + 打印实测，避免慢机器 flaky）。
 #[test]
 fn ac_link_02_incremental_resolve_scales() {
+    // 审计 T-20：与 10 万行灌库用例串行，避免并行争用让 2 秒口径偶发失效。
+    let _guard = crate::index_reliability_tests::HEAVY_SCALE_TEST
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().expect("临时目录");
     let root = dir.path().to_path_buf();
     const N: usize = 2000;
