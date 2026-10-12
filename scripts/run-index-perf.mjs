@@ -11,6 +11,16 @@ import process from "node:process";
 
 const BASELINE = "perf/index-baseline.json";
 const TOLERANCE = 2.0;
+
+// 绝对噪声下限（毫秒）—— **小基数指标必须靠它**。
+//
+// 只有比例没有绝对值时：基线 2 ms 的 fileTreeSubMs 实测 5 ms 就是 250%（绝对差仅 3 ms），
+// 完全在调度噪声内，门禁却会红。2026-10-12 实测发生过（#112 的 17 项门禁因此失败），
+// 而同一提交在别的 runner 上是绿的。
+//
+// 危害不只是"偶发红"：维护者会养成"重跑一下就好"的习惯，于是**真正的回退**也被重跑掩盖 ——
+// 门禁的可信度就是这样没的。真回退（例如 2 ms → 50 ms，差 48 ms）依然会被下面两条判定拦住。
+const ABS_FLOOR_MS = 15;
 const UPDATE = process.argv.includes("--update-baseline");
 
 function runTest(filter) {
@@ -67,9 +77,11 @@ for (const [k, v] of Object.entries(measured)) {
     process.exit(1);
   }
   const ratio = base === 0 ? (v === 0 ? 1 : TOLERANCE + 1) : v / base;
-  const ok = ratio <= TOLERANCE;
+  const delta = v - base;
+  // 判定 = 比例超容忍 **且** 绝对差达到下限（两者同时成立才算回退）。
+  const ok = ratio <= TOLERANCE || delta < ABS_FLOOR_MS;
   console.log(
-    "  " + (ok ? "✅" : "❌") + " " + k + "：" + v + " ms（基线 " + base + " ms，" + (ratio * 100).toFixed(1) + "%）",
+    "  " + (ok ? "✅" : "❌") + " " + k + "：" + v + " ms（基线 " + base + " ms，" + (ratio * 100).toFixed(1) + "%，绝对差 " + delta + " ms）",
   );
   if (!ok) regressed += 1;
 }
