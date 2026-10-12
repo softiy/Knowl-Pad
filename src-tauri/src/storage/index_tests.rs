@@ -411,3 +411,43 @@ fn open_with_outcome_reports_unchanged_only_after_an_index_exists() {
         "两次打开后 meta 都已存在，所以「meta 存在」不构成判据"
     );
 }
+
+/// **FR-FILE-05 / AC-FILE-09 的判据（审计 H4）**：默认文件树**不得**列出点开头的条目。
+///
+/// 此前索引路径（`index_query::list_children`）只跳过 4 个固定目录名，而直读路径
+/// （`file_tree::list_dir`）按"名字以 . 开头"过滤 —— 两条路径给出不同的树，
+/// 于是 `.gitignore`、`.env`、`.vscode/` 会出现在默认树里，而"显示隐藏文件"开关对它们无效。
+#[test]
+fn hidden_entries_are_not_listed() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    for (rel, content) in [
+        ("notes/a.md", "# 甲\n"),
+        (".gitignore", "target/\n"),
+        (".env", "SECRET=1\n"),
+        (".vscode/settings.json", "{}\n"),
+    ] {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).expect("建目录");
+        std::fs::write(&p, content).expect("写文件");
+    }
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    crate::index_engine::full_index(&pool, &root, |_, _| {}).expect("首次索引");
+
+    let top = crate::storage::index_query::list_children(&pool, "").expect("根目录列表");
+    let names: Vec<&str> = top.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"notes"), "正常目录必须在（{names:?}）");
+    assert!(
+        !names.contains(&".gitignore"),
+        "隐藏文件不得出现（{names:?}）"
+    );
+    assert!(!names.contains(&".env"), "隐藏文件不得出现（{names:?}）");
+    assert!(!names.contains(&".vscode"), "隐藏目录不得出现（{names:?}）");
+
+    // 子目录里的隐藏项同理
+    let sub = crate::storage::index_query::list_children(&pool, "notes").expect("子目录列表");
+    assert!(
+        sub.iter().all(|e| !e.name.starts_with('.')),
+        "子目录里也不得有隐藏项"
+    );
+}

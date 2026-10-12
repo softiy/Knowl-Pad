@@ -51,6 +51,11 @@ pub fn merge_scanned_dirs(entries: &mut Vec<FileEntry>, scanned: Vec<FileEntry>)
 }
 
 /// 列出某个目录下的直接子项（由索引库推导）。`parent_rel` 为空表示 Vault 根。
+///
+/// **与直读路径（`kp_domain::file_tree::list_dir`）对齐：隐藏条目按"名字以 . 开头"过滤**
+/// （FR-FILE-05 / AC-FILE-09）。此前索引路径只跳过了 4 个固定目录名，于是 `.gitignore`、
+/// `.env`、`.vscode/` 这类点文件与点目录会出现在默认文件树里 —— 而这个开关对它们无效，
+/// 且"索引建好前后"两套路径会给出不同的树。需要看隐藏项时走直读路径（`include_hidden = true`）。
 pub fn list_children(pool: &DbPool, parent_rel: &str) -> Result<Vec<FileEntry>, AppError> {
     let prefix = if parent_rel.is_empty() {
         String::new()
@@ -85,6 +90,9 @@ pub fn list_children(pool: &DbPool, parent_rel: &str) -> Result<Vec<FileEntry>, 
         match rest.split_once('/') {
             // 更深一层 → 这是一个目录节点（同名只出现一次）
             Some((dir, _)) => {
+                if dir.starts_with('.') {
+                    continue; // 隐藏目录（FR-FILE-05）
+                }
                 if entries.iter().any(|e| e.is_dir && e.name == dir) {
                     continue;
                 }
@@ -100,6 +108,9 @@ pub fn list_children(pool: &DbPool, parent_rel: &str) -> Result<Vec<FileEntry>, 
             }
             None => {
                 let name = rest.to_string();
+                if name.starts_with('.') {
+                    continue; // 隐藏文件（FR-FILE-05）
+                }
                 let ext = rel_path.rsplit('.').next().unwrap_or("");
                 entries.push(FileEntry {
                     rel_path: rel_path.clone(),
