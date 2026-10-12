@@ -26,6 +26,9 @@ pub struct AppState {
     /// 该句柄监听的 Vault 根（M3 复核 blocker 修复）：
     /// 只有带上 root 才能区分「同一个 Vault 重开」与「切换到另一个 Vault」。
     watcher_root: Mutex<Option<PathBuf>>,
+    /// 轮询回退线程的停止标志（审计 T-21）：取消谓词曾写死 `|| false`、句柄又被丢掉 → 降级后永不停；
+    /// 现在与 watcher 同生命周期（stop_watcher 置位）。
+    fallback_stop: Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
     // 改写预览缓存与操作登记（技术方案 §6.1.1：preview_id → 明细，TTL 10 分钟，执行时一次性消费；
     // 操作登记供 link_rewrite_rollback 回滚）。类型定义在 commands::link_rewrite_store。
     previews: Mutex<HashMap<String, crate::commands::link_rewrite_store::StoredPreview>>,
@@ -121,7 +124,20 @@ impl AppState {
     }
 
     /// 停止监听（关闭或**切换** Vault 时调用）。
+    /// 登记轮询回退线程的停止标志（审计 T-21）。
+    pub fn set_fallback_stop(&self, flag: Arc<std::sync::atomic::AtomicBool>) {
+        if let Ok(mut guard) = self.fallback_stop.lock() {
+            *guard = Some(flag);
+        }
+    }
+
     pub fn stop_watcher(&self) {
+        // 轮询回退线程也必须停（审计 T-21）。
+        if let Ok(mut guard) = self.fallback_stop.lock() {
+            if let Some(flag) = guard.take() {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
         if let Ok(mut guard) = self.watcher.lock() {
             if let Some(old) = guard.take() {
                 old.stop();
@@ -157,32 +173,5 @@ impl AppState {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn temp_pool() -> (tempfile::TempDir, Arc<DbPool>) {
-        let dir = tempfile::tempdir().expect("临时目录应可创建");
-        let pool = crate::storage::global::open(dir.path()).expect("打开全局库应成功");
-        (dir, Arc::new(pool))
-    }
-
-    #[test]
-    fn index_db_handle_is_settable_and_clearable() {
-        let state = AppState::new();
-        assert!(state.index_db().is_none(), "初始应为空");
-        let (_dir, pool) = temp_pool();
-        state.set_index_db(Some(Arc::clone(&pool)));
-        assert!(state.index_db().is_some(), "设置后应可读取");
-        state.set_index_db(None);
-        assert!(state.index_db().is_none(), "清除后应为空");
-    }
-
-    #[test]
-    fn global_db_handle_is_settable() {
-        let state = AppState::new();
-        assert!(state.global_db().is_none());
-        let (_dir, pool) = temp_pool();
-        state.set_global_db(pool);
-        assert!(state.global_db().is_some());
-    }
-}
+#[path = "state_tests.rs"]
+mod tests;

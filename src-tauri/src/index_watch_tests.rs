@@ -197,7 +197,9 @@ fn polling_fallback_indexes_external_change() {
     fs::write(root.join("a.md"), "# 甲\n").expect("写笔记");
     let pool = Arc::new(open(&root).expect("建索引库"));
     full_index(&pool, &root, |_, _| {}).expect("首次索引");
-    let _handle = start_polling_fallback(pool.clone(), root.clone());
+    // 审计 T-21：句柄不再丢弃 —— 停止标志用它；测完必须真的停，否则线程会活到进程结束。
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let handle = start_polling_fallback(pool.clone(), root.clone(), stop.clone());
     fs::write(root.join("轮询新增.md"), "# 轮询新增\n\n内容\n").expect("外部写入");
     let deadline = std::time::Instant::now() + Duration::from_secs(12);
     loop {
@@ -214,6 +216,11 @@ fn polling_fallback_indexes_external_change() {
         );
         std::thread::sleep(SETTLE_BEFORE_CHANGE);
     }
+
+    // **审计 T-21 的判据**：置位后线程必须能退出（此前取消谓词写死 || false，永远停不下来）。
+    // 循环在睡眠后才检查标志，所以最多再等一个 5s 周期。
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    handle.join().expect("轮询线程应当能正常退出");
 }
 /// **监听死循环防护**（计划 §4 第 21 行 / TECH §13.1 验证项 ③）：
 /// 索引只写 `.knowlpad/`（忽略目录）→ "索引进行中改文件"不应产生事件；

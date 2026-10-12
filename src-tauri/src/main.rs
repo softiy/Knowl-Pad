@@ -11,6 +11,7 @@ mod index_resolve;
 mod index_watch;
 mod index_watch_events;
 mod index_watch_paths;
+mod index_watch_poll;
 #[cfg(test)]
 mod index_watch_tests;
 mod logging;
