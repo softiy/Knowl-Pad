@@ -53,6 +53,9 @@ pub struct RewritePreview {
     pub span_count: usize,
     pub edits: Vec<RewriteEdit>,
     pub created_at_ms: u128,
+    /// 因不可读而跳过、**未被处理**的文件（审计 R3）。非空时 UI 必须提示：
+    /// 它们里面指向旧名的链接会保持原样，改名后会悬空。
+    pub skipped: Vec<String>,
 }
 
 /// PRD §5.3.3 的 \`RewriteResult\`。
@@ -126,6 +129,7 @@ pub(crate) fn link_rewrite_preview_impl(
         file_count: plan.changes.len(),
         span_count: plan.total_hits(),
         edits: plan_to_edits(&plan),
+        skipped: plan.skipped.clone(),
         created_at_ms: now_ms(),
     };
     put_preview(

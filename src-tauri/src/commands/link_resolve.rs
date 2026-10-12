@@ -60,6 +60,7 @@ pub(crate) fn link_resolve_ambiguous_impl(
             new_content,
             hits,
         }],
+        skipped: Vec::new(), // 单条链接改写没有"跳过项"（审计 R3 的 skipped 属改名改写计划）
     };
     let backup_root = root
         .join(kp_domain::vault_paths::INTERNAL_DIR)

@@ -203,3 +203,36 @@ mod joint {
         assert!(!backups.exists(), "改名都没成功，不应产生备份目录");
     }
 }
+
+/// **审计 R3 的判据**：不可读的文件不能"静默消失"，必须出现在 plan.skipped 里。
+///
+/// 注入是**确定的**（不靠平台）：把一个路径做成**同名目录**，于是 std::fs::read 必然失败。
+#[test]
+fn unreadable_files_are_reported_as_skipped() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path();
+    std::fs::write(root.join("ok.md"), "# OK\n\n见 [[A]]\n").expect("写可读文件");
+    std::fs::create_dir_all(root.join("blocked.md")).expect("把 blocked.md 做成目录");
+
+    let plan = kp_domain::link_rewrite_apply::plan_rename(
+        root,
+        "A",
+        "B",
+        &["ok.md".to_string(), "blocked.md".to_string()],
+    )
+    .expect("生成计划");
+
+    assert_eq!(plan.changes.len(), 1, "只有可读的那个进计划");
+    assert_eq!(plan.changes[0].rel_path, "ok.md");
+    assert_eq!(plan.skipped.len(), 1, "不可读的必须被记下来");
+    assert!(
+        plan.skipped[0].contains("blocked.md"),
+        "要点名：{:?}",
+        plan.skipped
+    );
+    assert!(
+        plan.skipped[0].contains("读取失败"),
+        "要说明原因：{:?}",
+        plan.skipped
+    );
+}

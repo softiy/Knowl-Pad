@@ -161,6 +161,7 @@ describe('改写两步确认（FR-FILE-21 / PRD 的 preview_id）', () => {
     setActivePinia(createPinia());
     hoisted.preview.mockReset().mockResolvedValue({
       previewId: 'p1', fromRef: 'A', toRef: 'B', fileCount: 2, spanCount: 3,
+      skipped: ['blocked.md（读取失败：文件可能已被移走或没有权限）'],
       edits: [
         { relPath: 'a.md', hits: 2, occurrences: [
           { line: 3, before: '[[A]]', after: '[[B]]' },
@@ -171,6 +172,18 @@ describe('改写两步确认（FR-FILE-21 / PRD 的 preview_id）', () => {
     });
     hoisted.apply.mockReset().mockResolvedValue({ operationId: 'op1', fileCount: 2, spanCount: 3 });
     hoisted.rollback.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('被跳过的文件必须在预览里显式警告（审计 R3）', async () => {
+    const w = mount(RewriteConfirmDialog);
+    await w.get('[data-testid="rewrite-from"]').setValue('A');
+    await w.get('[data-testid="rewrite-to"]').setValue('B');
+    await w.get('[data-testid="rewrite-preview"]').trigger('click');
+    await flushPromises();
+    const warn = w.get('[data-testid="rewrite-skipped"]');
+    expect(warn.text()).toContain('不会被处理');
+    expect(warn.text()).toContain('blocked.md');
+    expect(warn.text()).toContain('悬空');
   });
 
   it('预览只读展示"将修改 N 个文件中的 M 处"，确认后才执行并可回滚', async () => {
@@ -270,7 +283,8 @@ describe('改名 + 改写：一次原子可回滚操作（FR-FILE-22 / 审计 H3
   beforeEach(() => {
     setActivePinia(createPinia());
     hoisted.preview.mockReset().mockResolvedValue({
-      previewId: 'p9', fromRef: 'A', toRef: 'B', fileCount: 1, spanCount: 1,
+      previewId: 'p9',
+      skipped: [], fromRef: 'A', toRef: 'B', fileCount: 1, spanCount: 1,
       edits: [{ relPath: 'a.md', hits: 1, occurrences: [] }], createdAtMs: 1,
     });
     hoisted.apply.mockReset().mockResolvedValue({ operationId: 'op9', fileCount: 1, spanCount: 1 });

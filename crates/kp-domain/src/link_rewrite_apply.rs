@@ -26,6 +26,11 @@ pub struct FileChange {
 #[derive(Debug, Clone, Default)]
 pub struct RewritePlan {
     pub changes: Vec<FileChange>,
+    /// 因**不可读**（不存在/权限/非 UTF-8）而没能纳入计划的文件（含原因）。
+    ///
+    /// 审计 R3：此前是静默 continue，预览只说"将修改 N 个文件"，用户不知道还有文件没被处理 ——
+    /// 而改名之后，这些文件里指向旧名的链接会**保持原样**（变成悬空）。必须回报。
+    pub skipped: Vec<String>,
 }
 
 impl RewritePlan {
@@ -53,13 +58,18 @@ pub fn plan_rename(
     rel_paths: &[String],
 ) -> Result<RewritePlan, AppError> {
     let mut changes = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
     for rel in rel_paths {
         let target = root.join(rel);
         let Ok(bytes) = std::fs::read(&target) else {
-            continue; // 索引与磁盘短暂不一致时跳过，不视为错误
+            // 索引与磁盘短暂不一致时跳过，但**必须记下来**（审计 R3）：
+            // 这些文件里的旧名链接不会被改，改名后会悬空。
+            skipped.push(format!("{rel}（读取失败：文件可能已被移走或没有权限）"));
+            continue;
         };
         let Ok(old_content) = String::from_utf8(bytes) else {
-            continue; // 非 UTF-8 不猜编码，跳过
+            skipped.push(format!("{rel}（不是 UTF-8 文本，未猜测编码）"));
+            continue;
         };
         let (new_content, hits) = rewrite_references(&old_content, from, to);
         if hits > 0 && new_content != old_content {
@@ -71,7 +81,7 @@ pub fn plan_rename(
             });
         }
     }
-    Ok(RewritePlan { changes })
+    Ok(RewritePlan { changes, skipped })
 }
 
 /// 落地计划：**全有或全无**。
