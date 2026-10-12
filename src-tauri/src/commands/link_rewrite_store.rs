@@ -84,14 +84,25 @@ pub(crate) fn link_rewrite_rollback_impl(
     let op = get_operation(state, &operation_id)
         .ok_or_else(|| KpError(AppError::FileNotFound(operation_id.clone())))?;
 
+    let mut missing: Vec<String> = Vec::new();
     for (i, rel) in op.modified.iter().enumerate() {
         let backup = op.backup_dir.join(format!("{i}.bak"));
         let Ok(content) = std::fs::read(&backup) else {
-            continue; // 没有这份备份（或已被清理）→ 跳过，不阻断其余恢复
+            // **缺备份不是"跳过"**（审计 R2）：该文件仍停在改写后的内容，而 UI 会以为已还原、
+            // 连回滚按钮都收起来。必须点名报错，让用户知道哪些文件没能恢复。
+            missing.push(rel.clone());
+            continue;
         };
         let target = op.vault_root.join(rel);
         kp_domain::note_io::atomic_write(&target, &content)
             .map_err(|e| KpError(AppError::RewriteFailed(format!("回滚 {rel} 失败：{e}"))))?;
+    }
+
+    if !missing.is_empty() {
+        return Err(KpError(AppError::RollbackFailed {
+            failures: missing,
+            backup_dir: op.backup_dir.display().to_string(),
+        }));
     }
 
     // 链接已改回旧名 → 现在把文件也改回旧名

@@ -108,10 +108,21 @@ pub fn apply(root: &Path, plan: &RewritePlan, backup_root: &Path) -> Result<Appl
         match note_io::atomic_write(&target, change.new_content.as_bytes()) {
             Ok(()) => written.push(i),
             Err(err) => {
+                // 技术方案 §6.1.6：回滚失败是**唯一无法保证「用户数据完好」**的路径 ——
+                // 必须点名文件并返回专用错误，**禁止**把"尝试数"说成"已回滚数"（审计 R1）。
+                let mut failures: Vec<String> = Vec::new();
                 for j in written.iter().rev() {
                     let done = &plan.changes[*j];
                     let target = root.join(&done.rel_path);
-                    let _ = note_io::atomic_write(&target, done.old_content.as_bytes());
+                    if let Err(e) = note_io::atomic_write(&target, done.old_content.as_bytes()) {
+                        failures.push(format!("{}（{e}）", done.rel_path));
+                    }
+                }
+                if !failures.is_empty() {
+                    return Err(AppError::RollbackFailed {
+                        failures,
+                        backup_dir: backup_root.display().to_string(),
+                    });
                 }
                 return Err(AppError::IoFailure(format!(
                     "改写 {} 失败，已回滚 {} 个文件：{err}",

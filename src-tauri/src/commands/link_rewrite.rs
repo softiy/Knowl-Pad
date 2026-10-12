@@ -155,6 +155,21 @@ pub(crate) fn link_rewrite_preview_impl(
 }
 
 /// 命令体（把状态作为参数传入，便于测试 —— 项目既有做法，见 DEBT-14）。
+/// 技术方案 §6.1.6 的第 ③ 条：**回滚失败必须写 ERROR 级日志**。
+///
+/// 域层不依赖 tracing，所以日志在这里做。注意 **SEC-09**：日志的上下文里**不得出现用户数据**
+/// （文件路径也不行）—— 这里只记变体名与失败数；具体是哪些文件，走**面向用户**的错误消息。
+/// 这一点与技术方案 §6.1.6 的示意代码（`tracing::error!(?failures, …)`）不同，按 SEC-09 从严。
+fn log_rollback_failure(e: &AppError) {
+    if let AppError::RollbackFailed { failures, .. } = e {
+        tracing::error!(
+            kind = e.kind(),
+            failed_files = failures.len(),
+            "链接改写回滚失败：用户数据可能停在中间状态（备份已保留，需在 UI 显著提示）"
+        );
+    }
+}
+
 pub(crate) fn link_rewrite_apply_impl(
     state: &AppState,
     preview_id: String,
@@ -220,7 +235,10 @@ pub(crate) fn link_rewrite_apply_impl(
                     .collect::<Vec<_>>(),
                 &backup_root(&stored.vault_root),
             )
-            .map_err(|e| KpError(AppError::RewriteFailed(e.to_string())))?;
+            .map_err(|e| {
+                log_rollback_failure(&e);
+                KpError(e)
+            })?;
             (report, Some((from.clone(), to.clone())))
         }
         None => {
@@ -229,7 +247,10 @@ pub(crate) fn link_rewrite_apply_impl(
                 &stored.plan,
                 &backup_root(&stored.vault_root),
             )
-            .map_err(|e| KpError(AppError::RewriteFailed(e.to_string())))?;
+            .map_err(|e| {
+                log_rollback_failure(&e);
+                KpError(e)
+            })?;
             (report, None)
         }
     };
