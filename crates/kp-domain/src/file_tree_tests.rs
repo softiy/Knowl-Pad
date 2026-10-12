@@ -226,3 +226,27 @@ fn symlinks_are_not_followed() {
     );
     drop(dir);
 }
+
+/// **审计 L4 的判据**：`.knowlpad` 的隐藏必须是**大小写不敏感**的（AC-FILE-09 "无论如何都隐藏"）。
+///
+/// 在大小写不敏感的文件系统上（Windows / macOS 默认），`.KnowlPad` 与 `.knowlpad` 是**同一个目录** ——
+/// 而保护写路径的 `vault_paths::is_internal_path` 本就不区分大小写，文件树若区分，
+/// 就会出现"写不进去、却看得见"的不一致。
+#[test]
+fn internal_dir_is_hidden_regardless_of_case() {
+    let root = tempfile::tempdir().expect("临时目录");
+    for name in [".knowlpad", ".KnowlPad", ".KNOWLPAD"] {
+        let dir = root.path().join(name);
+        if std::fs::create_dir_all(&dir).is_err() {
+            continue; // 大小写敏感的盘上 `.KnowlPad` 是另一个目录，本用例仍应通过
+        }
+        std::fs::write(dir.join("index.db"), b"db").expect("写内部文件");
+    }
+    let entries =
+        crate::file_tree::list_dir(root.path(), "", true).expect("列目录（开启显示隐藏）");
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert!(
+        !names.iter().any(|n| n.eq_ignore_ascii_case(".knowlpad")),
+        "内部目录的任何大小写形式都不得出现（实际：{names:?}）"
+    );
+}
