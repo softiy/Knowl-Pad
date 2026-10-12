@@ -37,10 +37,10 @@
     },
     {
       "id": "L-03",
-      "form": "wikilink-heading",
+      "form": "wikilink-heading-bare",
       "context": "body",
-      "input": "见 [[folder/A#标题]]。",
-      "expected": "见 [[folder/B#标题]]。",
+      "input": "见 [[A#标题]]。",
+      "expected": "见 [[B#标题]]。",
       "shouldRewrite": true,
       "covers": [
         "AC-FILE-01",
@@ -180,6 +180,30 @@
       "covers": [
         "AC-FILE-01",
         "AC-LINK-01"
+      ]
+    },
+    {
+      "id": "L-16",
+      "form": "wikilink-heading-other-dir",
+      "context": "body",
+      "input": "见 [[folder/A#标题]]。",
+      "expected": "见 [[folder/A#标题]]。",
+      "shouldRewrite": false,
+      "covers": [
+        "AC-FILE-01",
+        "FR-LINK-02"
+      ]
+    },
+    {
+      "id": "L-17",
+      "form": "wikilink-same-stem-other-dir",
+      "context": "body",
+      "input": "甲 [[folder/A]] 乙\\n",
+      "expected": "甲 [[folder/A]] 乙\\n",
+      "shouldRewrite": false,
+      "covers": [
+        "AC-FILE-01",
+        "FR-LINK-02"
       ]
     }
   ]

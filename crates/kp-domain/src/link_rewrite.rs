@@ -114,11 +114,25 @@ pub fn stem_of(reference: &str) -> String {
     last.strip_suffix(".md").unwrap_or(last).to_lowercase()
 }
 
+/// 目标引用里的目录前缀（不含文件名）；没有目录时返回空串。
+pub fn dir_of(reference: &str) -> String {
+    match reference.rsplit_once('/') {
+        Some((dir, _)) => dir.to_string(),
+        None => String::new(),
+    }
+}
+
 /// 把 from 改写成 to：按词干大小写不敏感匹配，保留别名、锚点、标题与形式。
 ///
 /// 返回新全文与实际改写处数；一处没改时返回原文与 0。
 pub fn rewrite_references(content: &str, from: &str, to: &str) -> (String, usize) {
     let from_stem = stem_of(from);
+    // **精确匹配**：只改指向"被改名的那一篇"的链接。
+    // 只比词干会连 [[other/A]] 一起改掉 —— 而 other/A.md 可能是**另一篇**同名笔记
+    // （FR-FILE-20「只更新指向**它**的链接」、FR-LINK-02 ①「完整相对路径精确匹配优先」）。
+    // 因此链接自带的目录前缀必须与 from 的目录前缀一致：根目录的 A.md 只认裸 [[A]]，
+    // folder/A.md 只认 [[folder/A]]。
+    let from_dir = dir_of(from);
     let to_stem = to.rsplit('/').next().unwrap_or(to);
     let to_stem = to_stem.strip_suffix(".md").unwrap_or(to_stem).to_string();
     let occ = scan_links(content);
@@ -126,7 +140,7 @@ pub fn rewrite_references(content: &str, from: &str, to: &str) -> (String, usize
     let mut cursor = 0usize;
     let mut changed = 0usize;
     for o in occ {
-        if stem_of(&o.target) != from_stem {
+        if stem_of(&o.target) != from_stem || dir_of(&o.target) != from_dir {
             continue;
         }
         out.push_str(&content[cursor..o.start]);
