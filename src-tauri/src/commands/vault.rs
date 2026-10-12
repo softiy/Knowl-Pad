@@ -87,7 +87,9 @@ fn spawn_reconcile_and_watch(
                 Ok(handle) => state.set_watcher(handle, root.clone()),
                 Err(err) => {
                     tracing::warn!(error = %err, "文件监听启动失败，退化为轮询对账");
-                    crate::index_watch::start_polling_fallback(pool.clone(), root.clone());
+                    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    state.set_fallback_stop(stop.clone()); // 审计 T-21：登记停止标志，切库/关闭时置位
+                    crate::index_watch::start_polling_fallback(pool.clone(), root.clone(), stop);
                 }
             }
         }

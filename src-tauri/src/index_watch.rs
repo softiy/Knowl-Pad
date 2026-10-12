@@ -151,10 +151,18 @@ pub fn apply_changes<F: Fn(&[Change])>(
 /// 监听句柄：持有 debouncer；调用 [`WatcherHandle::stop`] 或 drop 即停止。
 pub struct WatcherHandle {
     debouncer: Option<Debouncer<RecommendedWatcher, RecommendedCache>>,
+    /// 轮询回退线程的**停止标志**（审计 T-21）。
+    ///
+    /// 此前 `start_polling_fallback` 的循环用 `|| false` 当取消谓词、句柄又被 `let _ =` 丢掉：
+    /// 一旦降级就**永远停不下来** —— 关掉 Vault/退出前每 5 秒仍在做全量对账，白抢磁盘 IO。
+    fallback_stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl WatcherHandle {
     pub fn stop(mut self) {
+        // 先让轮询回退线程退出（审计 T-21），再停 debouncer。
+        self.fallback_stop
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         if let Some(d) = self.debouncer.take() {
             d.stop();
         }
@@ -176,6 +184,10 @@ where
     let pool_for_handler = pool.clone();
     // 轮询降级只允许启动一次（MaxFilesWatch 可能反复上报）。
     let fallback_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // 轮询回退的停止标志（审计 T-21）：句柄持有一份，事件处理器持有一份。
+    let fallback_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let fallback_stop_for_handle = fallback_stop.clone();
+    let fallback_stop_for_handler = fallback_stop.clone();
     let fallback_flag = fallback_started.clone();
     let mut debouncer = new_debouncer(
         Duration::from_millis(DEBOUNCE_MS),
@@ -222,6 +234,7 @@ where
                             let _ = crate::index_watch::start_polling_fallback(
                                 pool_for_handler.clone(),
                                 root_for_handler.clone(),
+                                fallback_stop_for_handler.clone(),
                             );
                         }
                         tracing::warn!(error = %e, "文件监听句柄数达上限，退化为轮询对账");
@@ -242,6 +255,7 @@ where
         .map_err(|e| AppError::from(std::io::Error::other(format!("监听 Vault 失败：{e}"))))?;
     Ok(WatcherHandle {
         debouncer: Some(debouncer),
+        fallback_stop: fallback_stop_for_handle,
     })
 }
 
@@ -315,23 +329,4 @@ pub fn start_watcher(
     )
 }
 
-/// 轮询回退（inotify 耗尽等，NFR-PLAT-09）：每 5s 做一次「跳过未变更」的对账。
-pub fn start_polling_fallback(pool: Arc<DbPool>, root: PathBuf) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(POLL_INTERVAL);
-        match index_engine::full_index_cancellable(
-            &pool,
-            &root,
-            |_, _| {},
-            IndexMode::SkipUnchanged,
-            || false,
-        ) {
-            Ok(outcome) => {
-                if outcome.indexed > 0 {
-                    tracing::info!(indexed = outcome.indexed, "轮询对账已索引");
-                }
-            }
-            Err(err) => tracing::warn!(error = %err, "轮询对账失败"),
-        }
-    })
-}
+pub use crate::index_watch_poll::start_polling_fallback;
