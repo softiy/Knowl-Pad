@@ -59,7 +59,14 @@ export interface FsRenamed {
   to: string;
 }
 
-/** 目前 Rust 侧真正会 emit 的事件名（与 `src-tauri` 的 emit 调用一一对应）。 */
+/**
+ * Rust 侧**真正会 emit** 的事件名。
+ *
+ * 审计 T-05：这里此前只有 7 个，而 Rust 侧实际 emit 8 个（漏了 `kp://index/rebuild-required`，
+ * 它在 PRD §5.4 的事件表与 M3 计划里都有）—— 注释却写着"与 src-tauri 的 emit 调用一一对应"。
+ * 更糟的是那条用例把清单**硬编码**成 7 个，于是"把漏掉的补上"反而会让用例变红：
+ * 它把**已知漂移**锁死了。现在清单补齐，用例改为扫 Rust 源码做**集合相等**比对。
+ */
 export const EMITTED_EVENT_NAMES = [
   'kp://index/progress',
   'kp://index/completed',
@@ -68,6 +75,7 @@ export const EMITTED_EVENT_NAMES = [
   'kp://fs/modified',
   'kp://fs/removed',
   'kp://fs/renamed',
+  'kp://index/rebuild-required',
 ] as const;
 
 export type EmittedEventName = (typeof EMITTED_EVENT_NAMES)[number];
