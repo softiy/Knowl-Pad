@@ -160,11 +160,15 @@ pub fn write_note(target: &Path, content: &[u8], base_mtime: Option<i64>) -> Res
         }
     }
     if let Some(base) = base_mtime {
-        if target.exists() {
-            let actual = mtime_ms(target)?;
-            if actual != base {
-                return Err(AppError::WriteConflict(target.display().to_string()));
-            }
+        // 审计 L6：上面承诺"文件**或所在目录**被删除后不能复活"，但此前只查了目录 ——
+        // 文件被单独删除（目录还在）时冲突检查被跳过，atomic_write 会把它悄悄重建。
+        // 给了 base_mtime 就意味着"认为它存在"，那它不在即"被外部删除"（同 FR-EDITOR-34，禁静默覆盖）。
+        if !target.exists() {
+            return Err(AppError::FileNotFound(target.display().to_string()));
+        }
+        let actual = mtime_ms(target)?;
+        if actual != base {
+            return Err(AppError::WriteConflict(target.display().to_string()));
         }
     }
     atomic_write(target, content)?;
