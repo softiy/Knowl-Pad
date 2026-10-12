@@ -155,8 +155,15 @@ mod tests {
         match init(dir.path()) {
             Ok(()) => {}
             Err(err) => {
-                // 同一进程内已被其它测试初始化时跳过（不是失败）
-                eprintln!("跳过：{err}");
+                // 审计 T-02：此前**任何** Err 都当作"已被其它测试初始化"跳过 → 用例零断言通过。
+                // 若 init 因真实缺陷失败（路径/权限/格式），这条"端到端自检"会静默变绿。
+                // 现在只承认一种合法跳过理由：本进程确实已经设置过全局订阅者（tracing 只能设一次）。
+                let msg = format!("{err}");
+                assert!(
+                    tracing::dispatcher::has_been_set() || msg.contains("already been set"),
+                    "日志初始化失败，且并非\"本进程已初始化过\"这一合法情形：{msg}"
+                );
+                eprintln!("跳过：本进程已存在全局订阅者（{msg}）");
                 return;
             }
         }
