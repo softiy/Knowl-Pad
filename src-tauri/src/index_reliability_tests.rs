@@ -11,6 +11,16 @@ use crate::storage::index::open;
 use crate::storage::pool::DbPool;
 use kp_domain::error::AppError;
 
+/// **重负载用例的串行闸**（审计 T-20）。
+///
+/// 本文件里的 DEBT-04 用例会灌 10 万行；而 `index_watch_tests::ac_link_02_incremental_resolve_scales`
+/// 带一个 **2 秒**的墙钟预算（AC-LINK-02 的申报口径，写在 M4 收尾里）。两者在**同一个测试二进制内
+/// 并行**执行 → 低配 runner 上灌库会抢占磁盘与 CPU，让 2000 条增量裁决偶发超 2 秒。
+///
+/// 修法是**串行化**而不是放宽口径：那个预算是"用户在 2000 篇规模下应得的响应"，不该因为
+/// 测试自身的并行而变松。用进程内互斥实现，不引入新依赖，也不改变任何断言语义。
+pub(crate) static HEAVY_SCALE_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn write_note(root: &Path, rel: &str, content: &str) {
     let p = root.join(rel);
     if let Some(dir) = p.parent() {
@@ -149,6 +159,7 @@ fn ac_rel_03_rebuild_after_deleting_index_files_is_identical() {
 /// DEBT-04：10 万文件 + 1 万链接规模下的裁决耗时实测（直接灌行，避免真实文件 IO）。
 #[test]
 fn debt_04_link_candidates_scale_to_100k_files() {
+    let _guard = HEAVY_SCALE_TEST.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().expect("临时目录");
     let pool = open(dir.path()).expect("建索引库");
     pool.with_writer(|conn| {
