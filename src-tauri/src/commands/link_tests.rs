@@ -6,9 +6,10 @@
 use std::sync::Arc;
 
 use crate::commands::link::{
-    link_ambiguous_list_impl, link_backlinks_impl, link_dangling_list_impl, link_headings_impl,
-    link_orphan_list_impl, link_outgoing_impl,
+    link_ambiguous_list_impl, link_backlinks_impl, link_headings_impl, link_orphan_list_impl,
+    link_outgoing_impl,
 };
+use crate::commands::link_list::link_dangling_list_impl;
 use crate::state::AppState;
 
 /// 建临时 Vault + 已建索引的 AppState。
@@ -145,5 +146,36 @@ fn commands_error_when_vault_not_open() {
         link_outgoing_impl(&state, "A.md").expect_err("出链应报错"),
     ] {
         assert_eq!(err.0.code(), "E_VAULT_NOT_OPEN");
+    }
+}
+
+/// **审计 L1 的判据**：高亮用的"链接字符数"必须按各部件精确累加，
+/// 而不是一律 target + 4 —— 否则带别名/锚点/嵌入的链接高亮区间会偏短。
+#[test]
+fn link_text_len_matches_each_wikilink_form() {
+    use crate::commands::link_view::link_text_len;
+    // [[目标]]：2 + 2 + 2
+    assert_eq!(link_text_len("目标", None, None, false), 2 + 4);
+    // [[目标#小节]]：多出 '#' + 小节
+    assert_eq!(
+        link_text_len("目标", Some("小节"), None, false),
+        2 + 4 + 1 + 2
+    );
+    // [[目标|别名]]：多出 '|' + 别名
+    assert_eq!(
+        link_text_len("目标", Some("小节"), Some("别名"), false),
+        2 + 4 + 1 + 2 + 1 + 2
+    );
+    // ![[目标]]：再多一个叹号
+    assert_eq!(link_text_len("目标", None, None, true), 2 + 4 + 1);
+    // 与真实原文对照（最直接的判据：算出来的长度必须正好覆盖 [[…]]）
+    for (raw, target, anchor, alias, embed) in [
+        ("[[目标]]", "目标", None, None, false),
+        ("[[目标#小节]]", "目标", Some("小节"), None, false),
+        ("[[目标|别名]]", "目标", None, Some("别名"), false),
+        ("![[目标]]", "目标", None, None, true),
+    ] {
+        let n = link_text_len(target, anchor, alias, embed);
+        assert_eq!(n, raw.chars().count(), "「{raw}」的字符数应为 {n}");
     }
 }

@@ -5,9 +5,8 @@
 
 use std::sync::Arc;
 
-use crate::commands::link::{
-    link_ambiguous_list_impl, link_backlinks_impl, link_dangling_list_impl,
-};
+use crate::commands::link::{link_ambiguous_list_impl, link_backlinks_impl};
+use crate::commands::link_list::link_dangling_list_impl;
 use crate::commands::link_resolve::link_resolve_ambiguous_impl;
 use crate::commands::link_rewrite::{
     link_rewrite_apply_impl, link_rewrite_preview_impl, RenameSpec,
