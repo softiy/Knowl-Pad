@@ -34,6 +34,19 @@ pub enum AppError {
     PermissionDenied(String),
     #[error("{0}")]
     DbError(String),
+    /// 与 `DbError` **同码同 kind**，但多带一条**只进日志、不面向用户**的细节（ERR-02 + ERR-04）。
+    ///
+    /// 审计 R5/G3：全仓 ~112 处 `map_err(|_| AppError::db("…"))` 把 SQLite 的英文原文直接丢掉，
+    /// 事后只剩"统计索引实体失败"，无法定位是锁冲突、语法错还是磁盘满。
+    /// 面向用户的 message 必须保持中文、可操作（ERR-02），所以细节走**独立字段**：
+    /// 日志出口（src-tauri/src/error_wrapper.rs）会以 ERROR 级记录它。
+    #[error("{message}")]
+    DbErrorDetail {
+        /// 面向用户的中文文案（与 `AppError::db` 生成的完全一致）
+        message: String,
+        /// 仅用于日志的底层细节
+        detail: String,
+    },
     /// PRD §5.2 / §5.3.3：改写预览已过期或已被消费（一次性使用）。
     #[error("改写预览已过期或已被消费，请重新执行预览")]
     PreviewExpired,
@@ -71,7 +84,7 @@ impl AppError {
             Self::FileLocked(_) => "E_FILE_LOCKED",
             Self::PermissionDenied(_) => "E_PERMISSION_DENIED",
             Self::IoFailure(_) => "E_IO_FAILURE",
-            Self::DbError(_) => "E_DB_ERROR",
+            Self::DbError(_) | Self::DbErrorDetail { .. } => "E_DB_ERROR",
             Self::PreviewExpired => "E_PREVIEW_EXPIRED",
             Self::RewriteFailed(_) => "E_REWRITE_FAILED",
             // 复用码，靠 context 区分（技术方案 §13.1）
@@ -87,6 +100,26 @@ impl AppError {
         Self::DbError(format!(
             "{context}失败。请重试；若持续出现，请检查应用数据目录是否可写，或重启应用。"
         ))
+    }
+
+    /// 与 [`AppError::db`] 同文案，但**保留底层细节**供日志使用（ERR-04）。审计 R5/G3 的修法。
+    pub fn db_with(context: &str, detail: impl std::fmt::Display) -> Self {
+        let message = match Self::db(context) {
+            Self::DbError(m) => m,
+            _ => unreachable!(),
+        };
+        Self::DbErrorDetail {
+            message,
+            detail: detail.to_string(),
+        }
+    }
+
+    /// 供日志出口取用的细节（没有则为 None）。
+    pub fn log_detail(&self) -> Option<&str> {
+        match self {
+            Self::DbErrorDetail { detail, .. } => Some(detail.as_str()),
+            _ => None,
+        }
     }
 
     /// 带「路径上下文」的 io 错误构造（ERR-02）：message 里出现的是**相对路径**，不是 io 原文。
@@ -118,7 +151,7 @@ impl AppError {
             Self::FileLocked(_) => "FileLocked",
             Self::PermissionDenied(_) => "PermissionDenied",
             Self::IoFailure(_) => "IoFailure",
-            Self::DbError(_) => "DbError",
+            Self::DbError(_) | Self::DbErrorDetail { .. } => "DbError",
             Self::PreviewExpired => "PreviewExpired",
             Self::RewriteFailed(_) => "RewriteFailed",
             Self::RollbackFailed { .. } => "RollbackFailed",

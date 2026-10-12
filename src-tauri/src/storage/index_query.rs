@@ -18,7 +18,7 @@ pub fn has_rows(pool: &DbPool) -> bool {
             r.get::<_, i64>(0)
         })
         .map(|n| n > 0)
-        .map_err(|_| AppError::db("探测索引库"))
+        .map_err(|e| kp_domain::error::AppError::db_with("721", &e))
     })
     .unwrap_or(false)
 }
@@ -70,12 +70,12 @@ pub fn list_children(pool: &DbPool, parent_rel: &str) -> Result<Vec<FileEntry>, 
                   WHERE deleted = 0 AND (?1 = 0 OR substr(rel_path, 1, ?1) = ?2) \
                   ORDER BY rel_path",
             )
-            .map_err(|_| AppError::db("准备文件树查询"))?;
+            .map_err(|e| kp_domain::error::AppError::db_with("2597", &e))?;
         let rows = stmt
             .query_map(rusqlite::params![prefix_chars, prefix], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
             })
-            .map_err(|_| AppError::db("查询文件树"))?;
+            .map_err(|e| kp_domain::error::AppError::db_with("2823", &e))?;
         Ok(rows.filter_map(Result::ok).collect())
     })?;
 
