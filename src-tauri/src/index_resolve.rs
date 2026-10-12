@@ -45,12 +45,23 @@ fn build_candidates(conn: &Connection) -> Result<(CandidateMap, CandidateMap), A
     {
         let mut stmt = conn
             .prepare("SELECT id, stem, rel_path FROM file WHERE deleted = 0")
-            .map_err(|_| AppError::db("读取文件表"))?;
-        let mut rows = stmt.query([]).map_err(|_| AppError::db("读取文件表"))?;
-        while let Some(row) = rows.next().map_err(|_| AppError::db("读取文件表"))? {
-            let id: i64 = row.get(0).map_err(|_| AppError::db("读取文件表"))?;
-            let stem: String = row.get(1).map_err(|_| AppError::db("读取文件表"))?;
-            let rel_path: String = row.get(2).map_err(|_| AppError::db("读取文件表"))?;
+            .map_err(|e| AppError::db_with("读取文件表", &e))?;
+        let mut rows = stmt
+            .query([])
+            .map_err(|e| AppError::db_with("读取文件表", &e))?;
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| AppError::db_with("读取文件表", &e))?
+        {
+            let id: i64 = row
+                .get(0)
+                .map_err(|e| AppError::db_with("读取文件表", &e))?;
+            let stem: String = row
+                .get(1)
+                .map_err(|e| AppError::db_with("读取文件表", &e))?;
+            let rel_path: String = row
+                .get(2)
+                .map_err(|e| AppError::db_with("读取文件表", &e))?;
             push(&mut by_name, stem.to_lowercase(), id, &rel_path);
             let rel_lower = rel_path.to_lowercase();
             push(&mut by_name, rel_lower.clone(), id, &rel_path);
@@ -65,12 +76,23 @@ fn build_candidates(conn: &Connection) -> Result<(CandidateMap, CandidateMap), A
                 "SELECT fa.file_id, fa.alias, f.rel_path FROM file_alias fa \
                  JOIN file f ON f.id = fa.file_id WHERE f.deleted = 0",
             )
-            .map_err(|_| AppError::db("读取别名表"))?;
-        let mut rows = stmt.query([]).map_err(|_| AppError::db("读取别名表"))?;
-        while let Some(row) = rows.next().map_err(|_| AppError::db("读取别名表"))? {
-            let id: i64 = row.get(0).map_err(|_| AppError::db("读取别名表"))?;
-            let alias: String = row.get(1).map_err(|_| AppError::db("读取别名表"))?;
-            let rel_path: String = row.get(2).map_err(|_| AppError::db("读取别名表"))?;
+            .map_err(|e| AppError::db_with("读取别名表", &e))?;
+        let mut rows = stmt
+            .query([])
+            .map_err(|e| AppError::db_with("读取别名表", &e))?;
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| AppError::db_with("读取别名表", &e))?
+        {
+            let id: i64 = row
+                .get(0)
+                .map_err(|e| AppError::db_with("读取别名表", &e))?;
+            let alias: String = row
+                .get(1)
+                .map_err(|e| AppError::db_with("读取别名表", &e))?;
+            let rel_path: String = row
+                .get(2)
+                .map_err(|e| AppError::db_with("读取别名表", &e))?;
             push(&mut by_alias, alias.to_lowercase(), id, &rel_path);
         }
     }
@@ -85,10 +107,10 @@ pub fn resolve_links(conn: &Connection) -> Result<ResolveOutcome, AppError> {
             "SELECT l.id, l.target_ref, f.rel_path FROM link l \
              JOIN file f ON f.id = l.src_file_id",
         )
-        .map_err(|_| AppError::db("读取待裁决链接"))?;
+        .map_err(|e| AppError::db_with("读取待裁决链接", &e))?;
     let rows: Vec<(i64, String, String)> = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-        .map_err(|_| AppError::db("读取待裁决链接"))?
+        .map_err(|e| AppError::db_with("读取待裁决链接", &e))?
         .filter_map(Result::ok)
         .collect();
     drop(stmt);
@@ -100,7 +122,7 @@ pub fn resolve_links(conn: &Connection) -> Result<ResolveOutcome, AppError> {
             "UPDATE link SET status = ?1, dst_file_id = ?2 WHERE id = ?3",
             rusqlite::params![status, dst, link_id],
         )
-        .map_err(|_| AppError::db("写回裁决结果"))?;
+        .map_err(|e| AppError::db_with("写回裁决结果", &e))?;
         match status {
             "resolved" => out.resolved += 1,
             "ambiguous" => out.ambiguous += 1,
@@ -117,7 +139,7 @@ pub fn recount_tags(conn: &Connection) -> Result<usize, AppError> {
             "UPDATE tag SET ref_count = (SELECT count(*) FROM file_tag WHERE file_tag.tag_id = tag.id)",
             [],
         )
-        .map_err(|_| AppError::db("重算标签引用计数"))?;
+        .map_err(|e| AppError::db_with("重算标签引用计数", &e))?;
     Ok(n)
 }
 
@@ -142,20 +164,20 @@ pub fn resolve_links_matching(
          CREATE TEMP TABLE IF NOT EXISTS _kp_targets(key TEXT PRIMARY KEY); \
          DELETE FROM _kp_targets;",
     )
-    .map_err(|_| AppError::db("建临时变更表"))?;
+    .map_err(|e| AppError::db_with("建临时变更表", &e))?;
     for id in changed_file_ids {
         conn.execute(
             "INSERT OR IGNORE INTO _kp_changed(id) VALUES (?1)",
             rusqlite::params![id],
         )
-        .map_err(|_| AppError::db("写入变更文件"))?;
+        .map_err(|e| AppError::db_with("写入变更文件", &e))?;
     }
     for key in target_keys {
         conn.execute(
             "INSERT OR IGNORE INTO _kp_targets(key) VALUES (?1)",
             rusqlite::params![key.to_lowercase()],
         )
-        .map_err(|_| AppError::db("写入变更目标键"))?;
+        .map_err(|e| AppError::db_with("写入变更目标键", &e))?;
     }
     let (by_name, by_alias) = build_candidates(conn)?;
     let mut stmt = conn
@@ -165,10 +187,10 @@ pub fn resolve_links_matching(
               WHERE l.src_file_id IN (SELECT id FROM _kp_changed) \
                  OR lower(l.target_ref) IN (SELECT key FROM _kp_targets)",
         )
-        .map_err(|_| AppError::db("读取受影响链接"))?;
+        .map_err(|e| AppError::db_with("读取受影响链接", &e))?;
     let rows: Vec<(i64, String, String)> = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-        .map_err(|_| AppError::db("读取受影响链接"))?
+        .map_err(|e| AppError::db_with("读取受影响链接", &e))?
         .filter_map(Result::ok)
         .collect();
     drop(stmt);
@@ -179,7 +201,7 @@ pub fn resolve_links_matching(
             "UPDATE link SET status = ?1, dst_file_id = ?2 WHERE id = ?3",
             rusqlite::params![status, dst, link_id],
         )
-        .map_err(|_| AppError::db("写回裁决结果"))?;
+        .map_err(|e| AppError::db_with("写回裁决结果", &e))?;
         match status {
             "resolved" => out.resolved += 1,
             "ambiguous" => out.ambiguous += 1,

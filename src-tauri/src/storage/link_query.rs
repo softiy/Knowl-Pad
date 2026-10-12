@@ -20,14 +20,14 @@ pub fn dangling_groups(pool: &DbPool) -> Result<Vec<DanglingGroup>, AppError> {
                 "SELECT l.target_ref, f.rel_path FROM link l JOIN file f ON f.id = l.src_file_id \
                  WHERE l.status = 'dangling' ORDER BY l.target_ref, f.rel_path",
             )
-            .map_err(|_| AppError::db("准备悬空查询失败"))?;
+            .map_err(|e| AppError::db_with("准备悬空查询失败", &e))?;
         let rows = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(|_| AppError::db("执行悬空查询失败"))?;
+            .map_err(|e| AppError::db_with("执行悬空查询失败", &e))?;
         let mut groups: Vec<DanglingGroup> = Vec::new();
         let mut sources: Vec<String> = Vec::new();
         for row in rows {
-            let (target_ref, src) = row.map_err(|_| AppError::db("读取悬空结果失败"))?;
+            let (target_ref, src) = row.map_err(|e| AppError::db_with("读取悬空结果失败", &e))?;
             match groups.last_mut() {
                 Some(g) if g.target_ref == target_ref => {
                     g.ref_count += 1;
@@ -62,12 +62,12 @@ pub fn ambiguous_rows(pool: &DbPool) -> Result<Vec<AmbiguousRow>, AppError> {
                 "SELECT target_ref, COUNT(*), group_concat(id) FROM link WHERE status = 'ambiguous' \
                  GROUP BY target_ref ORDER BY target_ref",
             )
-            .map_err(|_| AppError::db("准备歧义查询失败"))?;
+            .map_err(|e| AppError::db_with("准备歧义查询失败", &e))?;
         let groups: Vec<(String, i64, Option<String>)> = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-            .map_err(|_| AppError::db("执行歧义查询失败"))?
+            .map_err(|e| AppError::db_with("执行歧义查询失败", &e))?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| AppError::db("读取歧义结果失败"))?;
+            .map_err(|e| AppError::db_with("读取歧义结果失败", &e))?;
         let mut out = Vec::new();
         for (target_ref, ref_count, ids) in groups {
             // 候选 = 与 target_ref 的最后一段（去 .md）大小写不敏感同名的笔记（FR-LINK-02 ②）
@@ -81,12 +81,12 @@ pub fn ambiguous_rows(pool: &DbPool) -> Result<Vec<AmbiguousRow>, AppError> {
                     "SELECT rel_path FROM file WHERE kind = 'note' AND lower(stem) = lower(?1) \
                      ORDER BY rel_path",
                 )
-                .map_err(|_| AppError::db("准备候选查询失败"))?;
+                .map_err(|e| AppError::db_with("准备候选查询失败", &e))?;
             let candidates: Vec<String> = cstmt
                 .query_map(rusqlite::params![stem], |r| r.get::<_, String>(0))
-                .map_err(|_| AppError::db("执行候选查询失败"))?
+                .map_err(|e| AppError::db_with("执行候选查询失败", &e))?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| AppError::db("读取候选结果失败"))?;
+                .map_err(|e| AppError::db_with("读取候选结果失败", &e))?;
             // group_concat 返回逗号分隔；解析失败（理论上不会）时给空列表而不是 panic
             let link_ids: Vec<i64> = ids
                 .unwrap_or_default()
@@ -116,12 +116,12 @@ pub fn orphan_notes(pool: &DbPool) -> Result<Vec<String>, AppError> {
                                  AND l.status = 'resolved' AND l.src_file_id <> f.id) \
                  ORDER BY f.rel_path",
             )
-            .map_err(|_| AppError::db("准备孤立查询失败"))?;
+            .map_err(|e| AppError::db_with("准备孤立查询失败", &e))?;
         let rows = stmt
             .query_map([], |r| r.get::<_, String>(0))
-            .map_err(|_| AppError::db("执行孤立查询失败"))?;
+            .map_err(|e| AppError::db_with("执行孤立查询失败", &e))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|_| AppError::db("读取孤立结果失败"))
+            .map_err(|e| AppError::db_with("读取孤立结果失败", &e))
     })
 }
 
@@ -134,7 +134,7 @@ pub fn headings_of(pool: &DbPool, rel_path: &str) -> Result<Vec<HeadingRow>, App
             .prepare(
                 "SELECT level, text, anchor, line FROM heading WHERE file_id = ?1 ORDER BY sort_order",
             )
-            .map_err(|_| AppError::db("准备标题查询失败"))?;
+            .map_err(|e| AppError::db_with("准备标题查询失败", &e))?;
         let rows = stmt
             .query_map(rusqlite::params![id], |r| {
                 Ok(HeadingRow {
@@ -144,9 +144,9 @@ pub fn headings_of(pool: &DbPool, rel_path: &str) -> Result<Vec<HeadingRow>, App
                     line: r.get::<_, i64>(3)? as u32,
                 })
             })
-            .map_err(|_| AppError::db("执行标题查询失败"))?;
+            .map_err(|e| AppError::db_with("执行标题查询失败", &e))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|_| AppError::db("读取标题结果失败"))
+            .map_err(|e| AppError::db_with("读取标题结果失败", &e))
     })
 }
 

@@ -33,7 +33,7 @@ pub fn backlinks_for(pool: &DbPool, dst_rel_path: &str) -> Result<Vec<BacklinkRo
                  WHERE l.dst_file_id = ?1 AND l.status = 'resolved' \
                  ORDER BY f.rel_path, l.line, l.col",
             )
-            .map_err(|_| AppError::db("准备反链查询失败"))?;
+            .map_err(|e| AppError::db_with("准备反链查询失败", &e))?;
         let rows = stmt
             .query_map(rusqlite::params![dst], |r| {
                 Ok(BacklinkRow {
@@ -47,9 +47,9 @@ pub fn backlinks_for(pool: &DbPool, dst_rel_path: &str) -> Result<Vec<BacklinkRo
                     col: r.get::<_, i64>(7)? as u32,
                 })
             })
-            .map_err(|_| AppError::db("执行反链查询失败"))?;
+            .map_err(|e| AppError::db_with("执行反链查询失败", &e))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|_| AppError::db("读取反链结果失败"))
+            .map_err(|e| AppError::db_with("读取反链结果失败", &e))
     })
 }
 
@@ -64,7 +64,7 @@ pub fn outgoing_for(pool: &DbPool, src_rel_path: &str) -> Result<Vec<OutgoingRow
                  FROM link l LEFT JOIN file d ON d.id = l.dst_file_id \
                  WHERE l.src_file_id = ?1 ORDER BY l.line, l.col",
             )
-            .map_err(|_| AppError::db("准备出链查询失败"))?;
+            .map_err(|e| AppError::db_with("准备出链查询失败", &e))?;
         let rows = stmt
             .query_map(rusqlite::params![src], |r| {
                 Ok(OutgoingRow {
@@ -78,9 +78,9 @@ pub fn outgoing_for(pool: &DbPool, src_rel_path: &str) -> Result<Vec<OutgoingRow
                     dst_rel_path: r.get(7)?,
                 })
             })
-            .map_err(|_| AppError::db("执行出链查询失败"))?;
+            .map_err(|e| AppError::db_with("执行出链查询失败", &e))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|_| AppError::db("读取出链结果失败"))
+            .map_err(|e| AppError::db_with("读取出链结果失败", &e))
     })
 }
 
