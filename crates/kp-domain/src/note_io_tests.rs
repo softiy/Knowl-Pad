@@ -232,3 +232,25 @@ fn debt_23_user_file_with_temp_prefix_survives() {
     assert!(user_file.exists(), "用户的 .kp-tmp-notes.md 必须保留");
     assert!(!real_tmp.exists(), "我们自己写的临时文件应被清理");
 }
+
+/// **审计 L6 的判据**：调用方给了 base_mtime（说明它认为文件存在），而文件已被**外部删除**时，
+/// 保存必须报"文件不存在"，**不得**把它悄悄重建 —— 否则用户的删除被无声撤销，
+/// 回收站清单与磁盘状态也会不一致（模块头部注释对此有明确承诺）。
+#[test]
+fn deleted_note_is_not_resurrected() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let target = dir.path().join("a.md");
+    std::fs::write(&target, "# 甲\n".as_bytes()).expect("写");
+    let base = crate::note_io::mtime_ms(&target).expect("取 mtime");
+
+    // 外部删除文件（目录还在）
+    std::fs::remove_file(&target).expect("删除");
+
+    let err = crate::note_io::write_note(&target, "# 乙\n".as_bytes(), Some(base))
+        .expect_err("文件已被外部删除时必须报错，而不是重建");
+    assert!(
+        matches!(err, crate::error::AppError::FileNotFound(_)),
+        "应为 FileNotFound（实际：{err:?}）"
+    );
+    assert!(!target.exists(), "被删除的文件不得因保存而复活");
+}
