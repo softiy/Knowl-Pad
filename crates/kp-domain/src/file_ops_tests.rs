@@ -385,3 +385,26 @@ fn ensure_writable_is_public_for_command_layer() {
         );
     }
 }
+
+/// **审计 L5 的判据**：改名/移动的目标也必须做受保护目录检查（FR-STORAGE-02，P0）。
+///
+/// 此前只有源被检查，于是 `rename_path(root, "a.md", ".git/a.md", …)` 会被放行 ——
+/// 应用会去改动第三方软件的配置目录，这正是 FR-STORAGE-02 明令禁止的。
+#[test]
+fn rename_into_protected_dir_is_rejected() {
+    for target in [".git/a.md", ".obsidian/a.md", ".knowlpad/a.md"] {
+        let dir = tempfile::tempdir().expect("临时目录");
+        std::fs::write(dir.path().join("a.md"), "# 甲\n").expect("写源文件");
+        let err = rename_path(dir.path(), "a.md", target, ConflictPolicy::Cancel)
+            .expect_err("移入受保护目录必须被拒");
+        assert_eq!(
+            err.code(),
+            "E_PATH_ESCAPE_DENY",
+            "目标 {target} 应报受保护目录（实际：{err:?}）"
+        );
+        assert!(
+            dir.path().join("a.md").exists(),
+            "被拒时源文件不得被移动（{target}）"
+        );
+    }
+}

@@ -149,6 +149,10 @@ pub fn rename_path(
     policy: ConflictPolicy,
 ) -> Result<RenameOutcome, AppError> {
     ensure_writable(from)?;
+    // 审计 L5（措辞不准但实质成立）：此前**只对源**做受保护目录检查，
+    // 目标只经 PathGuard（越界/穿越），于是可以把笔记**改名/移动进** .obsidian/ 或 .git/ ——
+    // 违反 FR-STORAGE-02（P0：第三方软件配置目录不得被修改）。
+    ensure_writable(to)?;
     let guard = PathGuard::new(root)?;
     let src = guard.resolve(from)?;
     if !src.exists() {
