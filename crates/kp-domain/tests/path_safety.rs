@@ -141,6 +141,14 @@ fn ac_sec_01_no_side_effects_outside_vault() {
     );
 }
 
+/// 符号链接逃逸拦截（AC-SEC-01 的这一面）。
+///
+/// **整个用例按平台门控**。此前它只有内部的 `#[cfg(unix)]` 符号链接构造，
+/// 非 unix 分支收尾写成 `#[cfg(not(unix))] { let _ = (vault, outside, guard); }` ——
+/// 结果是该用例在 Windows 上**会运行但零断言**（"假装跑过"）：既不算覆盖、也不会失败。
+/// 这个场景在 Windows 无法构造（创建符号链接需要特权），所以让它在 Windows 上**不存在**，
+/// 由 unix CI 覆盖 —— 与 vault_tests 的权限用例（\`#[cfg(unix)]\`）同一做法。
+#[cfg(unix)]
 #[test]
 fn ac_sec_01_symlink_escape_is_blocked_but_internal_symlink_allowed() {
     let (vault, outside, _sentinel, guard) = fixture();
