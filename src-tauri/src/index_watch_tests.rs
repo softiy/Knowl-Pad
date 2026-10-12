@@ -11,6 +11,26 @@ use crate::index_watch_paths::merge_events;
 use crate::storage::index::open;
 use kp_domain::error::AppError;
 
+/// 触发外部变更**之前**的等待：给 notify 的监听注册与内部线程留出启动时间。
+///
+/// 审计 T-22 指出这些点位是"固定 sleep"（时序脆弱）。实际情况分两类：
+///  · 本文件里 3 处 `deadline` 有界轮询（等索引收敛）是**正确**做法，保留；
+///  · 4 处"变更前的固定等待"确实没有可依赖的就绪信号 —— `start_watcher_with` 返回时
+///    notify 的 watcher 已注册，但平台侧事件投递与内部线程启动没有可观测的握手。
+///    因此这里把它**命名**并写明用途与残余风险，而不是散落的魔法数字；
+///    真正去掉它需要一个"监听已就绪"的信号（属实现改动），已登记在台账 T-22。
+const SETTLE_BEFORE_CHANGE: Duration = Duration::from_millis(300);
+
+/// "安静窗口"：索引只写 `.knowlpad/`（忽略目录）时不应产生任何事件。
+///
+/// 这是**负向断言**，本质上需要一个时间窗。窗口太短会假通过、太长会拖慢测试；
+/// 1200ms 是权衡值。注意残余风险：若索引本身的写盘异常缓慢、事件晚于窗口到达，
+/// 这条会**假失败**（属 T-22 登记的"双向 flaky"中的一侧）。
+const QUIET_WINDOW: Duration = Duration::from_millis(1200);
+
+/// 另一个有界轮询的步长（改名收敛用例用；比 POLL_STEP 略快以缩短测试时间）。
+const POLL_STEP_FAST: Duration = Duration::from_millis(200);
+
 /// 读取某目标的裁决状态。
 /// 读某目标的裁决状态；**"还没有这一行"返回 None 而不是报错** ——
 /// 端到端用例里"写盘 → 监听 → 增量写库 → 裁决"是分步的，中间态是正常的。
@@ -113,7 +133,7 @@ fn ac_search_04_external_change_is_indexed_and_searchable() {
     )
     .expect("启动监听");
 
-    std::thread::sleep(Duration::from_millis(300));
+    std::thread::sleep(SETTLE_BEFORE_CHANGE);
     fs::write(root.join("外部新增.md"), "# 外部新增\n\n中文内容可检索\n").expect("外部写入");
 
     let started = std::time::Instant::now();
@@ -192,7 +212,7 @@ fn polling_fallback_indexes_external_change() {
             std::time::Instant::now() < deadline,
             "轮询降级未在 12 秒内索引外部新增（说明降级没有真的跑起来）"
         );
-        std::thread::sleep(Duration::from_millis(300));
+        std::thread::sleep(SETTLE_BEFORE_CHANGE);
     }
 }
 /// **监听死循环防护**（计划 §4 第 21 行 / TECH §13.1 验证项 ③）：
@@ -215,9 +235,9 @@ fn indexing_does_not_trigger_itself_but_watcher_stays_alive() {
         |_code, _message| {},
     )
     .expect("启动监听");
-    std::thread::sleep(Duration::from_millis(300));
+    std::thread::sleep(SETTLE_BEFORE_CHANGE);
     full_index(&pool, &root, |_, _| {}).expect("再次索引");
-    let quiet = rx.recv_timeout(Duration::from_millis(1200));
+    let quiet = rx.recv_timeout(QUIET_WINDOW);
     assert!(
         quiet.is_err(),
         "索引自身写 .knowlpad 不应触发变更事件，却收到 {quiet:?}"
@@ -265,7 +285,7 @@ fn ac_file_07_external_delete_removes_from_index_and_dangles_links() {
         |_code, _message| {},
     )
     .expect("启动监听");
-    std::thread::sleep(Duration::from_millis(300));
+    std::thread::sleep(SETTLE_BEFORE_CHANGE);
 
     fs::remove_file(root.join("b.md")).expect("外部删除");
     let reported = rx
@@ -321,7 +341,7 @@ fn ac_file_07_external_rename_reindexes_old_and_new_path() {
         |_code, _message| {},
     )
     .expect("启动监听");
-    std::thread::sleep(Duration::from_millis(300));
+    std::thread::sleep(SETTLE_BEFORE_CHANGE);
 
     fs::rename(root.join("b.md"), root.join("c.md")).expect("外部改名");
     // 改名在文件系统上表现为一对事件；等索引收敛（最多 15 秒）
@@ -336,7 +356,7 @@ fn ac_file_07_external_rename_reindexes_old_and_new_path() {
             std::time::Instant::now() < deadline,
             "改名后索引未在 15 秒内收敛（old_gone={old_gone}, new_present={new_present}）"
         );
-        std::thread::sleep(Duration::from_millis(200));
+        std::thread::sleep(POLL_STEP_FAST); // 另一处有界轮询的步长
     }
     assert_eq!(
         count(
