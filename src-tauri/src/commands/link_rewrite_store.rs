@@ -41,18 +41,28 @@ pub fn now_ms() -> u128 {
 
 /// 放入预览缓存。
 pub fn put_preview(state: &AppState, id: String, preview: StoredPreview) {
-    if let Ok(mut guard) = state.previews_lock().lock() {
-        guard.insert(id, preview);
+    // 审计 R8：此前锁中毒时**静默不插入** —— 于是"预览成功"却永远执行不了，
+    // 而用户看到的只是"预览已过期"。写入路径一律留痕（读路径同理，见下）。
+    match state.previews_lock().lock() {
+        Ok(mut guard) => {
+            guard.insert(id, preview);
+        }
+        Err(_) => tracing::error!(
+            kind = "LockPoisoned",
+            "改写预览登记失败：状态锁已中毒（该预览将无法执行）"
+        ),
     }
 }
 
 /// **一次性取出**预览（执行阶段）：取走即从缓存移除，过期则丢弃并返回 None。
 pub fn take_preview(state: &AppState, id: &str) -> Option<StoredPreview> {
-    let taken = state
-        .previews_lock()
-        .lock()
-        .ok()
-        .and_then(|mut guard| guard.remove(id))?;
+    let taken = match state.previews_lock().lock() {
+        Ok(mut guard) => guard.remove(id),
+        Err(_) => {
+            tracing::error!(kind = "LockPoisoned", "读取改写预览失败：状态锁已中毒");
+            None
+        }
+    }?;
     if now_ms().saturating_sub(taken.created_at_ms) > PREVIEW_TTL_MS {
         return None; // 过期：不返回，也不放回（等价于"已消费"）
     }
@@ -61,17 +71,26 @@ pub fn take_preview(state: &AppState, id: &str) -> Option<StoredPreview> {
 
 /// 登记已执行的操作，供回滚。
 pub fn put_operation(state: &AppState, id: String, op: StoredOperation) {
-    if let Ok(mut guard) = state.operations_lock().lock() {
-        guard.insert(id, op);
+    // 审计 R8：这条最要紧 —— 登记丢失意味着**这次改写再也无法回滚**（备份还在，但没人知道它对应谁）。
+    match state.operations_lock().lock() {
+        Ok(mut guard) => {
+            guard.insert(id, op);
+        }
+        Err(_) => tracing::error!(
+            kind = "LockPoisoned",
+            "回滚登记失败：状态锁已中毒（本次改写将无法通过 UI 回滚；备份仍在 .knowlpad 下）"
+        ),
     }
 }
 
 pub fn get_operation(state: &AppState, id: &str) -> Option<StoredOperation> {
-    state
-        .operations_lock()
-        .lock()
-        .ok()
-        .and_then(|g| g.get(id).cloned())
+    match state.operations_lock().lock() {
+        Ok(g) => g.get(id).cloned(),
+        Err(_) => {
+            tracing::error!(kind = "LockPoisoned", "读取回滚登记失败：状态锁已中毒");
+            None
+        }
+    }
 }
 
 /// **回滚**：从备份恢复该操作改过的文件；若该操作含重命名，**先**恢复链接、**再**把文件改回原名
