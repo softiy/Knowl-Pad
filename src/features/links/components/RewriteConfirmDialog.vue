@@ -27,8 +27,16 @@ const applied = ref<{ operationId: string; fileCount: number; spanCount: number 
 const error = ref<string | null>(null);
 const busy = ref(false);
 
+/** 是否同时改名（勾上之后，改名与改写是**同一次可回滚操作**，FR-FILE-22）。 */
+const alsoRename = ref(false);
+/** 新文件名（含 .md）。 */
+const renameToInput = ref('');
+/** 新名字来源：优先 prop（调用方已知），否则用对话框里输入的。 */
+const renameTarget = computed(() => props.renameTo ?? (alsoRename.value ? renameToInput.value.trim() : ''));
 const renameSpec = computed(() =>
-  props.renameFrom && props.renameTo ? { from: props.renameFrom, to: props.renameTo } : undefined,
+  props.renameFrom && renameTarget.value
+    ? { from: props.renameFrom, to: renameTarget.value }
+    : undefined,
 );
 
 async function doPreview(): Promise<void> {
@@ -80,6 +88,15 @@ async function doRollback(): Promise<void> {
     <button type="button" :disabled="busy || !fromRef || !toRef" data-testid="rewrite-preview" @click="doPreview">
       预览
     </button>
+
+    <label v-if="props.renameFrom" class="kp-rewrite__rename">
+      <input v-model="alsoRename" type="checkbox" data-testid="rewrite-also-rename">
+      同时把 <code>{{ props.renameFrom }}</code> 改名为
+      <input v-model="renameToInput" data-testid="rewrite-rename-to" placeholder="新文件名（含 .md）">
+    </label>
+    <p v-if="renameSpec" class="kp-rewrite__hint" data-testid="rewrite-rename-hint">
+      将按 FR-FILE-22 把改名与链接改写合并为**同一次可回滚操作**
+    </p>
 
     <p v-if="preview" data-testid="rewrite-preview-summary">
       将修改 {{ preview.fileCount }} 个文件中的 {{ preview.spanCount }} 处链接

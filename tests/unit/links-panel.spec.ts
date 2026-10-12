@@ -265,3 +265,37 @@ describe('反链虚拟滚动（FR-LINK-18：超过 500 条）', () => {
     w.unmount();
   });
 });
+
+describe('改名 + 改写：一次原子可回滚操作（FR-FILE-22 / 审计 H3）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    hoisted.preview.mockReset().mockResolvedValue({
+      previewId: 'p9', fromRef: 'A', toRef: 'B', fileCount: 1, spanCount: 1,
+      edits: [{ relPath: 'a.md', hits: 1, occurrences: [] }], createdAtMs: 1,
+    });
+    hoisted.apply.mockReset().mockResolvedValue({ operationId: 'op9', fileCount: 1, spanCount: 1 });
+  });
+
+  it('勾选"同时改名"后，预览与执行都带上 rename 规格（此前 UI 上根本给不出 renameTo）', async () => {
+    const w = mount(RewriteConfirmDialog, { props: { renameFrom: 'A.md' } });
+    await w.get('[data-testid="rewrite-from"]').setValue('A');
+    await w.get('[data-testid="rewrite-to"]').setValue('B');
+
+    // 未勾选时不带 rename
+    await w.get('[data-testid="rewrite-preview"]').trigger('click');
+    await flushPromises();
+    expect(hoisted.preview).toHaveBeenLastCalledWith('A', 'B', undefined);
+
+    // 勾选并填新名字
+    await w.get('[data-testid="rewrite-also-rename"]').setValue(true);
+    await w.get('[data-testid="rewrite-rename-to"]').setValue('B.md');
+    await w.get('[data-testid="rewrite-preview"]').trigger('click');
+    await flushPromises();
+    expect(hoisted.preview).toHaveBeenLastCalledWith('A', 'B', { from: 'A.md', to: 'B.md' });
+    expect(w.find('[data-testid="rewrite-rename-hint"]').exists()).toBe(true);
+
+    await w.get('[data-testid="rewrite-apply"]').trigger('click');
+    await flushPromises();
+    expect(hoisted.apply).toHaveBeenLastCalledWith('p9', { from: 'A.md', to: 'B.md' });
+  });
+});
