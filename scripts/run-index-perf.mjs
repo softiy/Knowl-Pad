@@ -1,4 +1,4 @@
-// 索引性能基线：把两个**后端实测**（AC-FILE-06 列表、DEBT-04 裁决）纳入门禁。
+// 索引与改写性能基线：把三个**后端实测**（AC-FILE-06 列表、DEBT-04 裁决、NFR-PERF-16 改写）纳入门禁。
 //
 // 为什么单独一个脚本：门禁 10（run-perf.mjs）测的是**前端渲染**，索引路径的耗时在 Rust 侧，
 // 只能靠跑测试并解析它们的打印值 —— 这正是独立审查指出的"门禁 10 零索引指标"的补法。
@@ -23,10 +23,13 @@ const TOLERANCE = 2.0;
 const ABS_FLOOR_MS = 15;
 const UPDATE = process.argv.includes("--update-baseline");
 
-function runTest(filter) {
+function runTest(filter, pkg = "knowl-pad") {
   // DEP0190：不要把 args 数组和 shell:true 混用（Node 会警告参数未转义）。
   // 与 run-security.mjs 同样处理：拼成单条命令字符串再交给 shell。
-  const line = ["cargo", "test", "-p", "knowl-pad", "--locked", "--", "--nocapture", filter].join(" ");
+  //
+  // pkg 参数：改写性能用例在 **kp-domain** 的集成测试里（crates/kp-domain/tests/link_rewrite_perf.rs），
+  // 不在 knowl-pad 这个 bin 里 —— 写死包名会让 filter 匹配不到任何东西（实测踩过）。
+  const line = ["cargo", "test", "-p", pkg, "--locked", "--", "--nocapture", filter].join(" ");
   const res = spawnSync(line, { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", shell: true });
   return (res.stdout || "") + (res.stderr || "");
 }
@@ -43,6 +46,10 @@ function num(re, text, label) {
 console.log("▶ 运行后端索引性能用例（--nocapture 取实测值）");
 const outFileTree = runTest("ac_file_06_listing_scales");
 const outResolve = runTest("debt_04_link_candidates");
+// 审计 T-30：此前只覆盖索引侧（列表 + 裁决），**链接改写侧**的墙钟无人消费 ——
+// 而它恰恰是 NFR-PERF-16 的正面指标（改名 + 改写 300 处引用 ≤ 3s/5s/15s）。
+// 那个用例本来就打印实测值（round 13 起"只打印、不断言"），这里把它接进基线。
+const outRewrite = runTest("nfr_perf_16_rewrites_three_hundred", "kp-domain");
 
 const measured = {
   // 10050 个文件下：根目录列举 / 子目录列举（AC-FILE-06 后端侧）
@@ -50,6 +57,8 @@ const measured = {
   fileTreeSubMs: num(/子目录 (\d+) ms/, outFileTree, "子目录列举耗时"),
   // 10 万文件 / 1 万链接的链接裁决（DEBT-04）
   resolveLinksMs: num(/裁决耗时 (\d+) ms/, outResolve, "裁决耗时"),
+  // 300 处引用的自动改写总耗时（NFR-PERF-16 的正面指标；解析 link_rewrite_perf 的打印值）
+  rewrite300Ms: num(/NFR-PERF-16 实测：计划 \d+ ms \+ 落地 \d+ ms = (\d+) ms/, outRewrite, "300 处改写总耗时"),
 };
 
 for (const [k, v] of Object.entries(measured)) console.log("  " + k + " = " + v + " ms");
