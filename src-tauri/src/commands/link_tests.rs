@@ -153,7 +153,7 @@ fn commands_error_when_vault_not_open() {
 /// 而不是一律 target + 4 —— 否则带别名/锚点/嵌入的链接高亮区间会偏短。
 #[test]
 fn link_text_len_matches_each_wikilink_form() {
-    use crate::commands::link_view::link_text_len;
+    use crate::commands::link_text::link_text_len;
     // [[目标]]：2 + 2 + 2
     assert_eq!(link_text_len("目标", None, None, false), 2 + 4);
     // [[目标#小节]]：多出 '#' + 小节
