@@ -44,7 +44,14 @@ const measured = {
 
 for (const [k, v] of Object.entries(measured)) console.log("  " + k + " = " + v + " ms");
 
-if (UPDATE || !existsSync(BASELINE)) {
+if (!existsSync(BASELINE) && !UPDATE) {
+  // **不许自愈成"通过"**（本文件第 6 行的承诺）：基线缺失时用当前实测重建，
+  // 等于把"可能已经回退的性能"当成新标准放行 —— 审计 T-29 指出这里与注释正面矛盾。
+  console.error("❌ 缺少基线文件 " + BASELINE + "：请用 --update-baseline 显式生成并提交。");
+  process.exit(2);
+}
+
+if (UPDATE) {
   mkdirSync(dirname(BASELINE), { recursive: true });
   writeFileSync(BASELINE, JSON.stringify(measured, null, 2) + "\n", "utf8");
   console.log((UPDATE ? "✅ 基线已更新：" : "✅ 首次生成基线：") + BASELINE);

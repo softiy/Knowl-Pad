@@ -77,14 +77,23 @@ describe('编辑器行定位（FR-LINK-13）', () => {
 });
 
 describe('默认降级路径', () => {
-  it('未提供 onDegrade 时走内置默认（只提示，不抛错、不假装定位过）', () => {
+  it('未提供 onDegrade 时走内置默认：提示一次、不抛错、请求被消费', () => {
+    // 审计 T-04：这条此前是一个恒真断言（字面量真值比较），等于什么都没验证。
+    // 现在真的断言内置默认行为：console.warn 被调用一次，且请求被清除（不假装定位过）。
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let cleared = 0;
     const stop = consumeReveal({
       current: () => ({ relPath: 'a.md', line: 3 }),
       active: () => 'a.md',
-      clear: () => {},
+      clear: () => {
+        cleared += 1;
+      },
       adapter: () => ({ revealLine: () => false }),
     });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0] ?? '')).toContain('行定位');
+    expect(cleared).toBe(1);
     stop();
-    expect(true).toBe(true);
+    warn.mockRestore();
   });
 });
