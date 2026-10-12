@@ -78,3 +78,21 @@ fn io_errors_map_by_kind() {
     let other = AppError::from(std::io::Error::other("disk full"));
     assert_eq!(other.code(), "E_IO_FAILURE");
 }
+
+/// 技术方案 §6.1.6：回滚失败必须是**专用错误**且点名文件 —— 复用 E_REWRITE_FAILED 码靠 context 区分。
+#[test]
+fn rollback_failed_contract() {
+    let e = AppError::RollbackFailed {
+        failures: vec!["a.md（拒绝访问）".into(), "b.md（磁盘已满）".into()],
+        backup_dir: "C:/vault/.knowlpad/backup/link-rewrite-1".into(),
+    };
+    assert_eq!(e.code(), "E_REWRITE_FAILED", "复用码，靠 context 区分");
+    assert_eq!(e.kind(), "RollbackFailed");
+    let msg = e.to_string();
+    assert!(msg.contains("回滚失败"), "文案必须直说回滚失败：{msg}");
+    assert!(
+        msg.contains("a.md") && msg.contains("b.md"),
+        "必须点名哪些文件可能不一致：{msg}"
+    );
+    assert!(msg.contains("link-rewrite-1"), "必须给出备份位置：{msg}");
+}

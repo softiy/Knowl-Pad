@@ -40,6 +40,18 @@ pub enum AppError {
     /// PRD §5.2：批量链接改写失败（**已回滚**）——消息里带失败文件清单。
     #[error("批量链接改写失败（已回滚）：{0}")]
     RewriteFailed(String),
+    /// 技术方案 §6.1.6：**回滚失败** —— 唯一无法保证「用户数据完好」的路径。
+    ///
+    /// 必须：① 专用错误（复用 `E_REWRITE_FAILED` 码，靠 context 区分，见技术方案 §13.1 的错误表写法）
+    /// ② **点名哪些文件可能停在中间状态** ③ 由命令层写 ERROR 级日志。
+    /// **禁止**把它静默降级成"已回滚 N 个文件"这种谎报。
+    #[error("回滚失败，备份保留于 {backup_dir}；以下文件可能停在中间状态：{}", failures.join("、"))]
+    RollbackFailed {
+        /// 未能恢复到原文的文件（相对路径 + 原因）
+        failures: Vec<String>,
+        /// 备份目录（用户可据此手工恢复）
+        backup_dir: String,
+    },
 }
 
 impl AppError {
@@ -62,6 +74,8 @@ impl AppError {
             Self::DbError(_) => "E_DB_ERROR",
             Self::PreviewExpired => "E_PREVIEW_EXPIRED",
             Self::RewriteFailed(_) => "E_REWRITE_FAILED",
+            // 复用码，靠 context 区分（技术方案 §13.1）
+            Self::RollbackFailed { .. } => "E_REWRITE_FAILED",
         }
     }
 }
@@ -107,6 +121,7 @@ impl AppError {
             Self::DbError(_) => "DbError",
             Self::PreviewExpired => "PreviewExpired",
             Self::RewriteFailed(_) => "RewriteFailed",
+            Self::RollbackFailed { .. } => "RollbackFailed",
         }
     }
 }

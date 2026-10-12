@@ -400,3 +400,35 @@ fn apply_aborts_when_a_file_changed_after_preview() {
         "外部修改必须原样保留"
     );
 }
+/// **审计 R2 的判据**：回滚时缺备份**不得**静默跳过并返回成功 ——
+/// 那样文件仍停在改写后的内容，而 UI 会以为已还原、连回滚按钮都收起来。
+#[test]
+fn rollback_reports_missing_backup() {
+    let (dir, state) = fixture(&[("A.md", "# 甲\n"), ("one.md", "见 [[A]]\n")]);
+    let root = dir.path();
+    // 登记一个"操作"，但备份目录里什么都没有（模拟备份被清理）
+    let missing_dir = root.join(".knowlpad/backup/link-rewrite-gone");
+    std::fs::create_dir_all(&missing_dir).expect("建备份目录");
+    crate::commands::link_rewrite_store::put_operation(
+        &state,
+        "op1".into(),
+        crate::commands::link_rewrite_store::StoredOperation {
+            backup_dir: missing_dir,
+            vault_root: root.to_path_buf(),
+            modified: vec!["one.md".into()],
+            renamed: None,
+        },
+    );
+
+    let err = link_rewrite_rollback_impl(&state, "op1".into()).expect_err("缺备份必须报错");
+    assert_eq!(err.0.code(), "E_REWRITE_FAILED");
+    assert!(
+        format!("{err:?}").contains("one.md"),
+        "错误里必须点名没能恢复的文件（实际：{err:?}）"
+    );
+    assert_eq!(
+        read(root, "one.md"),
+        "见 [[A]]\n",
+        "文件内容不应被这次调用改动"
+    );
+}
