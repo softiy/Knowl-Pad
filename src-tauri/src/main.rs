@@ -180,9 +180,36 @@ mod appendix_b_tests;
 #[cfg(test)]
 mod m0_stub_tests {
     use super::*;
+    /// 平台大小写标志：**既要与文档契约一致，也要与文件系统的实际行为一致**。
+    ///
+    /// 审计 T-11：此前这条叫 `platform_flag_is_defined`，正文只有 `let _ = platform::case_insensitive_fs();`
+    /// —— **零断言**：函数返回什么、甚至被改成常量 false，都不会有人发现。
+    ///
+    /// 这里补两条互补的断言：
+    ///  ① 契约：文档写明"Windows/macOS 默认大小写不敏感，其余按敏感处理"；
+    ///  ② **行为**：在临时目录里建一个小写文件，再用全大写去 stat —— 标志必须与真实结果一致。
+    ///     只做 ① 会退化成同义反复（照抄实现），② 才验证了这个标志**存在的意义**。
     #[test]
-    fn platform_flag_is_defined() {
-        let _ = platform::case_insensitive_fs();
+    fn case_insensitive_flag_agrees_with_the_filesystem() {
+        let flag = platform::case_insensitive_fs();
+        assert_eq!(
+            flag,
+            cfg!(any(target_os = "windows", target_os = "macos")),
+            "平台大小写标志与文档契约不符（见 src/platform/mod.rs 的文档）"
+        );
+
+        // macOS 的卷可能被格式化为大小写敏感（此时标志偏保守，属已知口径）—— 那里跳过行为断言。
+        if cfg!(target_os = "macos") {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("临时目录应可创建");
+        std::fs::write(dir.path().join("case_probe.md"), b"x").expect("应可写");
+        let seen_with_other_case = std::fs::metadata(dir.path().join("CASE_PROBE.MD")).is_ok();
+        assert_eq!(
+            flag, seen_with_other_case,
+            "标志与实际文件系统行为不一致（标志={flag}，换大小写后能找到={seen_with_other_case}）：\
+             这个标志决定路径比较要不要忽略大小写，猜错的后果是「同一文件被当成两个」"
+        );
     }
     #[test]
     fn storage_constants_are_stable() {
