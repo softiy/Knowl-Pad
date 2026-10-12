@@ -38,6 +38,7 @@ vi.mock('@core/ipc/events', () => ({
 
 import LinksPanel from '@features/links/components/LinksPanel.vue';
 import RewriteConfirmDialog from '@features/links/components/RewriteConfirmDialog.vue';
+import { useLinksStore } from '@features/links/stores/links';
 
 describe('链接面板', () => {
   beforeEach(() => {
@@ -152,7 +153,14 @@ describe('链接面板：其余页签与边界', () => {
     const w = mount(LinksPanel, { props: {} });
     await flushPromises();
     expect(w.get('[data-testid="links-error"]').text()).toBeTruthy();
-    w.unmount(); // 覆盖 onUnmounted → links.dispose()
+
+    // 审计（弱用例）：此前这里只有 `w.unmount(); // 覆盖 onUnmounted → links.dispose()` ——
+    // 用例名声称"卸载时退订（不留悬挂订阅）"，却**没有任何断言**：声称 ≠ 验证。
+    // 现在真的断言 dispose 被调用过。
+    const store = useLinksStore();
+    const dispose = vi.spyOn(store, 'dispose');
+    w.unmount();
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
 
