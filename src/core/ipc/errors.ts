@@ -26,6 +26,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** 把 IPC 抛出的任意值收敛为 KpError（Rust 侧 AppError 已序列化为该结构）。 */
 export function asKpError(err: unknown): KpError {
+  // 已经是 KpError 就原样返回（幂等）。否则会**再包一层**、丢掉原始堆栈 ——
+  // 审计 T-31 由新加的 ipc-layer 用例抓出来的真实缺陷。
+  if (err instanceof KpError) return err;
   if (isRecord(err) && typeof err.code === 'string' && typeof err.message === 'string') {
     const init: KpErrorInit = { code: err.code, message: err.message };
     if (typeof err.detail === 'string') init.detail = err.detail;

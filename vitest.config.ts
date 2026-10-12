@@ -30,7 +30,9 @@ export default defineConfig({
         'src/features/**': { lines: 90, functions: 74, branches: 81, statements: 90 },
         lines: 80, functions: 80, branches: 75, statements: 80,
       },
-      exclude: ['**/*.d.ts','src/main.ts','src/core/ipc/**','tests/**'],
+      // 审计 T-31：src/core/ipc/** 曾被排除 —— 它是全项目唯一的 invoke 出口，
+      // 排除它等于让错误码映射与参数透传永远无人测量。现在纳入（tests/unit/ipc-layer.spec.ts 覆盖）。
+      exclude: ['**/*.d.ts','src/main.ts','tests/**'],
     },
   },
 });
