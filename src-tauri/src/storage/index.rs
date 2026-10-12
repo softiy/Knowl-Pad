@@ -12,8 +12,30 @@ use std::path::Path;
 /// 索引库 schema 版本：**任何 DDL 变更都必须递增**（技术方案 §4.6 版本维护纪律）。
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// 解析器版本：M3 落地解析器后开始递增（当前为占位）。
+/// 解析器版本：**PRD §3.1 的任一 MD-* 解析规则（wikilink / tag / heading / frontmatter / block_id）
+/// 语义一变，就必须递增它** —— 它是 `IndexSignature` 的一部分，递增即让既有索引失效并重建
+/// （技术方案 §4.6 的版本维护纪律；PRD §5.3.3 的 "parser_version" 固定写入 meta）。
+///
+/// 为什么不能只靠"记得改"：审计 M9 指出，规则改了而这里没动，索引会**静默停留在旧解析结果**上，
+/// 而界面上一切正常。所以配了 `parser_source_guard`（见 storage/index_tests.rs）：
+/// 它把解析器源码的指纹与本文件记录的基准比对，**源码变了而版本没变就直接红**。
 pub const PARSER_VERSION: u32 = 0;
+
+/// 解析器源码指纹基准 + 与之配对的版本号（由 `parser_source_guard` 用例校验）。
+///
+/// 维护方式（只有两种合法操作）：
+///   · 只改了注释/格式，规则语义没变 → 更新下面的 `PARSER_SOURCE_HASH`（保持 `PARSER_VERSION` 不变）；
+///   · 改了任一解析规则的语义 → **两个都要改**：先 +1 `PARSER_VERSION`，再更新 `PARSER_SOURCE_HASH`。
+// 只在 parser_source_guard 用例里消费（生产路径不需要读它；它是"变更检测"的基准）。
+// 不用 #[allow] 就只能靠"假装用一下"，那会让代码说谎 —— 这里按 CODE-10 明确写出理由。
+#[allow(dead_code)]
+pub const PARSER_SOURCE_HASH: &str = "613d564979650491";
+/// 与 `PARSER_SOURCE_HASH` **配对冻结**的版本号。
+///
+/// 必须是**字面量**、不能写 `= PARSER_VERSION` —— 那样"版本是否变过"的条件会恒假，
+/// 护栏就永远拦住任何改动（我第一版就是这么写的，写完立刻发现）。
+#[allow(dead_code)]
+pub const PARSER_SOURCE_HASH_VERSION: u32 = 0;
 
 /// 分词器版本：M3 引入 jieba-rs 后填写其 crate 版本。
 pub const TOKENIZER_VERSION: &str = kp_domain::tokenize::TOKENIZER_VERSION;

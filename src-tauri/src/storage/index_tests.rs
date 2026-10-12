@@ -451,3 +451,58 @@ fn hidden_entries_are_not_listed() {
         "子目录里也不得有隐藏项"
     );
 }
+
+/// **审计 M9 的判据**：改了任一解析规则的源码，却忘了递增 PARSER_VERSION → **直接红**。
+///
+/// 为什么需要它：PARSER_VERSION 是 IndexSignature 的一部分，递增才会让既有索引失效并重建；
+/// 而"改了规则忘了 +1"的后果是索引**静默停留在旧解析结果**上、界面一切正常，事后无从察觉。
+///
+/// 判定：把解析器源码拼接后取 SHA-256 前 16 位，与 index.rs 记录的基准比对。
+/// 指纹变了**且**版本没变 → 说明有人改了规则却没让索引失效。
+#[test]
+fn parser_source_guard() {
+    let files = [
+        "crates/kp-domain/src/md_parse/mod.rs",
+        "crates/kp-domain/src/md_parse/wikilink.rs",
+        "crates/kp-domain/src/md_parse/tag.rs",
+        "crates/kp-domain/src/md_parse/heading.rs",
+        "crates/kp-domain/src/md_parse/frontmatter.rs",
+        "crates/kp-domain/src/md_parse/block_id.rs",
+    ];
+    let mut hasher = Sha256::new();
+    let mut used = 0;
+    for rel in files {
+        // 本文件没有 repo_path 助手（其它用例都用临时目录）——这里按 CARGO_MANIFEST_DIR 往回一级取仓库根。
+        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri 的上一级就是仓库根");
+        if let Ok(content) = std::fs::read_to_string(workspace.join(rel)) {
+            hasher.update(rel.as_bytes());
+            hasher.update(b"\n");
+            hasher.update(content.as_bytes());
+            used += 1;
+        }
+    }
+    assert!(
+        used >= 5,
+        "至少要读到 5 个解析器源文件（实际 {used}）—— 否则这道护栏形同虚设"
+    );
+    // Sha256 的输出是 GenericArray<u8>，不实现 LowerHex —— 自己拼十六进制（第一版写成 format!("{:x}") 编译不过）。
+    let digest: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let digest = &digest[..16];
+    assert!(
+        digest == crate::storage::index::PARSER_SOURCE_HASH
+            || crate::storage::index::PARSER_VERSION
+                != crate::storage::index::PARSER_SOURCE_HASH_VERSION,
+        "解析器源码指纹变了（基准 {} → 实际 {digest}），而 PARSER_VERSION 仍是 {}。\n\
+         若改的是**规则语义**：请先 +1 PARSER_VERSION（让既有索引失效重建），再更新 PARSER_SOURCE_HASH\n\
+         与 PARSER_SOURCE_HASH_VERSION；\n\
+         若只改了注释/格式：只需更新 PARSER_SOURCE_HASH。",
+        crate::storage::index::PARSER_SOURCE_HASH,
+        crate::storage::index::PARSER_VERSION,
+    );
+}
