@@ -133,6 +133,17 @@ pub(crate) fn link_rewrite_preview_impl(
         preview.preview_id.clone(),
         StoredPreview {
             created_at_ms: preview.created_at_ms,
+            // 冻结每个待改文件的 mtime（陈旧检测的一半；另一半是内容比对，见 apply）
+            mtimes: plan
+                .changes
+                .iter()
+                .map(|c| {
+                    (
+                        c.rel_path.clone(),
+                        kp_domain::note_io::mtime_ms(&root.join(&c.rel_path)).unwrap_or(0),
+                    )
+                })
+                .collect(),
             vault_root: root,
             from_ref,
             to_ref,
@@ -161,6 +172,37 @@ pub(crate) fn link_rewrite_apply_impl(
     let rename_spec = rename
         .map(|r| (r.from, r.to))
         .or_else(|| stored.rename.clone());
+
+    // ── 陈旧检测（技术方案 §6.1.5，双重保护：mtime + 内容）──────────────────────
+    // 预览冻结了每个待改文件的 (mtime, 原文)。预览到执行之间用户可能切到别的编辑器改了
+    // 文件 —— 那时按旧内容整文件覆盖就是**静默覆盖用户数据**（P-2 / R-07 禁止）。
+    // 任一文件不一致 → 整体中止，**磁盘零改动**（技术方案称这是最危险的失败模式）。
+    let mut stale: Vec<String> = Vec::new();
+    for change in &stored.plan.changes {
+        let abs = stored.vault_root.join(&change.rel_path);
+        let expect_mtime = stored
+            .mtimes
+            .iter()
+            .find(|(rel, _)| rel == &change.rel_path)
+            .map(|(_, m)| *m);
+        let changed = match expect_mtime {
+            // ① mtime 变了 → 陈旧
+            Some(m) if m != kp_domain::note_io::mtime_ms(&abs).unwrap_or(0) => true,
+            // ② mtime 没变（或没记录）时比内容；读不到（被删/权限变）也算陈旧
+            _ => std::fs::read_to_string(&abs)
+                .map(|now| now != change.old_content)
+                .unwrap_or(true),
+        };
+        if changed {
+            stale.push(change.rel_path.clone());
+        }
+    }
+    if !stale.is_empty() {
+        return Err(KpError(AppError::RewriteFailed(format!(
+            "预览之后这些文件已被外部修改，已中止且未改动任何文件：{}",
+            stale.join("、")
+        ))));
+    }
 
     let operation_id = next_id("op");
     let (report, renamed) = match &rename_spec {

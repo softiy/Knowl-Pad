@@ -120,6 +120,9 @@ pub struct StoredPreview {
     /// 由重命名/移动触发时**冻结**的改名规格，执行阶段纳入同一可回滚操作（FR-FILE-22）。
     pub rename: Option<(String, String)>,
     pub plan: kp_domain::link_rewrite_apply::RewritePlan,
+    /// **陈旧检测（技术方案 §6.1.5）**：预览时逐文件冻结的 (相对路径, mtime 毫秒)。
+    /// 预览到执行之间用户可能切到别的编辑器改了文件 —— 那时按旧内容整文件覆盖就是静默丢数据。
+    pub mtimes: Vec<(String, i64)>,
 }
 
 /// 已执行操作的一条登记（回滚用）。
