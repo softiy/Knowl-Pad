@@ -57,12 +57,19 @@ pub fn apply_changes<F: Fn(&[Change])>(
     root: &Path,
     changes: &[Change],
     on_event: F,
-) {
+) -> Result<(), AppError> {
     let changes_owned: Vec<Change> = changes.to_vec();
     let root_owned = root.to_path_buf();
     let write = pool.with_writer(move |conn| {
-        conn.execute_batch("BEGIN IMMEDIATE")
+        // 用 Transaction 而不是手工 execute_batch("BEGIN")：闭包里任何 `?` 提前返回时
+        // 它会 **drop 即 ROLLBACK**。此前是手工 BEGIN + 结尾 COMMIT，中途出错没有 ROLLBACK，
+        // 写连接会永久卡在打开的事务上（之后每次 BEGIN 都报
+        // "cannot start a transaction within a transaction"），增量索引从此静默失效。
+        // 复现见 index_watch_tests::failed_batch_does_not_leave_the_connection_stuck_in_a_transaction。
+        let tx = conn
+            .unchecked_transaction()
             .map_err(|_| AppError::db("开启增量事务"))?;
+        let conn = &tx;
         // ① 写库前采集目标键（被删/改名的旧行也在此时还能读到别名）
         let mut target_keys: Vec<String> = Vec::new();
         for change in &changes_owned {
@@ -121,14 +128,23 @@ pub fn apply_changes<F: Fn(&[Change])>(
         // ④ 只重算受影响的链接（增量裁决）+ 标签计数，与写库同一事务
         crate::index_resolve::resolve_links_matching(conn, &changed_ids, &target_keys)?;
         crate::index_resolve::recount_tags(conn)?;
-        conn.execute_batch("COMMIT")
+        tx.commit()
             .map_err(|_| AppError::db("提交增量事务"))?;
         Ok(())
     });
-    if let Err(err) = write {
-        tracing::warn!(error = %err, "增量索引失败");
+    match write {
+        Ok(()) => {
+            // **只有写库成功才告诉前端"文件已更新"**：此前无论成败都发事件，
+            // 于是 UI 按"事件到了"去刷新，读到的却还是旧索引（搜索/反链/悬空全旧），
+            // 而徽标仍显示"就绪" —— 失败对用户与 CI 都不可见。
+            on_event(changes);
+            Ok(())
+        }
+        Err(err) => {
+            tracing::error!(error = %err, "增量索引失败：本次不上报文件事件（避免 UI 读到旧索引）");
+            Err(err)
+        }
     }
-    on_event(changes);
     // 单篇变更也会影响链接裁决与标签计数；这里统一重算（十万文件规模实测约 2.4s，可接受）
 }
 
@@ -184,7 +200,16 @@ where
                     .collect();
                 let changes = merge_events(&root_for_handler, kinds);
                 if !changes.is_empty() {
-                    apply_changes(&pool_for_handler, &root_for_handler, &changes, &on_changes);
+                    if let Err(err) = apply_changes(
+                        &pool_for_handler,
+                        &root_for_handler,
+                        &changes,
+                        &on_changes,
+                    ) {
+                        // 写库失败要**说出来**：让上层发 kp://index/failed（前端据此把徽标置为异常），
+                        // 而不是只留一行日志、界面继续显示"就绪"。
+                        on_error("E_INDEX_WRITE", &format!("增量索引写入失败：{err}"));
+                    }
                 }
             }
             Err(errors) => {
