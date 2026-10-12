@@ -27,7 +27,14 @@ export interface RenderOptions {
 /** 渲染结果缓存容量（§7.2：以 content 哈希为键，LRU 20 项）。 */
 export const DEFAULT_CACHE_CAPACITY = 20;
 
-/** 全项目唯一的 markdown-it 实例；M3/M4 的 wikilink / tag / block-id 插件挂载于此。 */
+/**
+ * 全项目唯一的 markdown-it 实例（html 打开、linkify/typographer 关闭 —— 见文件头）。
+ *
+ * **注意（2026-10-11 更正）**：此前这里写着"M3/M4 的 wikilink / tag / block-id 插件挂载于此"，
+ * 与实现不符 —— 全文没有任何 `md.use(...)`，阅读态因此**不渲染** `[[x]]`、`#tag`、`^block`，
+ * 而是原样当正文显示。受影响的 P0 见技术方案 §13.2 的 **DEBT-34**
+ * （FR-EDITOR-02/25/27、FR-TAG-05，接收方 M5）。改这条注释不是把问题"注释掉"，
+ * 而是让下一个人一眼看到真实状态、不被误导。 */
 const md = new MarkdownIt({ html: true, linkify: false, typographer: false });
 
 /** 插入序即 LRU 序：命中后重新 set 使其变为最新。 */
