@@ -33,6 +33,14 @@ const alsoRename = ref(false);
 const renameToInput = ref('');
 /** 新名字来源：优先 prop（调用方已知），否则用对话框里输入的。 */
 const renameTarget = computed(() => props.renameTo ?? (alsoRename.value ? renameToInput.value.trim() : ''));
+/** 被跳过文件数。
+ *
+ * 用 `?? []` 而不是 `preview.skipped.length`：**序列化边界要能容忍字段缺失** ——
+ * R3 上线时，一个更早写的、mock 里没带 skipped 的用例（H3 那条）因此在 CI 上运行期崩了，
+ * 而本地因为验证发生在重基之前没发现。UI 不该依赖"对端一定给了字段"。
+ */
+const skippedCount = computed(() => (preview.value?.skipped ?? []).length);
+
 const renameSpec = computed(() =>
   props.renameFrom && renameTarget.value
     ? { from: props.renameFrom, to: renameTarget.value }
@@ -111,6 +119,13 @@ async function doRollback(): Promise<void> {
         </ul>
       </li>
     </ul>
+    <div v-if="skippedCount" class="kp-rewrite__warn" data-testid="rewrite-skipped">
+      <p>有 {{ skippedCount }} 个文件**不会被处理**（读取失败或非文本）：</p>
+      <ul>
+        <li v-for="s in preview?.skipped ?? []" :key="s">{{ s }}</li>
+      </ul>
+      <p>它们里面指向旧名的链接会保持原样，改名后会变成悬空链接。</p>
+    </div>
     <button v-if="preview" type="button" :disabled="busy" data-testid="rewrite-apply" @click="doApply">
       确认执行
     </button>
@@ -126,4 +141,5 @@ async function doRollback(): Promise<void> {
 <style scoped>
 .kp-rewrite { display: flex; flex-direction: column; gap: 6px; }
 .kp-rewrite__error { color: #b00020; }
+.kp-rewrite__warn { background: #fff7e6; border: 1px solid #ffd591; padding: 6px 8px; }
 </style>

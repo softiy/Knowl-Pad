@@ -111,6 +111,8 @@ export interface RewritePreview {
   rename?: RenameSpec | null;
   fileCount: number;
   spanCount: number;
+  /** 因不可读而未被处理的文件（非空时必须提示用户） */
+  skipped: string[];
   edits: {
     relPath: string;
     hits: number;
