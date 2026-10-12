@@ -180,6 +180,9 @@ function resolveConflict(choice: ConflictChoice): void {
       @resolve="resolveConflict"
     />
 
+    <p v-if="store.openError" class="kp-editor__error" data-testid="open-error">
+      {{ store.openError }}
+    </p>
     <p v-if="active?.error && !active.conflict" class="kp-editor__error" data-testid="editor-error">
       {{ active.error }}
     </p>
