@@ -125,6 +125,15 @@ pub async fn index_signature_get(state: State<'_, AppState>) -> Result<Signature
 /// 各表实体计数（`index_stats`）。
 #[tauri::command]
 pub async fn index_stats(state: State<'_, AppState>) -> Result<IndexStats, KpError> {
+    index_stats_impl(&state)
+}
+
+/// 命令体（把状态作为参数传入，便于测试 —— 项目既有做法，见 DEBT-14）。
+///
+/// 审计 T-03：守卫此前内联在 `#[tauri::command]` 里，单测**无法**调用（Tauri 的 `State` 造不出来），
+/// 于是那条用例只能自己构造 `AppError::VaultNotOpen` 再断言错误码 —— 名字说"stats 需要打开 Vault"，
+/// 实际从没验证过命令的守卫。抽出来后守卫才真正被用例覆盖。
+pub(crate) fn index_stats_impl(state: &AppState) -> Result<IndexStats, KpError> {
     let pool = state
         .index_db()
         .ok_or(KpError(kp_domain::error::AppError::VaultNotOpen))?;

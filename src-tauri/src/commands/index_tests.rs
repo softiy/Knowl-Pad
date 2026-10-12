@@ -22,11 +22,22 @@ fn stats_on_fresh_index_are_zero() {
 }
 
 /// 错误面：未打开 Vault（无索引库）时统计必须显式报错，而不是返回 0 掩盖问题。
+///
+/// 审计 T-03：此前这条用例**自己构造** `AppError::VaultNotOpen` 再断言错误码 ——
+/// 那验证的是错误码表，不是命令的守卫；名字与行为不符（"什么都没验证"）。现在真的调用命令体。
 #[test]
 fn stats_requires_open_vault() {
-    // 命令层的守卫：index_db 为 None → E_VAULT_NOT_OPEN（由命令体负责，这里验证语义常量）
-    let err = kp_domain::error::AppError::VaultNotOpen;
-    assert_eq!(err.code(), "E_VAULT_NOT_OPEN");
+    let state = crate::state::AppState::new();
+    // 注意：IndexStats 没实现 Debug，所以不能用 expect_err（那要求 T: Debug）——用 match 更直白。
+    let err = match crate::commands::index::index_stats_impl(&state) {
+        Err(err) => err,
+        Ok(stats) => panic!("没有索引库时必须报错，却返回了 files={}", stats.files),
+    };
+    assert_eq!(
+        err.0.code(),
+        "E_VAULT_NOT_OPEN",
+        "必须显式报「未打开知识库」，而不是返回 0 掩盖问题"
+    );
 }
 
 /// M3 复核 M3 的回归：签名诊断不得把十六进制 digest 当 JSON 解析。
