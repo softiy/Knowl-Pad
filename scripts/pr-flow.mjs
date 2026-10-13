@@ -276,7 +276,7 @@ async function syncMain(branch, retries = 5) {
   console.log('  ✅ 本地 main 已同步，分支 ' + branch + ' 已删除');
 }
 
-async function verifyMirror(slug) {
+async function verifyMirror() {
   const url = git(['remote', 'get-url', 'gitee'], { allowFail: true });
   const gitee = parseRepoFromUrl(url);
   if (!gitee) { console.log('  （未配置 gitee 远端，跳过镜像校验）'); return; }
@@ -358,7 +358,8 @@ async function main() {
   if (opts.command === 'run' || opts.command === 'open') {
     console.log('  推送分支…');
     await gitNet(['push', '-u', 'origin', 'HEAD'], { retries: opts.retries, label: '推送' });
-    const pr = await ensureOpenPr(opts, slug, branch, headSha);
+    // 注：ensureOpenPr 的返回值（PR 号）目前未被使用 —— 潜在问题，已登记，不在本次改动行为。
+    await ensureOpenPr(opts, slug, branch, headSha);
     if (opts.command === 'open') { console.log('  ✅ 分支与 PR 就绪（未等待检查）'); return; }
   }
 
@@ -383,7 +384,7 @@ async function main() {
   }
 
   await syncMain(branch, opts.retries);
-  if (opts.verifyMirror) await verifyMirror(slug);
+  if (opts.verifyMirror) await verifyMirror();
   console.log('  🎉 完成：' + git(['log', '-1', '--pretty=%h %s']));
 }
 

@@ -29,13 +29,12 @@ const files = {
   },
 };
 
-let changed = 0;
 for (const [file, io] of Object.entries(files)) {
   const raw = await readFile(file, 'utf8');
   const obj = io.get(raw);
   io.set(obj, version);
   const next = io.dump(obj);
-  if (next !== raw) { await writeFile(file, next, 'utf8'); changed++; console.log('  ✓ ' + file + ' → ' + version); }
+  if (next !== raw) { await writeFile(file, next, 'utf8'); console.log('  ✓ ' + file + ' → ' + version); }
   else console.log('  = ' + file + ' 已是 ' + version);
 }
 

@@ -56,7 +56,7 @@ export function pathExemption(relPath) {
   if (/_tests?\.rs$/.test(p)) return "test-file";
   if (/\.spec\.ts$/.test(p)) return "test-file";
   if (/\.d\.ts$/.test(p)) return "test-file";
-  if (/(^|[\/_])schema(_v\d+)?\.rs$/.test(p)) return "ddl";
+  if (/(^|[/_])schema(_v\d+)?\.rs$/.test(p)) return "ddl";
   return null;
 }
 
