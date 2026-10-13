@@ -225,19 +225,32 @@ pub fn index_file_mode(
     let Some(note) = note.as_ref() else {
         return Ok(true);
     };
+    insert_note_derived(conn, file_id, note)?;
+    Ok(true)
+}
+
+/// 把解析结果写入派生表（标题 / 块 ID / 链接 / 标签 / 别名）。
+///
+/// 抽取自 `index_file_mode`：CODE-11 的函数级上限是 100 SLOC，原函数已到 113。
+/// 边界取"事务内、依赖 file_id 的派生写入"这一整体 —— 拆在别处会把事务语义切碎。
+fn insert_note_derived(
+    conn: &Connection,
+    file_id: i64,
+    note: &md_parse::ParsedNote,
+) -> Result<(), AppError> {
     for (i, h) in note.headings.iter().enumerate() {
         conn.execute(
-            "INSERT INTO heading (file_id, level, text, anchor, line, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![file_id, h.level as i64, h.text, h.text, h.line as i64, i as i64],
-        )
-        .map_err(|e| AppError::db_with("写入标题", &e))?;
+        "INSERT INTO heading (file_id, level, text, anchor, line, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![file_id, h.level as i64, h.text, h.text, h.line as i64, i as i64],
+    )
+    .map_err(|e| AppError::db_with("写入标题", &e))?;
     }
     for b in &note.block_ids {
         conn.execute(
-            "INSERT OR IGNORE INTO block_id (file_id, bid, line_start, line_end) VALUES (?1, ?2, ?3, ?4)",
-            params![file_id, b.id, b.start_line as i64, b.end_line as i64],
-        )
-        .map_err(|e| AppError::db_with("写入块 ID", &e))?;
+        "INSERT OR IGNORE INTO block_id (file_id, bid, line_start, line_end) VALUES (?1, ?2, ?3, ?4)",
+        params![file_id, b.id, b.start_line as i64, b.end_line as i64],
+    )
+    .map_err(|e| AppError::db_with("写入块 ID", &e))?;
     }
     for l in &note.links {
         let kind = match l.kind {
@@ -245,20 +258,20 @@ pub fn index_file_mode(
             md_parse::LinkKind::Link => "link",
         };
         conn.execute(
-            "INSERT INTO link (src_file_id, dst_file_id, target_ref, anchor, alias, link_kind, status, line, col) \
-             VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'dangling', ?6, ?7)",
-            params![file_id, l.target, l.anchor, l.alias, kind, l.line as i64, l.col as i64],
-        )
-        .map_err(|e| AppError::db_with("写入链接", &e))?;
+        "INSERT INTO link (src_file_id, dst_file_id, target_ref, anchor, alias, link_kind, status, line, col) \
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'dangling', ?6, ?7)",
+        params![file_id, l.target, l.anchor, l.alias, kind, l.line as i64, l.col as i64],
+    )
+    .map_err(|e| AppError::db_with("写入链接", &e))?;
     }
     for t in &note.tags {
         let depth = t.name.split('/').count() as i64;
         conn.execute(
-            "INSERT INTO tag (norm, display, depth, is_leaf, ref_count) VALUES (?1, ?2, ?3, ?4, 0) \
-             ON CONFLICT(norm) DO UPDATE SET display = excluded.display, depth = excluded.depth, is_leaf = excluded.is_leaf",
-            params![t.norm, t.name, depth, if t.is_leaf { 1 } else { 0 }],
-        )
-        .map_err(|e| AppError::db_with("写入标签", &e))?;
+        "INSERT INTO tag (norm, display, depth, is_leaf, ref_count) VALUES (?1, ?2, ?3, ?4, 0) \
+         ON CONFLICT(norm) DO UPDATE SET display = excluded.display, depth = excluded.depth, is_leaf = excluded.is_leaf",
+        params![t.norm, t.name, depth, if t.is_leaf { 1 } else { 0 }],
+    )
+    .map_err(|e| AppError::db_with("写入标签", &e))?;
         let tag_id: i64 = conn
             .query_row("SELECT id FROM tag WHERE norm = ?1", params![t.norm], |r| {
                 r.get(0)
@@ -279,7 +292,7 @@ pub fn index_file_mode(
             .map_err(|e| AppError::db_with("写入别名", &e))?;
         }
     }
-    Ok(true)
+    Ok(())
 }
 
 /// 全量索引（默认 Force；不检查取消）。生产走 `full_index_cancellable`，这里是测试用包装。
