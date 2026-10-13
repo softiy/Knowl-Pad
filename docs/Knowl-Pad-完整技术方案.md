@@ -3378,7 +3378,7 @@ jobs:
 | 构建 | `.github/workflows/release.yml` 四平台矩阵（Windows / Ubuntu / macOS arm64 / macOS intel），`pnpm tauri build` 产出安装包与 `.sig` |
 | updater 元数据 | `scripts/gen-latest-json.mjs` 分平台生成 → `scripts/merge-latest-json.mjs` 合并为 `latest.json` |
 | GitHub Release | `gh release create <tag> --notes-file CHANGELOG.md artifacts/*` |
-| Gitee Release 同步 | `scripts/publish-gitee-release.mjs`（Gitee OpenAPI v5；`--verify` 只读联调、`--dry-run` 预演、幂等复用 Release） |
+| Gitee Release 同步 | `scripts/publish-gitee-release.mjs` + `scripts/lib/{release-args,release-glob,release-http,gitee-release}.mjs`（Gitee OpenAPI v5；`--verify` 只读联调、`--dry-run` 预演、`--self-test` 自检、按 tag 幂等复用 Release 与跳过已存在附件）。**发布口径（2026-10-13 明确）**：**GitHub Release 是关键路径；Gitee 同步降级为 best-effort** ——① [release.yml](../../.github/workflows/release.yml) 先做凭据前置检查，未配置 `GITEE_TOKEN`/`GITEE_OWNER`/`GITEE_REPO` 时**跳过**，并写 job summary + `::warning` 注解（不再让发布作业整体失败）；② 同步步骤 `continue-on-error: true`、最多重试 **3** 次，**失败不阻断发布**，但必须**显式留痕**（job summary + `::error` 注解）；③ **补偿入口**：`workflow_dispatch` 的 `gitee_only_tag` —— 只走 Gitee（先用 `gh release download` 取回该 tag 的资产，再幂等重跑同步），可安全重复执行；④ **脚本已有自检**：拆分后 `--self-test` 覆盖 CLI 解析 / glob / 资产展开（21 条），拆分本身以 `--dry-run` 输出的逐字节 diff 证明行为等价；⑤ `scripts/**` 已纳入 ESLint 的 `max-lines-per-function`（80）—— 此前被全局 ignores 排除，正是 `main()` 长到 117 SLOC 而无人报警的原因。 |
 
 #### 11.5.1 版本与变更日志自动化（DEBT-11 已关闭）
 

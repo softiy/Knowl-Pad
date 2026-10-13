@@ -4,6 +4,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      gitee_only_tag:
+        description: '补偿入口：只把某个已发布的 tag 同步到 Gitee（留空则走正常发布）'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -82,14 +87,83 @@ jobs:
         run: |
           gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --notes-file CHANGELOG.md artifacts/*
       # ⬇︎ 替换 semantic-release-gitee（已停更逾 4 年，违反红线 R-16）
-      - name: 同步到 Gitee Release（自研脚本，Gitee OpenAPI v5）
+      # 口径（2026-10-13，见技术方案 §11.5）：**GitHub Release 是关键路径**；
+      # Gitee 同步降级为 **best-effort** —— 未配置凭据时跳过、失败不阻断发布，但必须显式留痕，
+      # 并提供补偿入口（workflow_dispatch 的 gitee_only_tag）。
+      - name: Gitee 同步前置检查（未配置凭据则跳过）
+        id: gitee_preflight
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           GITEE_OWNER: ${{ vars.GITEE_OWNER }}
           GITEE_REPO: ${{ vars.GITEE_REPO }}
         run: |
+          if [ -n "$GITEE_TOKEN" ] && [ -n "$GITEE_OWNER" ] && [ -n "$GITEE_REPO" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Gitee 凭据已配置，将执行同步。" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "### ⏭️ Gitee 同步已跳过：未配置 GITEE_TOKEN / GITEE_OWNER / GITEE_REPO" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Gitee 同步跳过::缺少 GITEE_TOKEN/GITEE_OWNER/GITEE_REPO，本次仅发布 GitHub Release（可用 gitee_only_tag 补偿）"
+          fi
+      - name: 同步到 Gitee Release（best-effort；失败不阻断发布）
+        id: gitee_sync
+        if: steps.gitee_preflight.outputs.enabled == 'true'
+        continue-on-error: true
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+        run: |
+          for attempt in 1 2 3; do
+            echo "::group::Gitee 同步尝试 $attempt/3"
+            if node scripts/publish-gitee-release.mjs \
+                 --tag "${{ github.ref_name }}" \
+                 --name "${{ github.ref_name }}" \
+                 --notes-file CHANGELOG.md \
+                 --assets "artifacts/**/*"; then
+              echo "::endgroup::"
+              echo "### ✅ Gitee 同步成功（tag ${{ github.ref_name }}）" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::endgroup::"
+            sleep $((attempt * 20))
+          done
+          {
+            echo "### ⚠️ Gitee 同步失败（已重试 3 次；**不影响 GitHub Release**）"
+            echo ""
+            echo "补偿入口：Actions → Release → Run workflow，在 gitee_only_tag 输入框填 ${{ github.ref_name }}（不要用反引号包裹：shell 会当作命令替换）。"
+            echo "脚本幂等：Release 已存在则复用、附件已存在则跳过，可安全重跑。"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Gitee 同步失败::GitHub Release 已发布；Gitee 侧需补偿（见本 job 摘要）"
+          exit 1
+
+  gitee-compensate:
+    name: 补偿同步 Gitee（只走 Gitee，不动 GitHub Release）
+    if: github.event_name == 'workflow_dispatch' && inputs.gitee_only_tag != ''
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - name: 下载该 tag 的 GitHub Release 资产（作为待同步文件）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          gh release download "${{ inputs.gitee_only_tag }}" --dir artifacts || true
+          find artifacts -maxdepth 1 -type f -print | head -20
+      - name: 同步到 Gitee（幂等，可安全重跑）
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+        run: |
+          if [ -z "$GITEE_TOKEN" ] || [ -z "$GITEE_OWNER" ] || [ -z "$GITEE_REPO" ]; then
+            echo "::error title=缺少 Gitee 凭据::补偿入口需要 GITEE_TOKEN/GITEE_OWNER/GITEE_REPO"
+            exit 1
+          fi
           node scripts/publish-gitee-release.mjs \
-            --tag "${{ github.ref_name }}" \
-            --name "${{ github.ref_name }}" \
+            --tag "${{ inputs.gitee_only_tag }}" \
+            --name "${{ inputs.gitee_only_tag }}" \
             --notes-file CHANGELOG.md \
             --assets "artifacts/**/*"
