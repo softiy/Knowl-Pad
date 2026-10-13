@@ -15,7 +15,7 @@
     "test:security": "node scripts/run-security.mjs",
     "test:reliability": "node scripts/run-reliability.mjs",
     "test:perf": "node scripts/run-perf.mjs",
-    "gate:clippy": "cargo clippy --workspace --all-targets --locked -- -D warnings",
+    "gate:clippy": "cargo clippy --workspace --all-targets --locked -- -D warnings -W clippy::too_many_lines",
     "gate:fmt": "cargo fmt --all --check",
     "gate:rust-test": "cargo test --workspace --locked",
     "gate:coverage": "cargo llvm-cov -p kp-domain --locked --fail-under-lines 85",

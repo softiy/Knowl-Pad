@@ -9,7 +9,7 @@ const GATES = [
   { id: '1', name: 'TypeScript 类型检查', cmd: ['pnpm', ['typecheck']] },
   { id: '2', name: '前端 Lint', cmd: ['pnpm', ['lint']] },
   { id: '14', name: '前端构建 + 完整性（准备 dist）', cmd: ['pnpm', ['build:verify']] },
-  { id: '3', name: 'Rust Lint (clippy -D warnings)', cmd: ['cargo', ['clippy', '--workspace', '--all-targets', '--locked', '--', '-D', 'warnings']] },
+  { id: '3', name: 'Rust Lint (clippy -D warnings)', cmd: ['cargo', ['clippy', '--workspace', '--all-targets', '--locked', '--', '-D', 'warnings', '-W', 'clippy::too_many_lines']] },
   { id: '4', name: 'Rust 格式 (fmt --check)', cmd: ['cargo', ['fmt', '--all', '--check']] },
   { id: '6', name: 'Rust 单元/集成测试', cmd: ['cargo', ['test', '--workspace', '--locked']] },
   // DEBT-21：门禁 15 原先只覆盖 kp-domain —— 命令层（knowl-pad bin）**零覆盖**却照样通过，
