@@ -1,0 +1,4 @@
+# CODE-11 函数级约束（规范 C11.3）：Rust 单函数 SLOC 上限 100。
+# clippy 的 too_many_lines **本身不计注释行**，与 CODE-11 的 SLOC 主口径同源 —— 这正是选它的原因。
+# 该 lint 属 pedantic（默认 allow），由门禁 3 显式启用（flags 只在 package.json 维护）。
+too-many-lines-threshold = 100
