@@ -33,6 +33,10 @@ use commands::link_resolve::link_resolve_ambiguous;
 use commands::link_rewrite::{link_rewrite_apply, link_rewrite_preview};
 use commands::link_rewrite_store::link_rewrite_rollback;
 use commands::note::{note_read, note_write};
+use commands::search::{
+    replace_in_file, search_fulltext, search_history_clear, search_history_get, search_in_file,
+    search_quick_open,
+};
 use commands::settings::{preference_get, preference_set, vault_state_get, vault_state_set};
 use commands::system::{ping, system_info};
 use commands::vault::{
@@ -177,7 +181,13 @@ fn main() {
             index_stats,
             index_rebuild,
             index_cancel,
-            vault_close
+            vault_close,
+            search_fulltext,
+            search_quick_open,
+            search_in_file,
+            replace_in_file,
+            search_history_get,
+            search_history_clear
         ])
         .run(tauri::generate_context!())
         .expect("error while running Knowl Pad");

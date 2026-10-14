@@ -21,7 +21,11 @@ for (const f of rustFiles) {
   for (const m of src.matchAll(/#\[tauri::command\]\s*(?:pub\s+)?(?:async\s+)?fn\s+([a-z0-9_]+)/g)) rustCommands.add(m[1]);
 }
 
-const ts = await readFile('src/core/ipc/commands.ts', 'utf8');
+// 扫描 src/core/ipc 下的**全部** TS 模块：M4 起按域拆文件（linkCommands.ts），
+// 只读 commands.ts 会让新域的封装整块落在门禁之外（DEBT-21 点名的「门禁窄化」同类问题）。
+const ipcDir = 'src/core/ipc';
+const ipcFiles = (await readdir(ipcDir)).filter((name) => name.endsWith('.ts')).sort();
+const ts = (await Promise.all(ipcFiles.map((name) => readFile(join(ipcDir, name), 'utf8')))).join('\n');
 /** 从 TS 源码抽取被调用的命令名（供主流程与 --self-test 共用）。 */
 export function extractTsCommands(source) {
   return new Set(
@@ -52,6 +56,7 @@ const tsCommands = extractTsCommands(ts);
 
 const missing = [...tsCommands].filter((c) => !rustCommands.has(c));
 console.log('Rust 命令 ' + rustCommands.size + ' 个：' + [...rustCommands].sort().join(', '));
+console.log('  TS 封装文件 ' + ipcFiles.length + ' 个：' + ipcFiles.join(', '));
 console.log('TS 调用 ' + tsCommands.size + ' 个：' + [...tsCommands].sort().join(', '));
 if (missing.length) { console.error('❌ TS 侧调用了不存在的 Command：' + missing.join(', ')); process.exit(1); }
 const unexposed = [...rustCommands].filter((c) => !tsCommands.has(c));

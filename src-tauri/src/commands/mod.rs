@@ -17,6 +17,12 @@ mod link_text;
 mod link_view;
 pub mod note;
 pub mod paths;
+pub mod search;
+mod search_file;
+mod search_index;
+#[cfg(test)]
+mod search_tests;
+mod search_view;
 pub mod settings;
 pub mod system;
 pub mod vault;

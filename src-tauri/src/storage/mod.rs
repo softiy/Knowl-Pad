@@ -14,6 +14,8 @@ pub mod link_query_types;
 pub mod migrate;
 pub mod pool;
 pub mod pragma;
+pub mod search_history;
+pub mod search_query;
 pub mod vault_state;
 
 use kp_domain::error::AppError;
