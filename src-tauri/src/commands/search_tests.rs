@@ -1,0 +1,438 @@
+//! 搜索域命令的测试（判据都打在命令体上，DEBT-14 的做法：命令体可直接用真实临时库调用）。
+//!
+//! 覆盖 PRD §5.3.4 的 6 个命令，判据对着需求：AC-SEARCH-01（中文短语命中 + 片段高亮）、
+//! FR-SEARCH-04/05（片段、命中次数合并）、FR-SEARCH-06（排序）、FR-SEARCH-10（历史）、
+//! FR-SEARCH-30/31（文件内查找与替换）、FR-SEARCH-40/41（快速打开）。
+
+use std::sync::Arc;
+
+use crate::commands::search::{
+    search_history_clear_impl, search_history_get_impl, FindOptionsArg, InFileArgs, PageArg,
+    QuickOpenArgs, ReplaceArgs, ReplaceMatchArg, SearchFulltextArgs, SearchOptions,
+};
+use crate::commands::search_file::{replace_in_file_impl, search_in_file_impl};
+use crate::commands::search_index::{search_fulltext_impl, search_quick_open_impl};
+use crate::commands::search_view::{InFileMatch, SearchSnippet};
+use crate::state::AppState;
+
+/// 建临时 Vault（真实文件）+ 索引库（真实全量索引）+ 全局库，返回 AppState。
+fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, AppState) {
+    let vault = tempfile::tempdir().expect("Vault 临时目录");
+    let root = vault.path().to_path_buf();
+    for (rel, content) in files {
+        let path = root.join(rel);
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p).expect("建目录");
+        }
+        std::fs::write(&path, content).expect("写文件");
+    }
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    crate::index_engine::full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    let config = tempfile::tempdir().expect("配置目录");
+    let global = crate::storage::global::open(config.path()).expect("建全局库");
+    let state = AppState::new();
+    state.set_root(Some(root));
+    state.set_index_db(Some(Arc::new(pool)));
+    state.set_global_db(Arc::new(global));
+    (vault, state)
+}
+
+fn fulltext(query: &str) -> SearchFulltextArgs {
+    SearchFulltextArgs {
+        query: query.to_string(),
+        options: SearchOptions::default(),
+        page: PageArg::default(),
+    }
+}
+
+/// 从片段中把高亮区间切出来（字符偏移，0 基、左闭右开）。
+fn highlighted(view: &SearchSnippet) -> String {
+    let line = view
+        .lines
+        .iter()
+        .find(|l| l.line == view.highlight_line)
+        .expect("高亮行必须在片段里");
+    line.text
+        .chars()
+        .skip(view.highlight_start)
+        .take(view.highlight_end - view.highlight_start)
+        .collect()
+}
+
+/// AC-SEARCH-01 的命令侧：三篇含「知识图谱的力导向布局」的笔记全部命中，片段里该短语被点亮。
+#[test]
+fn fulltext_hits_chinese_phrase_and_highlights_it() {
+    let (_v, state) = fixture(&[
+        ("a.md", "知识图谱的力导向布局很关键\n"),
+        ("b.md", "另一篇也讲知识图谱的力导向布局\n"),
+        ("c.md", "无关内容\n"),
+    ]);
+    let page = search_fulltext_impl(&state, fulltext("力导向布局")).expect("搜索");
+    assert_eq!(page.total, 2, "两篇命中");
+    assert_eq!(page.items.len(), 2);
+    for item in &page.items {
+        assert_eq!(item.hit_count, 1, "每篇一处命中");
+        let first = item.snippets.first().expect("应带片段（FR-SEARCH-04）");
+        assert_eq!(
+            highlighted(first),
+            "力导向布局",
+            "高亮区间必须正好覆盖命中短语：{first:?}"
+        );
+    }
+}
+
+/// FR-SEARCH-05：同一笔记多处命中合并为**一条**结果，命中次数与片段数都对得上。
+#[test]
+fn fulltext_merges_multiple_hits_in_one_note() {
+    let (_v, state) = fixture(&[(
+        "many.md",
+        "力导向布局 第一处\n中间行\n力导向布局 第二处\n又一行\n力导向布局 第三处\n",
+    )]);
+    let page = search_fulltext_impl(&state, fulltext("力导向布局")).expect("搜索");
+    assert_eq!(page.items.len(), 1, "同一笔记只出一条结果");
+    let item = &page.items[0];
+    assert_eq!(item.hit_count, 3, "命中次数 3");
+    assert_eq!(
+        item.snippets.len(),
+        3,
+        "三处各一个片段（FR-SEARCH-05 可展开）"
+    );
+    let lines: Vec<u32> = item.snippets.iter().map(|s| s.highlight_line).collect();
+    assert_eq!(lines, vec![1, 3, 5], "片段按位置升序，行号 1 基");
+}
+
+/// 片段上下文行数来自 options（PRD §4.11.3 默认 2）；命中行必须在片段中。
+#[test]
+fn snippet_context_lines_follow_options() {
+    let (_v, state) = fixture(&[("ctx.md", "一\n二\n力导向布局\n四\n五\n")]);
+    let mut args = fulltext("力导向布局");
+    args.options.context_lines = Some(0);
+    let page = search_fulltext_impl(&state, args).expect("搜索");
+    let snippet = page.items[0].snippets.first().expect("片段");
+    assert_eq!(snippet.lines.len(), 1, "contextLines=0 时只给命中行");
+    assert!(snippet.lines[0].is_hit_line);
+    // 命中在第 3 行、默认前后各 2 行 → 第 1..5 行（PRD §4.11.3 的「片段上下文行数 2」）
+    let page2 = search_fulltext_impl(&state, fulltext("力导向布局")).expect("搜索");
+    let lines: Vec<u32> = page2.items[0].snippets[0]
+        .lines
+        .iter()
+        .map(|l| l.line)
+        .collect();
+    assert_eq!(lines, vec![1, 2, 3, 4, 5], "默认上下文行数 = 2");
+}
+
+/// 分页（IPC-05）：total 是总数、hasMore 与 offset/limit 一致。
+#[test]
+fn fulltext_paginates_with_total_and_has_more() {
+    let (_v, state) = fixture(&[
+        ("p1.md", "图谱\n"),
+        ("p2.md", "图谱\n"),
+        ("p3.md", "图谱\n"),
+    ]);
+    let mut args = fulltext("图谱");
+    args.options.sort = Some("path".to_string());
+    args.page.limit = Some(2);
+    let first = search_fulltext_impl(&state, args).expect("第一页");
+    assert_eq!(first.total, 3);
+    assert_eq!(first.items.len(), 2);
+    assert!(first.has_more, "还有下一页");
+    assert_eq!(first.offset, 0);
+    assert_eq!(first.limit, 2);
+    let mut second_args = fulltext("图谱");
+    second_args.options.sort = Some("path".to_string());
+    second_args.page = PageArg {
+        offset: Some(2),
+        limit: Some(2),
+    };
+    let second = search_fulltext_impl(&state, second_args).expect("第二页");
+    assert_eq!(second.items.len(), 1);
+    assert!(!second.has_more, "最后一页");
+    assert_eq!(second.items[0].rel_path, "p3.md", "不重不漏");
+}
+
+/// 每页条数被夹到上限（前端传 10000 不该让一次响应把 IPC 撑爆，IPC-05）。
+#[test]
+fn page_limit_is_clamped_to_max() {
+    let (_v, state) = fixture(&[("a.md", "图谱\n")]);
+    let mut args = fulltext("图谱");
+    args.page.limit = Some(10_000);
+    let page = search_fulltext_impl(&state, args).expect("搜索");
+    assert_eq!(page.limit, crate::commands::search::MAX_PAGE_LIMIT);
+}
+
+/// 空查询 = 没有查询：返回空页而**不是**语法错误（kp_domain::search 的约定）。
+#[test]
+fn empty_query_returns_empty_page() {
+    let (_v, state) = fixture(&[("a.md", "图谱\n")]);
+    let page = search_fulltext_impl(&state, fulltext("   ")).expect("空查询不该报错");
+    assert!(page.items.is_empty());
+    assert_eq!(page.total, 0);
+}
+
+/// 未打开 Vault（没有索引库）时必须返回 E_VAULT_NOT_OPEN，而不是空结果。
+#[test]
+fn fulltext_without_vault_reports_vault_not_open() {
+    let state = AppState::new();
+    let err = search_fulltext_impl(&state, fulltext("图谱")).expect_err("未打开 Vault");
+    assert_eq!(err.0.code(), "E_VAULT_NOT_OPEN");
+}
+
+fn in_file(rel: &str, query: &str, options: FindOptionsArg) -> InFileArgs {
+    InFileArgs {
+        rel_path: rel.to_string(),
+        query: query.to_string(),
+        options,
+    }
+}
+
+fn replace_args(rel: &str, matches: &[InFileMatch], replacement: &str) -> ReplaceArgs {
+    ReplaceArgs {
+        rel_path: rel.to_string(),
+        matches: matches
+            .iter()
+            .map(|m| ReplaceMatchArg {
+                start_byte: m.start_byte,
+                end_byte: m.end_byte,
+                text: m.text.clone(),
+            })
+            .collect(),
+        replacement: replacement.to_string(),
+    }
+}
+
+/// FR-SEARCH-40/41：快速打开按**路径片段**模糊匹配，正文里出现不算，附件不进候选。
+#[test]
+fn quick_open_matches_path_fragments_only() {
+    let (_v, state) = fixture(&[
+        ("work/2026/report.md", "正文里没有任何关键词\n"),
+        ("notes/readme.md", "work/rep 只出现在正文里\n"),
+        ("图片.png", "x\n"),
+    ]);
+    let items = search_quick_open_impl(
+        &state,
+        QuickOpenArgs {
+            query: "work/rep".to_string(),
+            limit: None,
+        },
+    )
+    .expect("快速打开");
+    assert_eq!(items.len(), 1, "只按文件名/路径匹配（FR-SEARCH-40）");
+    assert_eq!(items[0].rel_path, "work/2026/report.md");
+    assert_eq!(items[0].name, "report.md");
+    assert!(items[0].score > 0);
+    assert!(
+        items.iter().all(|i| i.rel_path.ends_with(".md")),
+        "附件不是笔记"
+    );
+}
+
+/// 空查询给缺省候选列表（Ctrl+O 未输入时也要有内容），条数受 limit 约束。
+#[test]
+fn quick_open_empty_query_lists_candidates_with_limit() {
+    let (_v, state) = fixture(&[("b.md", "x\n"), ("a.md", "x\n")]);
+    let all = search_quick_open_impl(
+        &state,
+        QuickOpenArgs {
+            query: String::new(),
+            limit: None,
+        },
+    )
+    .expect("快速打开");
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0].rel_path, "a.md", "同分时按路径升序（可复现）");
+    let one = search_quick_open_impl(
+        &state,
+        QuickOpenArgs {
+            query: String::new(),
+            limit: Some(1),
+        },
+    )
+    .expect("快速打开");
+    assert_eq!(one.len(), 1);
+}
+
+/// FR-SEARCH-30：文件内查找给出「第 X / 共 Y 处」所需的定位与整行文本。
+#[test]
+fn in_file_search_reports_positions_and_line_text() {
+    let (_v, state) = fixture(&[("note.md", "第一行\n见 图谱 与 图谱\n末行\n")]);
+    let matches = search_in_file_impl(
+        &state,
+        in_file("note.md", "图谱", FindOptionsArg::default()),
+    )
+    .expect("查找");
+    assert_eq!(matches.len(), 2, "同一行的两处都要列出");
+    assert_eq!(matches[0].line, 2);
+    assert_eq!(matches[0].col, 3, "1 基字符列");
+    assert_eq!(matches[0].len_chars, 2);
+    assert_eq!(matches[0].text, "图谱");
+    assert_eq!(matches[0].line_text, "见 图谱 与 图谱");
+    assert_eq!(matches[1].col, 8, "第二处按字符列定位");
+    let chars: Vec<char> = matches[0].line_text.chars().collect();
+    let hit: String = chars[matches[0].highlight_start..matches[0].highlight_end]
+        .iter()
+        .collect();
+    assert_eq!(hit, "图谱", "高亮区间必须正好覆盖命中");
+}
+
+/// FR-EDITOR-09 的选项（FR-SEARCH-31 复用）：区分大小写与全字匹配都真的生效。
+#[test]
+fn in_file_search_options_control_case_and_whole_word() {
+    let (_v, state) = fixture(&[("note.md", "Rust rust Rustacean\n")]);
+    let loose = search_in_file_impl(
+        &state,
+        in_file("note.md", "rust", FindOptionsArg::default()),
+    )
+    .expect("查找");
+    assert_eq!(loose.len(), 3, "默认不区分大小写");
+    let strict = search_in_file_impl(
+        &state,
+        in_file(
+            "note.md",
+            "rust",
+            FindOptionsArg {
+                case_sensitive: Some(true),
+                whole_word: None,
+            },
+        ),
+    )
+    .expect("查找");
+    assert_eq!(strict.len(), 1, "区分大小写后只剩一处");
+    let whole = search_in_file_impl(
+        &state,
+        in_file(
+            "note.md",
+            "Rust",
+            FindOptionsArg {
+                case_sensitive: Some(true),
+                whole_word: Some(true),
+            },
+        ),
+    )
+    .expect("查找");
+    assert_eq!(whole.len(), 1, "全字匹配排除 Rustacean");
+}
+
+/// 空查询不返回「全部命中」；文件不存在必须明确失败，而不是静默空数组。
+#[test]
+fn in_file_search_empty_query_and_missing_file() {
+    let (_v, state) = fixture(&[("note.md", "内容\n")]);
+    let none = search_in_file_impl(&state, in_file("note.md", "", FindOptionsArg::default()))
+        .expect("查找");
+    assert!(none.is_empty());
+    let err = search_in_file_impl(
+        &state,
+        in_file("missing.md", "内容", FindOptionsArg::default()),
+    )
+    .expect_err("文件不存在");
+    assert_eq!(err.0.code(), "E_FILE_NOT_FOUND");
+}
+
+/// FR-SEARCH-31：全部替换落地（原子写），返回处数与磁盘内容都对得上。
+#[test]
+fn replace_in_file_applies_all_matches() {
+    let (vault, state) = fixture(&[("note.md", "甲 图谱 与 图谱 结尾\n")]);
+    let matches = search_in_file_impl(
+        &state,
+        in_file("note.md", "图谱", FindOptionsArg::default()),
+    )
+    .expect("查找");
+    let result =
+        replace_in_file_impl(&state, replace_args("note.md", &matches, "知识图谱")).expect("替换");
+    assert_eq!(result.replaced, 2);
+    assert_eq!(result.rel_path, "note.md");
+    assert!(result.new_mtime_ms > 0, "应返回新 mtime");
+    let text = std::fs::read_to_string(vault.path().join("note.md")).expect("读回");
+    assert_eq!(text, "甲 知识图谱 与 知识图谱 结尾\n");
+}
+
+/// 陈旧检测（P-2 / R-07）：查找之后文件被外部改过 → 整体中止且**磁盘零改动**。
+#[test]
+fn replace_in_file_detects_stale_targets_and_writes_nothing() {
+    let (vault, state) = fixture(&[("note.md", "图谱 在这里\n")]);
+    let matches = search_in_file_impl(
+        &state,
+        in_file("note.md", "图谱", FindOptionsArg::default()),
+    )
+    .expect("查找");
+    std::fs::write(vault.path().join("note.md"), "别的 在这里\n").expect("外部改写");
+    let err = replace_in_file_impl(&state, replace_args("note.md", &matches, "知识图谱"))
+        .expect_err("陈旧目标必须拒绝");
+    assert_eq!(err.0.code(), "E_WRITE_CONFLICT");
+    let text = std::fs::read_to_string(vault.path().join("note.md")).expect("读回");
+    assert_eq!(text, "别的 在这里\n", "拒绝时不得留下任何写入痕迹");
+}
+
+/// 受保护目录（.knowlpad 等）不得被改写（FR-STORAGE-02/04；DEBT-16 的护栏）。
+#[test]
+fn replace_in_file_rejects_protected_directory() {
+    let (_v, state) = fixture(&[("note.md", "图谱\n")]);
+    let err = replace_in_file_impl(
+        &state,
+        ReplaceArgs {
+            rel_path: ".knowlpad/index.db".to_string(),
+            matches: vec![ReplaceMatchArg {
+                start_byte: 0,
+                end_byte: 1,
+                text: "x".to_string(),
+            }],
+            replacement: "y".to_string(),
+        },
+    )
+    .expect_err("受保护目录必须拒绝");
+    assert_eq!(err.0.code(), "E_PATH_ESCAPE_DENY");
+}
+
+/// 没有目标时是**空操作**（不是错误），内容原样保留。
+#[test]
+fn replace_in_file_without_matches_is_noop() {
+    let (vault, state) = fixture(&[("note.md", "原文\n")]);
+    let path = vault.path().join("note.md");
+    let before = kp_domain::note_io::mtime_ms(&path).expect("读 mtime");
+    let result = replace_in_file_impl(&state, replace_args("note.md", &[], "新")).expect("空目标");
+    assert_eq!(result.replaced, 0);
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("读回"),
+        "原文\n",
+        "内容不得变化"
+    );
+    assert_eq!(
+        kp_domain::note_io::mtime_ms(&path).expect("读 mtime"),
+        before,
+        "空目标不该写盘：写一次内容相同的文件会刷新 mtime，编辑器会误判为外部修改"
+    );
+}
+
+/// FR-SEARCH-10：历史**只在显式要求时**记录（options.recordHistory），最新在前，可清空且幂等。
+#[test]
+fn history_records_only_on_request_and_can_be_cleared() {
+    let (_v, state) = fixture(&[("a.md", "图谱\n")]);
+    search_fulltext_impl(&state, fulltext("图谱")).expect("搜索");
+    assert!(
+        search_history_get_impl(&state).expect("读历史").is_empty(),
+        "缺省不记录：只读命令不得有副作用"
+    );
+
+    let mut args = fulltext("图谱");
+    args.options.record_history = Some(true);
+    search_fulltext_impl(&state, args).expect("搜索");
+    let mut second = fulltext("力导向");
+    second.options.record_history = Some(true);
+    search_fulltext_impl(&state, second).expect("搜索");
+    assert_eq!(
+        search_history_get_impl(&state).expect("读历史"),
+        vec!["力导向".to_string(), "图谱".to_string()],
+        "最新在前"
+    );
+
+    search_history_clear_impl(&state).expect("清空");
+    assert!(search_history_get_impl(&state).expect("读历史").is_empty());
+    search_history_clear_impl(&state).expect("清空是幂等的");
+}
+
+/// 全局库不可用时读历史必须**明确报错**（来源缺失 ≠ 空历史）。
+#[test]
+fn history_without_global_db_reports_error() {
+    let state = AppState::new();
+    let err = search_history_get_impl(&state).expect_err("没有全局库");
+    assert_eq!(err.0.code(), "E_DB_ERROR");
+}

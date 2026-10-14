@@ -250,6 +250,16 @@ pub fn set_preference(pool: &DbPool, key: &str, value: &str) -> Result<(), AppEr
     })
 }
 
+/// 删除一条偏好（「清空搜索历史」这类写操作用；记录不存在时也算成功 —— 幂等）。
+pub fn clear_preference(pool: &DbPool, key: &str) -> Result<(), AppError> {
+    let key = key.to_string();
+    pool.with_writer(move |conn| {
+        conn.execute("DELETE FROM preference WHERE key = ?1", [key.as_str()])
+            .map_err(map_err)?;
+        Ok(())
+    })
+}
+
 /// 列出全部偏好（按键排序）。
 pub fn list_preferences(pool: &DbPool) -> Result<Vec<(String, String)>, AppError> {
     pool.with_reader(|conn| {
