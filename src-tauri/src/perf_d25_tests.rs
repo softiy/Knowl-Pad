@@ -15,6 +15,7 @@ use std::time::Instant;
 
 use crate::index_engine::{full_index_cancellable, index_file_mode, IndexMode, ScanEntry};
 use crate::storage::index::open;
+use crate::storage::index_query::list_children;
 use crate::storage::pool::DbPool;
 
 /// 造一篇笔记（含 frontmatter / 标题 / 链接 / 标签，贴近真实内容形状）。
@@ -381,4 +382,72 @@ fn kill_during_index(vault: &Path) -> bool {
     let _ = child.kill();
     let _ = child.wait();
     killed_mid
+}
+
+/// **NFR-PERF-02**：打开 Vault 到文件树可用（**索引已存在**）—— 后端部分 = 打开索引库 + 文件树首屏。
+///
+/// 不含的部分（登记在 `perf/d25-budgets.json`）：Tauri 窗口创建、前端首屏渲染、IPC 往返。
+#[test]
+fn d25_nfr_perf_02_cold_open() {
+    let notes = std::env::var("KP_D25_NOTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300usize);
+    let (guard, root) = d25_vault(notes);
+    {
+        let pool = pool_for(&root);
+        full_index_cancellable(&pool, &root, |_, _| {}, IndexMode::Force, || false)
+            .expect("先建好索引");
+    } // 放下连接：下面测的是"重新打开"
+
+    let db = root.join(".knowlpad").join("index.db");
+    let t0 = Instant::now();
+    let pool = open(&db).expect("打开索引库");
+    let open_ms = t0.elapsed().as_millis();
+    let t1 = Instant::now();
+    let root_entries = list_children(&pool, "").expect("列举根");
+    let list_ms = t1.elapsed().as_millis();
+    let _ = &guard;
+    println!(
+        "D25 NFR-PERF-02-cold-open ms={} open_ms={open_ms} list_ms={list_ms} entries={} notes={notes}",
+        open_ms + list_ms,
+        root_entries.len()
+    );
+    assert!(!root_entries.is_empty(), "索引已存在时根目录不该为空");
+}
+
+/// **NFR-PERF-11 的 proxy**：外部新增一个文件 → 增量扫描（`SkipUnchanged`）→ 索引可见。
+///
+/// **proxy 的理由**：它不含"文件监听触发延迟"与"到 UI 反映"，而 PRD 的判据是端到端的。
+/// 真正的 NFR-PERF-11 仍留在 pending；这条只回答"外部变更后，索引侧要多久才可见"。
+#[test]
+fn d25_nfr_perf_11_external_change_proxy() {
+    let notes = std::env::var("KP_D25_NOTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300usize);
+    let (guard, root) = d25_vault(notes);
+    let pool = pool_for(&root);
+    full_index_cancellable(&pool, &root, |_, _| {}, IndexMode::Force, || false).expect("首轮索引");
+    let before = list_children(&pool, "d0").expect("列举 d0").len();
+
+    // 外部变更：直接用 fs 写（模拟别的程序改盘，不经过本进程的写命令）
+    write_note(&root, "d0/note-external.md", 9999);
+    let started = Instant::now();
+    let outcome =
+        full_index_cancellable(&pool, &root, |_, _| {}, IndexMode::SkipUnchanged, || false)
+            .expect("增量扫描");
+    let visible_ms = started.elapsed().as_millis();
+    let after = list_children(&pool, "d0").expect("再列举 d0").len();
+    let _ = (&guard, &outcome);
+    println!(
+        "D25 NFR-PERF-11-external-change-proxy ms={visible_ms} visible={} d0_before={before} d0_after={after} scanned={} skipped={}",
+        after > before,
+        outcome.indexed,
+        outcome.skipped
+    );
+    assert!(
+        after > before,
+        "外部新增的文件必须在索引里可见（proxy 的核心断言）"
+    );
 }

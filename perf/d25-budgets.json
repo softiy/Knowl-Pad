@@ -39,9 +39,9 @@
         "stress": 4000
       },
       "unit": "ms",
-      "owning": "打开 Vault → 索引库就绪 + 文件树首屏（后端度量；端到端另计）",
-      "instrumented": false,
-      "plan": "M5 批次 1（后续 PR）"
+      "owning": "后端部分：打开索引库 + 文件树首屏（`open` + `list_children`）；窗口创建/前端首屏/IPC 不计入",
+      "instrumented": true,
+      "plan": ""
     },
     {
       "id": "NFR-PERF-03-first-index",
@@ -102,7 +102,16 @@
       "unit": "ms",
       "owning": "外部变更到索引可见（后端部分；到 UI 另计）",
       "instrumented": false,
-      "plan": "M5 批次 1（后续 PR）"
+      "plan": "端到端仍待接入（需文件监听触发延迟 + 到 UI 的反映）；本批只交付索引侧 proxy"
+    },
+    {
+      "id": "NFR-PERF-11-external-change-proxy",
+      "kind": "proxy",
+      "budget": null,
+      "unit": "ms",
+      "owning": "**proxy**：外部新增文件 → 增量扫描（`SkipUnchanged`）→ 索引可见；不含监听触发与 UI",
+      "instrumented": true,
+      "plan": ""
     },
     {
       "id": "NFR-PERF-13-memory",
