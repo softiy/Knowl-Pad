@@ -358,7 +358,8 @@ async function main() {
   if (opts.command === 'run' || opts.command === 'open') {
     console.log('  推送分支…');
     await gitNet(['push', '-u', 'origin', 'HEAD'], { retries: opts.retries, label: '推送' });
-    // 注：ensureOpenPr 的返回值（PR 号）目前未被使用 —— 潜在问题，已登记，不在本次改动行为。
+    // 返回值在此未使用是**无害**的：ensureOpenPr 在每条返回路径上都会 writeState({ pr })，
+    // 而下面第 ~368 行会重新 readState()，所以拿到的是新鲜状态（2026-10-13 核实，非 bug）。
     await ensureOpenPr(opts, slug, branch, headSha);
     if (opts.command === 'open') { console.log('  ✅ 分支与 PR 就绪（未等待检查）'); return; }
   }
