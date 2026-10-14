@@ -15,6 +15,8 @@ mod index_watch_poll;
 #[cfg(test)]
 mod index_watch_tests;
 mod logging;
+#[cfg(test)]
+mod perf_d25_tests;
 mod platform;
 mod state;
 mod storage;

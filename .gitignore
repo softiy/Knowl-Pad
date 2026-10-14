@@ -22,3 +22,6 @@ fp/
 
 # 临时提交信息文件（应始终放在 .git/ 内，此处兜底）
 .kp-commit-msg.txt
+
+# D-25 采样器的运行产物（预算真值 perf/d25-budgets.json 是提交的，报告不提交）
+perf/d25-report.json

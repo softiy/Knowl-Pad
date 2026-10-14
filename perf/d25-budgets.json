@@ -1,0 +1,154 @@
+{
+  "schema": 1,
+  "note": "D-25 接收清单的预算真值与覆盖现状。budgets 来自 PRD §6.1.2（标准库/大库/压力库三档）；owning 说明该判据由谁度量。",
+  "generatedAt": "2026-10-13",
+  "budgets": [
+    {
+      "id": "AC-VAULT-01-parse",
+      "kind": "acceptance",
+      "budget": null,
+      "unit": "boolean",
+      "owning": "解析断言：M3 解析器 + M4 链接裁决的端到端断言",
+      "instrumented": false,
+      "plan": "M5 批次 5（与 D-25 夹具一起）"
+    },
+    {
+      "id": "AC-VAULT-05-progress",
+      "kind": "acceptance",
+      "budget": null,
+      "unit": "events",
+      "owning": "20000 篇规模的进度与取消事件断言",
+      "instrumented": false,
+      "plan": "M5 批次 1（本批的后续 PR，需要 20000 档夹具）"
+    },
+    {
+      "id": "AC-REL-02-crash",
+      "kind": "acceptance",
+      "budget": null,
+      "unit": "boolean",
+      "owning": "索引约 50% 时强杀 → 重启后索引可恢复",
+      "instrumented": false,
+      "plan": "M5 批次 1（强杀脚本，需 spawn-self 助手入口）"
+    },
+    {
+      "id": "NFR-PERF-02-cold-open",
+      "kind": "perf",
+      "budget": {
+        "standard": 800,
+        "large": 1500,
+        "stress": 4000
+      },
+      "unit": "ms",
+      "owning": "打开 Vault → 索引库就绪 + 文件树首屏（后端度量；端到端另计）",
+      "instrumented": false,
+      "plan": "M5 批次 1（后续 PR）"
+    },
+    {
+      "id": "NFR-PERF-03-first-index",
+      "kind": "perf",
+      "budget": {
+        "standard": 10000,
+        "large": 60000,
+        "stress": 480000
+      },
+      "unit": "ms",
+      "owning": "首次全量索引（含分词与 FTS 构建）",
+      "instrumented": false,
+      "plan": "M5 批次 1（后续 PR）"
+    },
+    {
+      "id": "NFR-PERF-04-search",
+      "kind": "perf",
+      "budget": {
+        "standard": 100,
+        "large": 200,
+        "stress": 500
+      },
+      "unit": "ms",
+      "owning": "全文搜索响应（后端查询部分）",
+      "instrumented": false,
+      "plan": "M5 批次 1（后续 PR）"
+    },
+    {
+      "id": "NFR-PERF-10-incremental",
+      "kind": "perf",
+      "budget": {
+        "standard": 50,
+        "large": 50,
+        "stress": 50
+      },
+      "unit": "ms",
+      "owning": "索引队列单文件增量处理",
+      "instrumented": false,
+      "plan": "M5 批次 1（后续 PR）"
+    },
+    {
+      "id": "NFR-PERF-11-external-change",
+      "kind": "perf",
+      "budget": {
+        "standard": 1000,
+        "large": 3000,
+        "stress": 5000
+      },
+      "unit": "ms",
+      "owning": "外部变更到索引可见（后端部分；到 UI 另计）",
+      "instrumented": false,
+      "plan": "M5 批次 1（后续 PR）"
+    },
+    {
+      "id": "NFR-PERF-13-memory",
+      "kind": "perf",
+      "budget": {
+        "standard": 300,
+        "large": 500,
+        "stress": 900
+      },
+      "unit": "MB",
+      "owning": "常驻内存（编辑 5 篇）—— 需长驻进程采样",
+      "instrumented": false,
+      "plan": "M5 批次 1（采样脚本 + 进程生命周期）"
+    },
+    {
+      "id": "NFR-PERF-14-idle-cpu",
+      "kind": "perf",
+      "budget": {
+        "standard": 1,
+        "large": 1,
+        "stress": 1
+      },
+      "unit": "percent",
+      "owning": "空闲 30 秒后的 CPU —— 需长驻进程采样",
+      "instrumented": false,
+      "plan": "M5 批次 1（同上）"
+    },
+    {
+      "id": "AC-SEARCH-01-04-strict",
+      "kind": "acceptance",
+      "budget": null,
+      "unit": "boolean",
+      "owning": "AC-SEARCH-01（中文命中）/ AC-SEARCH-04（搜索与索引一致）的严格阈值口径",
+      "instrumented": false,
+      "plan": "M5 批次 1（随搜索域功能）"
+    }
+  ],
+  "existing": [
+    {
+      "id": "AC-FILE-06-backend",
+      "gate": "10b",
+      "metric": "fileTreeRootMs / fileTreeSubMs",
+      "note": "已在 perf/index-baseline.json"
+    },
+    {
+      "id": "DEBT-04-resolve",
+      "gate": "10b",
+      "metric": "resolveLinksMs",
+      "note": "10 万文件 / 1 万链接"
+    },
+    {
+      "id": "NFR-PERF-16-rewrite",
+      "gate": "10b",
+      "metric": "rewrite300Ms",
+      "note": "300 处引用改写"
+    }
+  ]
+}
