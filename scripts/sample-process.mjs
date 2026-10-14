@@ -29,7 +29,6 @@ let first = null;
 let last = null;
 const rssSamples = [];
 const started = Date.now();
-let ticks = 0;
 while (Date.now() - started < seconds * 1000) {
   const line = ps(
     "$p = Get-Process -Id " + pid + " -ErrorAction SilentlyContinue; if ($p) { \"$($p.WorkingSet64) $($p.TotalProcessorTime.TotalMilliseconds)\" }"
@@ -40,7 +39,6 @@ while (Date.now() - started < seconds * 1000) {
   rssSamples.push(ws);
   if (!first) first = sample;
   last = sample;
-  ticks += 1;
   await new Promise((r) => setTimeout(r, interval * 1000));
 }
 
