@@ -26,9 +26,9 @@
       "kind": "acceptance",
       "budget": null,
       "unit": "boolean",
-      "owning": "索引约 50% 时强杀 → 重启后索引可恢复",
-      "instrumented": false,
-      "plan": "M5 批次 1（强杀脚本，需 spawn-self 助手入口）"
+      "owning": "索引进行中强杀 → 重启后 integrity_check=ok 且重索引后逐表一致（真杀，非模拟）",
+      "instrumented": true,
+      "plan": ""
     },
     {
       "id": "NFR-PERF-02-cold-open",
@@ -67,7 +67,16 @@
       "unit": "ms",
       "owning": "全文搜索响应（后端查询部分）",
       "instrumented": false,
-      "plan": "M5 批次 1（后续 PR）"
+      "plan": "待 M5 批次 1 交付搜索命令后真测；当前只有 FTS 原语 proxy（见下方 proxy 条目）"
+    },
+    {
+      "id": "NFR-PERF-04-search-fts-proxy",
+      "kind": "proxy",
+      "budget": null,
+      "unit": "ms",
+      "owning": "**proxy**：note_fts MATCH 的原语延迟（不含查询构造、排序与 UI 呈现）—— 不作为 NFR-PERF-04 的判据",
+      "instrumented": true,
+      "plan": ""
     },
     {
       "id": "NFR-PERF-10-incremental",
@@ -78,9 +87,9 @@
         "stress": 50
       },
       "unit": "ms",
-      "owning": "索引队列单文件增量处理",
-      "instrumented": false,
-      "plan": "M5 批次 1（后续 PR）"
+      "owning": "单文件增量的写事务路径（含 FTS/链接/标签落库）",
+      "instrumented": true,
+      "plan": ""
     },
     {
       "id": "NFR-PERF-11-external-change",
@@ -106,7 +115,7 @@
       "unit": "MB",
       "owning": "常驻内存（编辑 5 篇）—— 需长驻进程采样",
       "instrumented": false,
-      "plan": "M5 批次 1（采样脚本 + 进程生命周期）"
+      "plan": "M5 批次 2 的采样器已就位（scripts/sample-process.mjs，待接 App 生命周期）"
     },
     {
       "id": "NFR-PERF-14-idle-cpu",
@@ -119,7 +128,7 @@
       "unit": "percent",
       "owning": "空闲 30 秒后的 CPU —— 需长驻进程采样",
       "instrumented": false,
-      "plan": "M5 批次 1（同上）"
+      "plan": "同上"
     },
     {
       "id": "AC-SEARCH-01-04-strict",

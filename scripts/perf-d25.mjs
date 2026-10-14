@@ -71,6 +71,12 @@ for (const item of spec.budgets) {
     continue;
   }
   const v = valueOf(item, kv);
+  if (item.kind === "proxy") {
+    report.items.push({ id: item.id, status: "proxy", value: v, unit: item.unit, raw: kv, owning: item.owning });
+    report.coverage.proxy = (report.coverage.proxy ?? 0) + 1;
+    console.log("  🔬 " + item.id.padEnd(32) + " " + v + " " + item.unit + "（proxy，不计入判优）");
+    continue;
+  }
   // 无预算的验收判据：以 kv.ok === 1 或 cancel-observed=true 之类的显式信号为准
   const okSignal = kv.ok === 1 || kv.ok === true || kv["cancel-observed"] === true;
   const ok = b === null ? okSignal : typeof v === "number" && v <= b;
@@ -80,7 +86,7 @@ for (const item of spec.budgets) {
   else { report.coverage.failed += 1; failed += 1; console.log("  ❌ " + item.id.padEnd(28) + " " + (b === null ? "信号不成立（" + JSON.stringify(kv) + "）" : v + " " + item.unit + " 超出预算 " + b)); }
 }
 
-console.log("\n▶ D-25 覆盖：" + report.coverage.instrumented + " 已达标 / " + report.coverage.failed + " 超预算 / " + report.coverage.pending + " 待接入（共 " + spec.budgets.length + " 条）");
+console.log("\n▶ D-25 覆盖：" + report.coverage.instrumented + " 已达标 / " + report.coverage.failed + " 超预算 / " + (report.coverage.proxy ?? 0) + " proxy / " + report.coverage.pending + " 待接入（共 " + spec.budgets.length + " 条，proxy 不计入判优）");
 if (WRITE) {
   writeFileSync(REPORT, JSON.stringify(report, null, 2) + "\n", "utf8");
   console.log("  报告已写入 " + REPORT);
