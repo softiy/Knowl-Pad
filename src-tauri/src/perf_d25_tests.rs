@@ -293,14 +293,36 @@ fn d25_nfr_perf_10_single_file_incremental() {
     // with_writer 的闭包必须 move（与 index_engine 里的 root_owned 同源）
     let root_owned = root.clone();
     let entry_owned = entry.clone();
-    let started = Instant::now();
-    let indexed = pool
-        .with_writer(move |conn| index_file_mode(conn, &root_owned, &entry_owned, IndexMode::Force))
-        .expect("单文件增量");
-    let ms = started.elapsed().as_millis();
+    // 口径（PRD §6.1.4）：**判定用批内处理时间**（不含索引库持久化）；含提交的墙钟另测并记录。
+    let ms_with_commit = {
+        let root_in = root_owned.clone();
+        let entry_in = entry_owned.clone();
+        let t0 = Instant::now();
+        let ok = pool
+            .with_writer(move |conn| index_file_mode(conn, &root_in, &entry_in, IndexMode::Force))
+            .expect("单文件增量");
+        let wall = t0.elapsed().as_millis();
+        assert!(ok, "增量必须真的写入（返回 false 表示被跳过）");
+        wall
+    };
+    let ms_in_batch = {
+        let root_in = root_owned.clone();
+        let entry_in = entry_owned.clone();
+        let t0 = Instant::now();
+        pool.with_writer(move |conn| {
+            conn.execute_batch("BEGIN IMMEDIATE")
+                .map_err(|e| kp_domain::error::AppError::db_with("开启事务", &e))?;
+            let ok = index_file_mode(conn, &root_in, &entry_in, IndexMode::Force)?;
+            conn.execute_batch("COMMIT")
+                .map_err(|e| kp_domain::error::AppError::db_with("提交事务", &e))?;
+            Ok(ok)
+        })
+        .expect("批内单文件增量");
+        t0.elapsed().as_millis()
+    };
+    let ms = ms_in_batch;
     let _ = &guard;
-    println!("D25 NFR-PERF-10-incremental ms={ms} indexed={indexed} notes={notes}");
-    assert!(indexed, "增量必须真的写入（返回 false 表示被跳过）");
+    println!("D25 NFR-PERF-10-incremental ms={ms} ms_with_commit={ms_with_commit} notes={notes}");
 }
 
 /// **NFR-PERF-04 的 proxy**：搜索**功能在 M5 批次 1 才交付**，因此这里只测它将要用的 FTS5 原语
