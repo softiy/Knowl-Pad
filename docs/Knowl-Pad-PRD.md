@@ -1080,7 +1080,7 @@ FTS5 默认 `unicode61` 分词器按 Unicode 词边界切分，**对中文不分
 | `FR-SEARCH-07` | 点击结果跳转到笔记并**滚动定位到命中位置**，高亮该处 | P0 |
 | `FR-SEARCH-08` | 搜索为增量式：用户输入停顿 200ms 后触发（防抖），支持输入过程中取消上一次未完成的查询 | P0 |
 | `FR-SEARCH-09` | 10000 篇笔记规模下，常规搜索响应 < 200ms（见 NFR-PERF-04） | P0 |
-| `FR-SEARCH-10` | 搜索历史：保留最近 20 条查询（存于全局库），可一键复用、可清空 | P1 |
+| `FR-SEARCH-10` | 搜索历史：保留最近 20 条查询（存于全局库；**跨 Vault 共享**），可一键复用、可清空 | P1 |
 | `FR-SEARCH-11` | 空结果时给出建议（检查拼写、放宽条件、确认索引状态） | P1 |
 
 **高级搜索语法**
@@ -1107,7 +1107,7 @@ FTS5 默认 `unicode61` 分词器按 Unicode 词边界切分，**对中文不分
 
 | 需求 ID | 需求描述 | 优先级 |
 | --- | --- | --- |
-| `FR-SEARCH-40` | `Ctrl/Cmd+O` 快速打开：按文件名模糊搜索笔记（基于 `fuse.js` 7.5.0），不搜正文，响应 < 50ms | P0 |
+| `FR-SEARCH-40` | `Ctrl/Cmd+O` 快速打开：按文件名模糊搜索笔记（匹配由**后端 `search_quick_open`** 承担：零依赖、索引侧；`fuse.js` 仅用于**命令面板**，见 `FR-PALETTE-02`），不搜正文，响应 < 50ms | P0 |
 | `FR-SEARCH-41` | 快速打开支持路径片段匹配（如输入 `work/rep` 命中 `work/2026/report.md`） | P1 |
 
 #### 4.5.2 验收标准
@@ -1651,6 +1651,28 @@ interface KpError {
 | `replace_in_file` ⚠️ | `{ rel_path, matches, replacement }` | `ReplaceResult` | 文件内替换 |
 | `search_history_get` | — | `string[]` | 搜索历史 |
 | `search_history_clear` ⚠️ | — | `null` | 清空历史 |
+
+#### 5.3.4.1 搜索域返回结构（权威定义）
+
+> **来源**：原 §5.3.4 只给出返回类型**名**而未定义字段（与勘误 **D-11**（文件域）/ **D-18**（索引域）同类缺陷）；
+> M3 计划 WP1 第 3 条曾承诺「搜索域 6 命令的形状补进 PRD §5.3.4」，真源里却一直没有这一节（2026-10-14 M5 批次 1 复核发现，见勘误 **D-28**）。
+> 本节为权威定义；字段逐条转写自当前实现 `src-tauri/src/commands/search_view.rs`，IPC 传输键为 **camelCase**（技术方案 §8.4），Rust 结构体内部字段保持 snake_case。
+
+| 结构 | 字段（IPC 键） | 说明 |
+| --- | --- | --- |
+| `SearchResultPage` | `items: SearchResultItem[]`、`total`、`offset`、`limit`、`hasMore` | 一页结果；`total` 为**命中总数**（不是本页条数，大批量必须分页 —— IPC-05）；`hasMore` 供前端决定是否请求下一页 |
+| `SearchResultItem` | `relPath`、`name`、`mtimeMs`、`score`、`hitCount`、`snippets: SearchSnippet[]` | 一条结果；**同一笔记多处命中合并为一条**（FR-SEARCH-05）。`mtimeMs` 为结果显示的修改时间（FR-SEARCH-04）；`score` 为 FTS5 `bm25` 相关度（**负值，越小越相关**，排序口径见 FR-SEARCH-06）；`hitCount` 为合并相邻/重叠后的命中次数；`snippets[0]` 即首个片段（同一份数据不重复传输） |
+| `SearchSnippet` | `lines: SnippetLine[]`、`highlightLine`、`highlightStart`、`highlightEnd` | 命中片段（FR-SEARCH-04：含前后上下文、命中词高亮）。`highlightStart`/`highlightEnd` 相对 `highlightLine` 的文本，**0 基、左闭右开、字符**偏移 —— 与反链片段（`kp_domain::snippet`）同一口径，前端复用同一套高亮渲染 |
+| `SnippetLine` | `line`、`text`、`isHitLine` | 片段中的一行；`line` 为 1 基行号，`isHitLine` 标记命中所在行（该结构的 Rust 侧结构体名为 `SnippetLineView`，IPC 类型名以本表为准） |
+| `QuickOpenItem` | `relPath`、`name`、`score` | 快速打开候选（FR-SEARCH-40/41：**只按文件名/路径匹配，不搜正文**）；`score` 为后端模糊匹配得分（越大越靠前） |
+| `InFileMatch` | `line`、`col`、`lenChars`、`startByte`、`endByte`、`text`、`lineText`、`highlightStart`、`highlightEnd` | 文件内一处命中（FR-SEARCH-30）。`col` 为 1 基**字符**列（中文按 1 个字符算）；`startByte`/`endByte` 为原文中的字节区间，`replace_in_file` 按它落刀（不靠行列二次解析）；`text` 为该处原文，回传时作为**期望原文**用于陈旧检测；`lineText` 为命中所在整行，`highlightStart`/`highlightEnd` 相对 `lineText`（0 基、左闭右开、字符） |
+| `ReplaceResult` | `relPath`、`replaced`、`newMtimeMs` | 文件内替换结果（FR-SEARCH-31）；`replaced` 为实际替换处数（= 通过陈旧检测的目标数；**一处不一致即整体中止**，磁盘零改动） |
+
+> **命令集口径（2026-10-14 项目所有者裁定）**：搜索域**不设** `search_history_add` 命令 —— 真源里从来没有它（§5.3.4 只有 get/clear；M3 计划的「搜索域 6 命令」清单同样列 `replace_in_file` 而非 add）。
+> 历史写入经 `search_fulltext` 的 `options.recordHistory`（**缺省 false**）：① `search_fulltext` 是**只读**命令（未标 ⚠️），缺省即无副作用符合 §5.3 对写操作的约定；
+> ② FR-SEARCH-08 的 200ms 防抖意味着「输入即查询」，若每次都记，历史会被 `知` / `知识` / `知识图` 这类前缀灌满 —— 何时算「用户确认了一次查询」由前端判定。
+
+> **实现状态**：搜索域 6 命令已于 M5 批次 1 第一刀落地（后端 + IPC 契约 + 测试）；本节形状即该实现的逐字段转写。
 
 #### 5.3.5 链接与图谱域（9）
 
@@ -2298,9 +2320,11 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | D-22 | ~~事件表只有 13 个事件，技术方案会 emit `kp://note/updated`/`kp://link/changed` 而 PRD 未定义~~ **本条经复核为误判，已撤回（2026-10-05）**：这两个事件**本就在 §5.4 的事件表中**（事件表共 13 条，M3 复核时的抽取只列了其中与索引相关的 8 条，被错误推广为「PRD 未定义」） | **无需改动**；保留本行作为记录，并提示：**只列子集的抽取结果不能当作全集使用**（教训已写入 M3 计划 §8） | §5.4 事件表 |
 | D-23 | **三处事件载荷口径不一致**（2026-10-05 M3 复核，逐条核对 §5.4 的 13 条事件表后发现）：① `kp://index/failed`——技术方案写有 `detail`（inotify 耗尽的 sysctl 建议），PRD 只有 `code/message/failed_files`；② `kp://note/updated`——PRD 为 `{ rel_path }`，技术方案为 `{ rel_path, mtime_ms }`；③ `kp://link/changed`——PRD 为 `{ affected_files }`，技术方案为 `{ rel_path }` | 以 **PRD 为准**（EVT-03 要求载荷只含路径与元信息，且前端契约以 PRD 定义为准）：`index/failed` 的 sysctl 建议并入 `message`、`note/updated` 不带 `mtime_ms`、`link/changed` 用 `affected_files`；**技术方案侧需同步标注**，实现时不得引入 PRD 未定义的字段 | §5.4 事件表、EVT-03、技术方案 §5.4 |
 | D-24 | 附录 B 的 **B-25**（远程图片 `![](https://…)` 不自动加载、显示占位符）在 M3 无法落地：它依赖附件域（SEC-08 / FR-ATTACH-11） | 正式**顺延至 M6（附件域）**；M3 的准确率分母仍按附录 B 的 **25 条**计（清点测试 `appendix_b_inventory_has_no_gap` 对着本表数满 25 条：21 条解析夹具 + 3 条索引层用例 + 1 条本顺延），**不得**用"实际夹具条数"当分母 | 附录 B、§9.1 M3 行 |
-| D-25 | **顺延缺少接收方**（2026-10-07 M1/M3 独立复核发现）：AC-VAULT-01 的解析断言、AC-VAULT-05、AC-REL-02、NFR-PERF-02/03/04/10/11/13/14 与 AC-SEARCH-01/04 的严格阈值被顺延，但 **§9.1 的 M5 行没有列出它们、也无任何勘误** —— 顺延在真相源里"看起来没发生" | 正式登记：**上述全部条目由 M5 接收**，M5 的 DoD 以本行为准（"AC-SEARCH 全通过"扩写为"AC-SEARCH-01/04（含严格阈值）+ 下列 M1/M3 顺延项全通过"）。接收方式：三档规模夹具（标准/大/超大）+ 冷启动与索引耗时测量 + 内存/空闲 CPU 采样 + 强杀脚本 + 20000 篇进度与取消事件断言 | §9.1 的 M5 行、§6.1.2、§6.2、§6.3 |
+| D-25 | **顺延缺少接收方**（2026-10-07 M1/M3 独立复核发现）：AC-VAULT-01 的解析断言、AC-VAULT-05、AC-REL-02、NFR-PERF-02/03/04/10/11/13/14 与 AC-SEARCH-01/04 的严格阈值被顺延，但 **§9.1 的 M5 行没有列出它们、也无任何勘误** —— 顺延在真相源里"看起来没发生" | 正式登记：**上述全部条目由 M5 接收**，M5 的 DoD 以本行为准（"AC-SEARCH 全通过"扩写为"AC-SEARCH-01/04（含严格阈值）+ 下列 M1/M3 顺延项全通过"）。接收方式：三档规模夹具（标准/大/超大）+ 冷启动与索引耗时测量 + 内存/空闲 CPU 采样 + 强杀脚本 + 20000 篇进度与取消事件断言；**并追加 AC-SEARCH-05（语法错误提示）**（2026-10-14 由勘误 **D-29** 裁定，与 §9.1 的「AC-SEARCH 全通过」一致） | §9.1 的 M5 行、§6.1.2、§6.2、§6.3 |
 | D-26 | **`FR-LINK-16` 的里程碑归属只存在于指针文件里**（2026-10-13 立批次 0 计划时发现）：PRD 第 1022 行只有需求行（**P2**），§9.1 的 M5 行未提"未链接提及"，勘误表也没有它；唯一把它写成 M5 的是 `docs/AGENTS.md` §10 —— 而按 AGENTS §1，**指针文件不得定义需求**，即"归属在需求真相源里看起来没发生" | **正式登记归属：`FR-LINK-16`「未链接提及」由 M5 接收**（与标签域同期的链接类只读能力）。同时写入 §9.1 的 M5 交付物与 §9.1.1 覆盖表；`docs/AGENTS.md` §10 的表述随之合法化（不再是指针文件定义需求） | §9.1 的 M5 行、§9.1.1、FR-LINK-16 |
 | D-27 | **性能指标的口径未定义，导致"同一数字两种结论"**（2026-10-13 M5 性能设施阶段发现）：`NFR-PERF-10` 的实测在 **34–77 ms** 间摆动（预算 50 ms），差额主要来自**是否把索引库的持久化落盘计入**；`NFR-PERF-13/14` 未说明是否含 WebView 子进程；`NFR-PERF-11` 的"到 UI 反映"未说明自动判据止于何处 | 新增 **§6.1.4 度量口径**：逐条写明起点/终点/含与不含，并规定 `NFR-PERF-10` 判定用**批内处理时间**（持久化另测不判定，理由见该节）、`NFR-PERF-13/14` 按**进程树合计**、`NFR-PERF-11` 自动判据止于**事件 emit**。`perf/d25-budgets.json` 的 `scope` 字段与 M5 计划 §7.1 同步该口径 | §6.1.2、§6.1.4、NFR-PERF-10/11/13/14 |
+| D-28 | **搜索域只给出返回类型名、从未定义字段**（与 **D-11**（文件域）/ **D-18**（索引域）同类缺陷）：§5.3.4 的 4 个返回类型（`SearchResultPage`/`QuickOpenItem`/`InFileMatch`/`ReplaceResult`）没有任何字段定义；M3 计划 WP1 第 3 条与第 73 行承诺的「形状补进 PRD §5.3.4」**从未兑现**（2026-10-14 M5 批次 1 第一刀复核发现） | 契约不完整会让 TS 与 Rust 各自臆造形状而漂移（门禁 17 只校验命令名，不校验结构）。**处置**：新增 **§5.3.4.1**，照 §5.3.2.1 的模板逐字段定义，字段转写自当前实现 `src-tauri/src/commands/search_view.rs` 并逐条注明需求出处 | §5.3.4 / §5.3.4.1、D-11、D-18、M3 计划 WP1 |
+| D-29 | **AC-SEARCH-05 是否属 M5 的 DoD，两种读法都成立**（2026-10-14 M5 批次 1 第一刀复核发现）：§9.1 的 M5 行写「AC-SEARCH 全通过」（含 AC-SEARCH-05「语法错误提示」），而勘误 **D-25** 把它收窄为「AC-SEARCH-01/04（含严格阈值）+ 顺延项」，未提 05 | **裁定：AC-SEARCH-05 属于 M5 的 DoD**（它是「高级语法」的必要配套：FR-SEARCH-27 要求未闭合引号给出明确提示、**不得**静默返回）。**处置**：D-25 行的接收清单追加 AC-SEARCH-05；「AC-SEARCH-01/04 含严格阈值」的既有口径不变 | §9.1 的 M5 行、D-25、AC-SEARCH-05、FR-SEARCH-27 |
 
 ---
 

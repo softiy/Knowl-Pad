@@ -667,7 +667,7 @@ CodeMirror 体系的语言支持分三层，覆盖面差异很大：
 | `cytoscape-fcose` | `2.2.0` | 大图力导向布局 | ✅ 2026-09-19 核实；peerDep 为 `cytoscape ^3.2.0`，与 `3.34.3` 兼容。fCoSE 为 Bilkent 大学针对大规模图优化，优于 `cytoscape-cola`/`cytoscape-dagre`（后者列为备选） |
 | `@tanstack/vue-virtual` | `3.13.39` | 文件树/搜索结果的虚拟滚动 | ✅ **新增选型**（原缺项）：支撑 G6「1 万条列表 ≥55fps」。Headless 组合式 API、`sideEffects: false` 可完全 tree-shake；备选 `vue-virtual-scroller 3.0.5`（组件式，原生支持动态高度） |
 | `dayjs` | `1.11.23` | 时间显示、相对时间、回收站按月目录命名 | ✅ **新增选型**（原缺项）：核心 gzip ≈3KB，按需加载 `timezone`/`locale` 插件；备选 `date-fns 4.4.0`（tree-shake 更彻底）、`luxon 3.7.2`（体积过重，不采用） |
-| `fuse.js` | `7.5.0` | 命令面板/快速打开模糊匹配 | 纯前端，不走 IPC（PRD FR-PALETTE-10） |
+| `fuse.js` | `7.5.0` | **命令面板**模糊匹配 | 纯前端，不走 IPC（PRD **FR-PALETTE-10** 原文：命令面板「本地模糊匹配，不走 IPC」）；**快速打开的匹配不在前端** —— 由后端 `search_quick_open` 承担（PRD FR-SEARCH-40，2026-10-14 裁定） |
 | `vue-draggable-next` | `2.3.0` | 拖拽排序 | 替换已停更的 `vuedraggable`（SEC-06 / R-16） |
 
 ### 3.3 TypeScript 6.0 配置
@@ -4195,7 +4195,7 @@ PRD §6.1.2 定义 16 项指标（`NFR-PERF-01`~`16`），基准数据集见 PRD
 | `NFR-PERF-02` 打开 Vault | `vault_open` 调用 → 文件树首次渲染完成 | 前端埋点（`onMounted` 后 `requestAnimationFrame`） |
 | `NFR-PERF-03` 全量索引 | `kp://index/completed` 事件的 `duration_ms` | Rust 侧计时（`Instant`） |
 | `NFR-PERF-04` 搜索响应 | 输入停顿（debounce 结束）→ 结果 DOM 呈现 | 前端 `performance.mark` |
-| `NFR-PERF-05` 快速打开 | 按下 `Ctrl+O` → 候选列表首屏渲染完成 | 前端 `performance.mark`（fuse.js 匹配耗时单独记录） |
+| `NFR-PERF-05` 快速打开 | 按下 `Ctrl+O` → 候选列表首屏渲染完成；**= 后端 `search_quick_open` 耗时 + 前端首屏渲染** | **分两段记录**：① Rust 侧 `Instant` 计后端 `search_quick_open`（索引查询 + 模糊打分）② 前端 `performance.mark` 计候选列表首屏渲染；判定取两段**合计**（PRD FR-SEARCH-40：匹配归后端，fuse.js 仅用于命令面板） |
 | `NFR-PERF-06` 打开笔记 | 点击文件树节点 → CodeMirror 可接受输入 | 前端埋点（编辑器 `focus` 事件） |
 | `NFR-PERF-07` 输入延迟 | 按键 `keydown` → 对应字符渲染的 `requestAnimationFrame` 回调 | 前端埋点（连续 100 次取 **P95**） |
 | `NFR-PERF-08` 反向链接面板 | 切换笔记 → 反链面板列表渲染完成（500 条夹具） | 前端埋点；SQL 侧另记 `idx_link_dst` 查询耗时 |
