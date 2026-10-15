@@ -17,6 +17,7 @@ use kp_domain::error::AppError;
 use kp_domain::md_parse;
 use kp_domain::tokenize;
 
+use crate::index_sql;
 use crate::storage::pool::DbPool;
 
 // ── 扫描侧已拆到 index_scan.rs（CODE-11 硬上限）；这里重新导出，既有调用路径不变 ──
@@ -104,39 +105,55 @@ pub fn index_file_mode(
 
     // 旧 rowid（note_fts 的 rowid 与 file.id 对齐）必须在删 file 之前取
     let t = start();
-    let old_id: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM file WHERE rel_path = ?1",
-            params![entry.rel_path],
-            |r| r.get(0),
-        )
-        .ok();
+    let old_id: Option<i64> = {
+        let mut stmt = conn
+            .prepare_cached(index_sql::OLD_FILE_ID_SQL)
+            .map_err(|e| AppError::db_with("准备读取旧文件行", &e))?;
+        stmt.query_row(params![entry.rel_path], |r| r.get(0)).ok()
+    };
     if let Some(id) = old_id {
-        conn.execute("DELETE FROM note_fts WHERE rowid = ?1", params![id])
+        let mut stmt = conn
+            .prepare_cached(index_sql::FTS_DELETE_SQL)
+            .map_err(|e| AppError::db_with("准备清理旧 FTS 行", &e))?;
+        stmt.execute(params![id])
             .map_err(|e| AppError::db_with("清理旧 FTS 行", &e))?;
-        conn.execute("DELETE FROM file WHERE id = ?1", params![id])
+        let mut stmt = conn
+            .prepare_cached(index_sql::FILE_DELETE_SQL)
+            .map_err(|e| AppError::db_with("准备清理旧文件行", &e))?;
+        stmt.execute(params![id])
             .map_err(|e| AppError::db_with("清理旧文件行", &e))?;
     }
     stop(t, Phase::DeleteOld);
 
     let (name, stem, ext) = split_name(&entry.rel_path);
     let t = start();
-    conn.execute(
-        "INSERT INTO file (rel_path, name, stem, ext, kind, size_bytes, mtime_ms, content_hash, deleted, indexed_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)",
-        params![entry.rel_path, name, stem, ext, kind, entry.size_bytes as i64, entry.mtime_ms, fingerprint, now],
-    )
-    .map_err(|e| AppError::db_with("写入文件行", &e))?;
+    {
+        let mut stmt = conn
+            .prepare_cached(index_sql::FILE_INSERT_SQL)
+            .map_err(|e| AppError::db_with("准备写入文件行", &e))?;
+        stmt.execute(params![
+            entry.rel_path,
+            name,
+            stem,
+            ext,
+            kind,
+            entry.size_bytes as i64,
+            entry.mtime_ms,
+            fingerprint,
+            now
+        ])
+        .map_err(|e| AppError::db_with("写入文件行", &e))?;
+    }
     let file_id = conn.last_insert_rowid();
     stop(t, Phase::FileRow);
 
     if is_note {
         let t = start();
-        conn.execute(
-            "INSERT INTO note_fts(rowid, plain_text) VALUES (?1, ?2)",
-            params![file_id, indexed_text],
-        )
-        .map_err(|e| AppError::db_with("写入全文索引", &e))?;
+        let mut stmt = conn
+            .prepare_cached(index_sql::FTS_INSERT_SQL)
+            .map_err(|e| AppError::db_with("准备写入全文索引", &e))?;
+        stmt.execute(params![file_id, indexed_text])
+            .map_err(|e| AppError::db_with("写入全文索引", &e))?;
         stop(t, Phase::Fts);
     }
 
@@ -148,14 +165,6 @@ pub fn index_file_mode(
     stop(t, Phase::Derived);
     Ok(true)
 }
-
-/// 标签写入用的三条 SQL（提到常量：`prepare_cached` 按 SQL 文本做键，文本必须逐字一致）。
-const TAG_UPSERT_SQL: &str =
-    "INSERT INTO tag (norm, display, depth, is_leaf, ref_count) VALUES (?1, ?2, ?3, ?4, 0) \
-     ON CONFLICT(norm) DO UPDATE SET display = excluded.display, depth = excluded.depth, is_leaf = excluded.is_leaf";
-const TAG_SELECT_ID_SQL: &str = "SELECT id FROM tag WHERE norm = ?1";
-const FILE_TAG_INSERT_SQL: &str =
-    "INSERT INTO file_tag (file_id, tag_id, line, col) VALUES (?1, ?2, ?3, ?4)";
 
 /// 把解析结果写入派生表（标题 / 块 ID / 链接 / 标签 / 别名）。
 ///
@@ -169,36 +178,88 @@ fn insert_note_derived(
     use crate::index_profile::{start, stop, Phase};
     let t = start();
     for (i, h) in note.headings.iter().enumerate() {
-        conn.execute(
-        "INSERT INTO heading (file_id, level, text, anchor, line, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![file_id, h.level as i64, h.text, h.text, h.line as i64, i as i64],
-    )
-    .map_err(|e| AppError::db_with("写入标题", &e))?;
+        let mut stmt = conn
+            .prepare_cached(index_sql::HEADING_INSERT_SQL)
+            .map_err(|e| AppError::db_with("准备写入标题", &e))?;
+        stmt.execute(params![
+            file_id,
+            h.level as i64,
+            h.text,
+            h.text,
+            h.line as i64,
+            i as i64
+        ])
+        .map_err(|e| AppError::db_with("写入标题", &e))?;
     }
     stop(t, Phase::Heading);
     let t = start();
     for b in &note.block_ids {
-        conn.execute(
-        "INSERT OR IGNORE INTO block_id (file_id, bid, line_start, line_end) VALUES (?1, ?2, ?3, ?4)",
-        params![file_id, b.id, b.start_line as i64, b.end_line as i64],
-    )
-    .map_err(|e| AppError::db_with("写入块 ID", &e))?;
+        let mut stmt = conn
+            .prepare_cached(index_sql::BLOCK_ID_INSERT_SQL)
+            .map_err(|e| AppError::db_with("准备写入块 ID", &e))?;
+        stmt.execute(params![
+            file_id,
+            b.id,
+            b.start_line as i64,
+            b.end_line as i64
+        ])
+        .map_err(|e| AppError::db_with("写入块 ID", &e))?;
     }
     stop(t, Phase::BlockId);
+    insert_links(conn, file_id, note)?;
+    insert_tags(conn, file_id, note)?;
+    let t = start();
+    if let Some(fm) = note.frontmatter.as_ref() {
+        for alias in &fm.aliases {
+            let mut stmt = conn
+                .prepare_cached(index_sql::ALIAS_INSERT_SQL)
+                .map_err(|e| AppError::db_with("准备写入别名", &e))?;
+            stmt.execute(params![file_id, alias])
+                .map_err(|e| AppError::db_with("写入别名", &e))?;
+        }
+    }
+    stop(t, Phase::Alias);
+    Ok(())
+}
+
+/// `link` 表：每条链接一行。SQL 与语义未变，只是走预编译语句缓存（见 `index_sql`）。
+fn insert_links(
+    conn: &Connection,
+    file_id: i64,
+    note: &md_parse::ParsedNote,
+) -> Result<(), AppError> {
+    use crate::index_profile::{start, stop, Phase};
     let t = start();
     for l in &note.links {
         let kind = match l.kind {
             md_parse::LinkKind::Embed => "embed",
             md_parse::LinkKind::Link => "link",
         };
-        conn.execute(
-        "INSERT INTO link (src_file_id, dst_file_id, target_ref, anchor, alias, link_kind, status, line, col) \
-         VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'dangling', ?6, ?7)",
-        params![file_id, l.target, l.anchor, l.alias, kind, l.line as i64, l.col as i64],
-    )
-    .map_err(|e| AppError::db_with("写入链接", &e))?;
+        let mut stmt = conn
+            .prepare_cached(index_sql::LINK_INSERT_SQL)
+            .map_err(|e| AppError::db_with("准备写入链接", &e))?;
+        stmt.execute(params![
+            file_id,
+            l.target,
+            l.anchor,
+            l.alias,
+            kind,
+            l.line as i64,
+            l.col as i64
+        ])
+        .map_err(|e| AppError::db_with("写入链接", &e))?;
     }
     stop(t, Phase::Link);
+    Ok(())
+}
+
+/// `tag` + `file_tag`：每条标签一行。决策留痕（RETURNING 被实测否掉、改用缓存）见下方注释。
+fn insert_tags(
+    conn: &Connection,
+    file_id: i64,
+    note: &md_parse::ParsedNote,
+) -> Result<(), AppError> {
+    use crate::index_profile::{start, stop, Phase};
     // 注意：下面的循环变量历史上就叫 t —— 计时 token 改名以免与它混淆
     let t_tags = start();
     for t in &note.tags {
@@ -218,7 +279,7 @@ fn insert_note_derived(
         let t_upsert = start();
         {
             let mut stmt = conn
-                .prepare_cached(TAG_UPSERT_SQL)
+                .prepare_cached(index_sql::TAG_UPSERT_SQL)
                 .map_err(|e| AppError::db_with("准备标签写入", &e))?;
             stmt.execute(params![
                 t.norm,
@@ -232,7 +293,7 @@ fn insert_note_derived(
         let t_select = start();
         let tag_id: i64 = {
             let mut stmt = conn
-                .prepare_cached(TAG_SELECT_ID_SQL)
+                .prepare_cached(index_sql::TAG_SELECT_ID_SQL)
                 .map_err(|e| AppError::db_with("准备读取标签 id", &e))?;
             stmt.query_row(params![t.norm], |r| r.get(0))
                 .map_err(|e| AppError::db_with("读取标签 id", &e))?
@@ -241,7 +302,7 @@ fn insert_note_derived(
         let t_filetag = start();
         {
             let mut stmt = conn
-                .prepare_cached(FILE_TAG_INSERT_SQL)
+                .prepare_cached(index_sql::FILE_TAG_INSERT_SQL)
                 .map_err(|e| AppError::db_with("准备文件标签关联", &e))?;
             stmt.execute(params![file_id, tag_id, t.line, t.col as i64])
                 .map_err(|e| AppError::db_with("写入文件标签关联", &e))?;
@@ -249,17 +310,6 @@ fn insert_note_derived(
         stop(t_filetag, Phase::TagFileTag);
     }
     stop(t_tags, Phase::Tag);
-    let t = start();
-    if let Some(fm) = note.frontmatter.as_ref() {
-        for alias in &fm.aliases {
-            conn.execute(
-                "INSERT OR IGNORE INTO file_alias (file_id, alias) VALUES (?1, ?2)",
-                params![file_id, alias],
-            )
-            .map_err(|e| AppError::db_with("写入别名", &e))?;
-        }
-    }
-    stop(t, Phase::Alias);
     Ok(())
 }
 
