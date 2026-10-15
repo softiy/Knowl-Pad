@@ -5,9 +5,16 @@ mod error_wrapper;
 mod index_engine;
 #[cfg(test)]
 mod index_engine_tests;
+// 分项计时（只测量、缺省关闭）：非 test-only —— 生产构建里也在，插桩点是"关掉即几乎零开销"。
+// 生产只用到 start/stop/count_file；**控制与读取 API**（enable/reset/ms/all_ms/files/PHASE_NAMES）
+// 由 D25 的分项计时用例消费，故只在非 test 构建里豁免 dead_code（不是全局豁免）。
+#[cfg_attr(not(test), allow(dead_code))]
+mod index_profile;
 #[cfg(test)]
 mod index_reliability_tests;
 mod index_resolve;
+// 扫描侧（遍历/元信息/命名/指纹）—— 从 index_engine 拆出（CODE-11 硬上限）
+mod index_scan;
 mod index_watch;
 mod index_watch_events;
 mod index_watch_paths;

@@ -709,3 +709,42 @@ fn d25_ac_search_01_strict_chinese_search() {
         page.total
     );
 }
+/// **NFR-PERF-03 的分项计时**（M5 批次 5 定位用；**只测量，不改行为**）。
+///
+/// 预算与判据**一律不动**：本用例不判优，只把首次全量索引拆成阶段打印出来，供定位
+/// 「标准档 16807 ms > 预算 10000 ms」。阶段口径见 `index_profile` 的模块注释
+/// （各阶段串行累加、互不重叠；唯一例外是 `resolve` 覆盖它内部的子阶段与提交）。
+///
+/// 插桩开销：关闭时每个点只做一次 relaxed 原子读；本用例开启后每篇约 20 次 `Instant::now()`
+/// （合计微秒级），相对单篇毫秒级耗时**可忽略**，且**不改变任何索引参数**。
+///
+/// ⚠️ **必须单独跑**：计数器是进程级全局状态，并行时会统计到别的用例的索引工作。
+/// 正确跑法：`cargo test -p knowl-pad --locked d25_nfr_perf_03_breakdown -- --nocapture --test-threads=1`。
+#[test]
+fn d25_nfr_perf_03_breakdown() {
+    let notes = d25_notes_arg();
+    let (guard, root) = d25_vault(notes);
+    let pool = pool_for(&root);
+    let _lock = crate::index_profile::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    crate::index_profile::reset();
+    crate::index_profile::enable(true);
+    let started = Instant::now();
+    let outcome = full_index_cancellable(&pool, &root, |_, _| {}, IndexMode::Force, || false)
+        .expect("全量索引");
+    let total_ms = started.elapsed().as_millis() as u64;
+    crate::index_profile::enable(false);
+    let files = crate::index_profile::files().max(1);
+    let per_file_us = total_ms * 1000 / files;
+    let phases: Vec<String> = crate::index_profile::all_ms()
+        .into_iter()
+        .map(|(name, ms)| format!("{name}_ms={ms}"))
+        .collect();
+    let _ = &guard;
+    println!(
+        "D25 NFR-PERF-03-breakdown ms={total_ms} engine_ms={} notes={notes} files={files} us_per_file={per_file_us} {}",
+        outcome.duration_ms,
+        phases.join(" ")
+    );
+}

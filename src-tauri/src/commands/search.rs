@@ -63,8 +63,14 @@ pub const MAX_CONTEXT_LINES: usize = 20;
 /// 数字同步登记在 PRD §5.3.4.3 与 perf/d25-budgets.json 的 NFR-PERF-04-line-filter 条目。
 pub const MAX_LINE_FILTER_CANDIDATES: usize = 300;
 /// 候选数超限时的提示文案（与语法错误共用 E_SEARCH_SYNTAX 的「显示语法提示」通道）。
-pub const TOO_MANY_LINE_CANDIDATES: &str =
-    "line: 的候选笔记过多，请先缩小范围（加上关键词，或用 path: / tag: 限定）后再试";
+///
+/// **必须报出「当前多少条、上限多少条」**（M5 计划 §7.2 第 5 步）：只说"太多了"用户不知道自己
+/// 离门槛有多远 —— 差 1 条与差 100 倍，该加一个词还是该换查询，是完全不同的动作。
+pub fn too_many_line_candidates(candidates: usize, max: usize) -> String {
+    format!(
+        "line: 的候选笔记过多（当前 {candidates} 条、上限 {max} 条），请先缩小范围（加上关键词，或用 path: / tag: 限定）后再试"
+    )
+}
 
 /// 全文搜索选项（PRD §5.3.4 的 options）。字段逐个注明需求出处。
 #[derive(Debug, Clone, Default, Deserialize)]
