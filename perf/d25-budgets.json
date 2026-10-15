@@ -68,7 +68,7 @@
       "owning": "**空库上的**首次全量索引（含分词与 FTS 构建）。jieba 词典加载是一次性启动成本（应用启动时后台预热，见 main.rs），**不计入**本条",
       "instrumented": true,
       "plan": "",
-      "scope": "起点=命令入口 `full_index_cancellable`（索引库是**一次性空库**，不是夹具目录里的库）；终点=全量写入完成；含分词与 FTS。判据源 `D25 NFR-PERF-03-first-index ms=… scope=fresh-db`。**重建**（库已存在、含逐行删旧）另列 `NFR-PERF-03-rebuild`，**不并入**本条判优（口径见勘误 D-35）。**环境**：本条的实测值来自非基准机（见顶层 environment），**判定必须在 PRD §6.1.1 的基准环境复测后才能定论**"
+      "scope": "起点=命令入口 `full_index_cancellable`（索引库是**一次性空库**，不是夹具目录里的库）；终点=全量写入完成；含分词与 FTS。判据源 `D25 NFR-PERF-03-first-index ms=… scope=fresh-db`。**重建**（库已存在、含逐行删旧）另列 `NFR-PERF-03-rebuild`，**不并入**本条判优（口径见勘误 D-35）。**环境**：本条的实测值来自非基准机（见顶层 environment），**判定必须在 PRD §6.1.1 的基准环境复测后才能定论**。**归因更正（2026-10-15）**：`fts` 阶段**无可归因于 prepare_cached 的收益** —— 对照实验（`d25_nfr_perf_03_fts_write_breakdown`）实测该语句上 prepare 成本 ≈ 0（每次 `prepare_cached` 143.0 µs/行 vs 每次重新 prepare 143.1 µs/行，差 0.1%），批量写法同样不摊销（136.0 µs/行），约 96% 是 FTS5 倒排与阴影表的真实写入；先前把该阶段的 −7%~−10% 记为缓存收益属**归因不成立**，应记为运行间漂移"
     },
     {
       "id": "NFR-PERF-03-rebuild",
