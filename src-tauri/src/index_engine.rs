@@ -149,6 +149,14 @@ pub fn index_file_mode(
     Ok(true)
 }
 
+/// 标签写入用的三条 SQL（提到常量：`prepare_cached` 按 SQL 文本做键，文本必须逐字一致）。
+const TAG_UPSERT_SQL: &str =
+    "INSERT INTO tag (norm, display, depth, is_leaf, ref_count) VALUES (?1, ?2, ?3, ?4, 0) \
+     ON CONFLICT(norm) DO UPDATE SET display = excluded.display, depth = excluded.depth, is_leaf = excluded.is_leaf";
+const TAG_SELECT_ID_SQL: &str = "SELECT id FROM tag WHERE norm = ?1";
+const FILE_TAG_INSERT_SQL: &str =
+    "INSERT INTO file_tag (file_id, tag_id, line, col) VALUES (?1, ?2, ?3, ?4)";
+
 /// 把解析结果写入派生表（标题 / 块 ID / 链接 / 标签 / 别名）。
 ///
 /// 抽取自 `index_file_mode`：CODE-11 的函数级上限是 100 SLOC，原函数已到 113。
@@ -195,22 +203,50 @@ fn insert_note_derived(
     let t_tags = start();
     for t in &note.tags {
         let depth = t.name.split('/').count() as i64;
-        conn.execute(
-        "INSERT INTO tag (norm, display, depth, is_leaf, ref_count) VALUES (?1, ?2, ?3, ?4, 0) \
-         ON CONFLICT(norm) DO UPDATE SET display = excluded.display, depth = excluded.depth, is_leaf = excluded.is_leaf",
-        params![t.norm, t.name, depth, if t.is_leaf { 1 } else { 0 }],
-    )
-    .map_err(|e| AppError::db_with("写入标签", &e))?;
-        let tag_id: i64 = conn
-            .query_row("SELECT id FROM tag WHERE norm = ?1", params![t.norm], |r| {
-                r.get(0)
-            })
-            .map_err(|e| AppError::db_with("读取标签 id", &e))?;
-        conn.execute(
-            "INSERT INTO file_tag (file_id, tag_id, line, col) VALUES (?1, ?2, ?3, ?4)",
-            params![file_id, tag_id, t.line, t.col as i64],
-        )
-        .map_err(|e| AppError::db_with("写入文件标签关联", &e))?;
+        // 两段式：先 upsert 标签行，再取回它的 id。
+        //
+        // **RETURNING 变体实测更慢，已回退**（2026-10-15，标准档 3000 篇、两轮对照）：
+        // 把两条语句合成「INSERT … ON CONFLICT … DO UPDATE … RETURNING id」后，
+        // tag 阶段 4541 / 4647 ms ⟶ **5787 / 5792 ms（+25%）**，而同一实验里 parse / link /
+        // resolve 三个阶段逐轮几乎不变（对照组）⇒ 退化可归因于 RETURNING 本身，不是机器变慢。
+        // 于是恢复两段式，并加细分计时（upsert / select / file_tag）定位真正的开销。
+        // **预编译语句缓存**（rusqlite 的 prepare_cached）：SQL 文本与结果语义**完全不变**，
+        // 只是不再每次调用都重新 parse/codegen。依据见细分计时：单条"按唯一索引取 id"的 SELECT
+        // 实测 63 µs/条（946 ms ÷ 15000 条），远超已编译语句应有的量级 ⇒ 开销在 prepare 上。
+        // prepare_cached 在同一连接上按 SQL 文本复用语句（SQLITE_PREPARE_PERSISTENT），
+        // 作用域结束后自动归还（见 rusqlite/src/cache.rs 的 cache_stmt）。
+        let t_upsert = start();
+        {
+            let mut stmt = conn
+                .prepare_cached(TAG_UPSERT_SQL)
+                .map_err(|e| AppError::db_with("准备标签写入", &e))?;
+            stmt.execute(params![
+                t.norm,
+                t.name,
+                depth,
+                if t.is_leaf { 1 } else { 0 }
+            ])
+            .map_err(|e| AppError::db_with("写入标签", &e))?;
+        }
+        stop(t_upsert, Phase::TagUpsert);
+        let t_select = start();
+        let tag_id: i64 = {
+            let mut stmt = conn
+                .prepare_cached(TAG_SELECT_ID_SQL)
+                .map_err(|e| AppError::db_with("准备读取标签 id", &e))?;
+            stmt.query_row(params![t.norm], |r| r.get(0))
+                .map_err(|e| AppError::db_with("读取标签 id", &e))?
+        };
+        stop(t_select, Phase::TagSelect);
+        let t_filetag = start();
+        {
+            let mut stmt = conn
+                .prepare_cached(FILE_TAG_INSERT_SQL)
+                .map_err(|e| AppError::db_with("准备文件标签关联", &e))?;
+            stmt.execute(params![file_id, tag_id, t.line, t.col as i64])
+                .map_err(|e| AppError::db_with("写入文件标签关联", &e))?;
+        }
+        stop(t_filetag, Phase::TagFileTag);
     }
     stop(t_tags, Phase::Tag);
     let t = start();

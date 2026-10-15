@@ -56,6 +56,11 @@ use state::AppState;
 /// 抽取自 `fn main` 的 `.setup` 闭包：CODE-11 的函数级上限是 100 SLOC，原 `fn main` 已到 131。
 /// 返回类型与 Tauri 的 setup 闭包一致，因此可以直接作为闭包体调用。
 fn setup_app(app: &mut tauri::App, smoke: bool) -> Result<(), Box<dyn std::error::Error>> {
+    // 分词词典预热：≈0.5 s 的一次性成本（实测于 NFR-PERF-03 的分项计时）放到**后台线程**，
+    // 免得它落在"第一次索引/第一次搜索"的耗时里。
+    // 为什么是后台线程而不是同步调用：NFR-PERF-02（冷启动 < 800 ms）会被这 0.5 s 吃掉一大半。
+    // 行为不变：预热只做一次词典加载，分词结果与不预热时逐字节一致（tokenize::warm_up 的用例锁定）。
+    std::thread::spawn(kp_domain::tokenize::warm_up);
     // 全局库（global.db）：配置目录必须经 Tauri path API 取得（PRD §2.4 实现约束）
     {
         use tauri::Manager;

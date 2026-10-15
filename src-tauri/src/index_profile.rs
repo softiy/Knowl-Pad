@@ -14,8 +14,12 @@
 //! println!("{:?}", all_ms());                    // [(阶段名, 毫秒), ...]
 //! ```
 //!
-//! **口径**：阶段耗时是**串行累加**的墙钟时间（各阶段互不重叠，唯一的例外是
-//! `resolve` 覆盖它内部的 `resolve_links` / `recount_tags` / `txn_commit`）。
+//! **口径**：阶段耗时是**串行累加**的墙钟时间。多数阶段互不重叠，但**有两组父子关系**
+//! （父项覆盖其子项，统计总量时不要重复计）：
+//! - `resolve` ⊃ `resolve_links` / `recount_tags` / 那一次 `txn_commit`；
+//! - `derived` ⊃ `heading` / `block_id` / `link` / `tag` / `alias`，而
+//!   `tag` ⊃ `tag_upsert` / `tag_select` / `tag_file_tag`。
+//!
 //! 各阶段之和**不等于**总耗时：差额是分批循环本身的编排开销（channel 往返、
 //! `chunks()` 遍历、进度回调），这正好让"还有多少没被归因"可被审计。
 
@@ -64,9 +68,15 @@ pub enum Phase {
     ResolveLinks = 17,
     /// `recount_tags`
     RecountTags = 18,
+    /// `tag` 表的 upsert（`tag` 阶段的一部分）
+    TagUpsert = 19,
+    /// `SELECT id FROM tag WHERE norm = ?`（`tag` 阶段的一部分）
+    TagSelect = 20,
+    /// `file_tag` 行写入（`tag` 阶段的一部分）
+    TagFileTag = 21,
 }
 
-const PHASE_COUNT: usize = 19;
+const PHASE_COUNT: usize = 22;
 
 /// 阶段名（下标与 `Phase` 的判别值一致）。
 pub const PHASE_NAMES: [&str; PHASE_COUNT] = [
@@ -89,6 +99,9 @@ pub const PHASE_NAMES: [&str; PHASE_COUNT] = [
     "resolve",
     "resolve_links",
     "recount_tags",
+    "tag_upsert",
+    "tag_select",
+    "tag_file_tag",
 ];
 
 /// 计数器是**进程级全局状态**（写入发生在数据库写线程上，不能改成 thread-local）。
@@ -214,6 +227,8 @@ mod tests {
         assert_eq!(PHASE_NAMES[Phase::Scan as usize], "scan");
         assert_eq!(PHASE_NAMES[Phase::TxnCommit as usize], "txn_commit");
         assert_eq!(PHASE_NAMES[Phase::RecountTags as usize], "recount_tags");
+        assert_eq!(PHASE_NAMES[Phase::TagUpsert as usize], "tag_upsert");
+        assert_eq!(PHASE_NAMES[Phase::TagFileTag as usize], "tag_file_tag");
         assert_eq!(all_ms().len(), PHASE_COUNT);
     }
 }

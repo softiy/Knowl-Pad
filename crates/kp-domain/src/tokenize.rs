@@ -20,6 +20,17 @@ pub fn jieba() -> &'static Arc<Jieba> {
     JIEBA.get_or_init(|| Arc::new(Jieba::new()))
 }
 
+/// **预热**：把词典加载的一次性成本（实测 ≈0.5 s，见 NFR-PERF-03 分项计时）提前到调用点。
+///
+/// 为什么需要它：这笔成本原本落在**第一次分词**上 —— 也就是第一次索引或第一次搜索的耗时里。
+/// 应用启动时在后台线程调一次，用户触发索引/搜索时词典已经就绪。
+///
+/// **不改变行为**：加载的是同一份内置词典（同一 `OnceLock`），分词结果逐字节不变
+/// （见 `warm_up_does_not_change_tokenization` 的断言）。
+pub fn warm_up() {
+    let _ = jieba();
+}
+
 /// 是否保留为索引 token：过滤纯空白与纯标点（中英文标点都不进 FTS）。
 fn keep(token: &str) -> bool {
     token
@@ -79,6 +90,20 @@ mod tests {
         // 非 HMM 的直接目的：同样输入必须得到同样输出（AC-REL-03 的前提）
         let text = "同一段中文文本用于验证分词的可重复性";
         assert_eq!(for_index(text), for_index(text));
+    }
+
+    /// 预热**不改变**分词结果：它只是把词典加载提前（NFR-PERF-03 的 0.5 s 一次性成本），
+    /// 索引与查询两侧的输出必须与预热前逐字节一致。
+    #[test]
+    fn warm_up_does_not_change_tokenization() {
+        let text = "知识图谱的力导向布局 markdown FTS5";
+        let before = (for_index(text), for_query(text));
+        warm_up();
+        let after = (for_index(text), for_query(text));
+        assert_eq!(before, after, "预热前后必须逐字节一致");
+        warm_up(); // 幂等：再调一次也不变
+        assert_eq!(before, (for_index(text), for_query(text)));
+        assert!(jieba().cut("知识图谱", false).len() > 1, "预热后分词器可用");
     }
 
     #[test]
