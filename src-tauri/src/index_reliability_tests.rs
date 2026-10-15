@@ -232,7 +232,8 @@ fn ac_rel_03_hundred_queries_are_stable_across_rebuild() {
             .iter()
             .map(|q| {
                 let expr =
-                    kp_domain::search::build_match_expr(q, kp_domain::search::MatchMode::All);
+                    kp_domain::search::build_match_expr(q, kp_domain::search::MatchMode::All)
+                        .expect("构造 MATCH");
                 // 空表达式不是合法 MATCH（如 ^blk1 这类符号 token 会被分词过滤掉）—— 记为 0 命中
                 if expr.trim().is_empty() {
                     return 0;

@@ -65,6 +65,14 @@ pub enum AppError {
         /// 备份目录（用户可据此手工恢复）
         backup_dir: String,
     },
+    /// PRD §5.2 / FR-SEARCH-27 / AC-SEARCH-05：搜索语法错误必须**明说**，
+    /// 不得静默返回空结果（那会让用户以为"没有匹配"），也不得抛错崩溃。
+    ///
+    /// 消息里**只放固定的诊断文案**（如"双引号未闭合"），不回显用户查询串：
+    /// 命令层的错误出口会把 `format!("{:?}", err)` 放进 IPC 响应的 detail 字段，
+    /// 拼接原查询就等于把搜索词搬到错误通道上（SEC-09 / R-12 的同一纪律）。
+    #[error("搜索语法错误：{0}")]
+    SearchSyntax(String),
 }
 
 impl AppError {
@@ -89,6 +97,8 @@ impl AppError {
             Self::RewriteFailed(_) => "E_REWRITE_FAILED",
             // 复用码，靠 context 区分（技术方案 §13.1）
             Self::RollbackFailed { .. } => "E_REWRITE_FAILED",
+            // PRD §5.2 第 1561 行：搜索语法错误 / 400 / 显示语法提示
+            Self::SearchSyntax(_) => "E_SEARCH_SYNTAX",
         }
     }
 }
@@ -155,6 +165,7 @@ impl AppError {
             Self::PreviewExpired => "PreviewExpired",
             Self::RewriteFailed(_) => "RewriteFailed",
             Self::RollbackFailed { .. } => "RollbackFailed",
+            Self::SearchSyntax(_) => "SearchSyntax",
         }
     }
 }

@@ -1,3 +1,18 @@
+/**
+ * 搜索语法错误码（PRD §5.2 第 1561 行：搜索语法错误 / 400 / **显示语法提示**；
+ * FR-SEARCH-27 与 AC-SEARCH-05）。
+ *
+ * Rust 侧由 `kp_domain::error::AppError::SearchSyntax` 映射而来：用户输入未闭合引号、
+ * 未闭合的 `line:(`、只有键没有值的过滤条件时返回它。前端**必须**据它显示语法提示，
+ * 而不是把空结果当成「没有匹配」—— AC-SEARCH-05 明令不得静默返回空结果。
+ */
+export const E_SEARCH_SYNTAX = 'E_SEARCH_SYNTAX';
+
+/** 是否搜索语法错误（把错误码收敛到一处，调用点不再手写字符串）。 */
+export function isSearchSyntaxError(err: unknown): boolean {
+  return asKpError(err).code === E_SEARCH_SYNTAX;
+}
+
 export interface KpErrorInit {
   code: string;
   message: string;

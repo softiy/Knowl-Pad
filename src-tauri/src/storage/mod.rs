@@ -16,6 +16,7 @@ pub mod pool;
 pub mod pragma;
 pub mod search_history;
 pub mod search_query;
+mod search_sql;
 pub mod vault_state;
 
 use kp_domain::error::AppError;
