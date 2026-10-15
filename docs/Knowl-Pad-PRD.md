@@ -1663,7 +1663,7 @@ interface KpError {
 | `SearchResultPage` | `items: SearchResultItem[]`、`total`、`offset`、`limit`、`hasMore` | 一页结果；`total` 为**命中总数**（不是本页条数，大批量必须分页 —— IPC-05）；`hasMore` 供前端决定是否请求下一页 |
 | `SearchResultItem` | `relPath`、`name`、`mtimeMs`、`score`、`hitCount`、`snippets: SearchSnippet[]` | 一条结果；**同一笔记多处命中合并为一条**（FR-SEARCH-05）。`mtimeMs` 为结果显示的修改时间（FR-SEARCH-04）；`score` 为 FTS5 `bm25` 相关度（**负值，越小越相关**，排序口径见 FR-SEARCH-06）；`hitCount` 为合并相邻/重叠后的命中次数；`snippets[0]` 即首个片段（同一份数据不重复传输） |
 | `SearchSnippet` | `lines: SnippetLine[]`、`highlightLine`、`highlightStart`、`highlightEnd` | 命中片段（FR-SEARCH-04：含前后上下文、命中词高亮）。`highlightStart`/`highlightEnd` 相对 `highlightLine` 的文本，**0 基、左闭右开、字符**偏移 —— 与反链片段（`kp_domain::snippet`）同一口径，前端复用同一套高亮渲染 |
-| `SnippetLine` | `line`、`text`、`isHitLine` | 片段中的一行；`line` 为 1 基行号，`isHitLine` 标记命中所在行（该结构的 Rust 侧结构体名为 `SnippetLineView`，IPC 类型名以本表为准） |
+| `SnippetLine` | `line`、`text`、`isHitLine` | 片段中的一行；`line` 为 1 基行号，`isHitLine` 标记命中所在行（Rust 侧结构体同名 `SnippetLine`，IPC 类型名以本表为准） |
 | `QuickOpenItem` | `relPath`、`name`、`score` | 快速打开候选（FR-SEARCH-40/41：**只按文件名/路径匹配，不搜正文**）；`score` 为后端模糊匹配得分（越大越靠前） |
 | `InFileMatch` | `line`、`col`、`lenChars`、`startByte`、`endByte`、`text`、`lineText`、`highlightStart`、`highlightEnd` | 文件内一处命中（FR-SEARCH-30）。`col` 为 1 基**字符**列（中文按 1 个字符算）；`startByte`/`endByte` 为原文中的字节区间，`replace_in_file` 按它落刀（不靠行列二次解析）；`text` 为该处原文，回传时作为**期望原文**用于陈旧检测；`lineText` 为命中所在整行，`highlightStart`/`highlightEnd` 相对 `lineText`（0 基、左闭右开、字符） |
 | `ReplaceResult` | `relPath`、`replaced`、`newMtimeMs` | 文件内替换结果（FR-SEARCH-31）；`replaced` 为实际替换处数（= 通过陈旧检测的目标数；**一处不一致即整体中止**，磁盘零改动） |
@@ -1686,6 +1686,54 @@ interface KpError {
 | `PageArg` | `offset?`、`limit?` | `search_fulltext` 的分页参数，**两项均可缺省**（`page` 本身也可整体省略）。`offset`：**缺省 0**，负数按 0 处理；`limit`：每页条数，**缺省 20**，夹紧到 `1..=100`。越界一律**夹紧而不报错**（前端传错不该让搜索失败）；`SearchResultPage` 回传的 `offset` / `limit` 是**夹紧后**的值，`hasMore` 亦按夹紧值计算——前端据此对齐分页游标 |
 
 > **实现状态**：搜索域 6 命令已于 M5 批次 1 第一刀落地（后端 + IPC 契约 + 测试）；本节的字段、缺省值与夹紧区间即该实现的逐条转写（`SearchOptions` / `PageArg` 见 `src-tauri/src/commands/search.rs`，应用点见 `search_index.rs` 的 `resolve_page` / `match_mode` / `sort_order`），未含实现里不存在的字段。
+
+#### 5.3.4.3 搜索语法口径（权威定义）
+
+> **来源**：`FR-SEARCH-20~27` 只给出了语法形式与两条验收（`AC-SEARCH-02` / `AC-SEARCH-05`）；
+> **运算符大小写、空取值、`-词` 单独使用的语义、`line:` 的规模上限**四处从未定义（2026-10-15 M5 批次 1 第二刀复核发现）。
+> 本节为权威定义，记录项目所有者 **2026-10-15** 的三项裁定；实现见 `crates/kp-domain/src/search_syntax.rs`、
+> `crates/kp-domain/src/search.rs` 与 `src-tauri/src/commands/search_page.rs`。
+
+**一、运算符的形式（`FR-SEARCH-20~23`）**
+
+| 规则 | 口径 |
+| --- | --- |
+| 字面量 | `path:`（路径前缀）、`file:`（文件名，**不参与全文**）、`tag:#标签`（含层级前缀匹配）、`line:(...)`（同一行共现） |
+| 位置 | 必须**位于词首**（前面只能是空白）且**紧跟冒号**，中间不得有空格 —— `tag :#工作`、`tag#工作` 都不是运算符 |
+| 大小写 | **不敏感**：`Tag:#工作`、`PATH:work/`、`Line:(甲 乙)` 与全小写**等价** |
+| 引号内 | **不是**运算符：`"path:work"` 是精确短语，用于检索这个字面量（否则该字面量无法被搜索） |
+| 词中同形串 | **不是**运算符：`xTag:#工作` 按普通检索词处理 |
+
+**二、空取值**
+
+| 写法 | 处置 | 理由 |
+| --- | --- | --- |
+| `path:` / `path:/` | **合法**，等价于「Vault 根」＝不加路径限制，不产生过滤效果 | 「限定 Vault 根」与「不限定」在本产品里是同一集合，报错只会让用户困惑 |
+| `file:` / `tag:` / `tag:#` | **`E_SEARCH_SYNTAX`** | 只有键没有值一定是笔误；静默忽略会让用户以为过滤已生效 |
+| `line:`（未跟括号）/ `line:()` | **`E_SEARCH_SYNTAX`** | 同上；残缺的 `line:` 不得被当作普通检索词吞掉 |
+
+**三、`-词` 单独使用（`FR-SEARCH-25`）**
+
+- **有**其他检索条件时：`-词` 从结果里排除含该词的笔记（FTS5 的链式 `NOT`）。
+- **只有**排除词时（如 `-草稿`）：语义**仍是排除** —— 结果 = **全部笔记 − 含该词的笔记**。
+  理由：FTS5 的 `NOT` 是**二元**运算符，没有「全部笔记」这个左侧操作数，因此在索引侧改写为
+  `f.id NOT IN (SELECT rowid FROM note_fts WHERE note_fts MATCH ?)`（每个排除词一条子查询）。
+- **禁止**退化为「按包含处理」（早期实现如此，2026-10-15 裁定后改正）。
+- 推论：`-草稿` **不是空查询** —— 它必须真的去列笔记，不得返回空页（那等于静默空结果）。
+
+**四、`line:(...)` 的规模上限（`FR-SEARCH-23`，P2）**
+
+- 索引库的 `plain_text` 是分词后用空格连接的（`FTS-01`），**换行信息不在索引里** ⇒「同一行共现」
+  只能在**原文**上判定；又因为 `total` 必须等于过滤后的命中数（分页一致性，IPC-05），候选必须**全量**扫描 ——
+  候选笔记会被逐篇读盘。
+- 因此设候选数上限 **`MAX_LINE_FILTER_CANDIDATES`（当前 5000）**，定义在 `src-tauri/src/commands/search.rs`。
+  候选数**超过**上限时**不静默转圈**：返回 **`E_SEARCH_SYNTAX`**，message 给出「请先缩小范围」的提示
+  （与语法错误共用 §5.2 的「显示语法提示」通道；前端据此提示用户加关键词或 `path:` / `tag:` 限定）。
+  「**等于**上限」放行 —— 只有「超过」才拒绝。
+- 取值口径：5000 条候选 × 每篇一次读盘 ≈ 数百毫秒量级，是 R-08（> 50 ms 阻塞即缺陷）之上、
+  仍可被接受为**一次显式操作**的上界；它是**保守估计，待 M5 批次 5 用三档夹具实测后标定**。
+- **性能口径**：`line:` 的耗时在实测标定前**不计入** `NFR-PERF-04` 的达标证据
+  （登记见 `perf/d25-budgets.json` 的 `NFR-PERF-04-line-filter` 条目）。
 
 #### 5.3.5 链接与图谱域（9）
 
@@ -2340,6 +2388,7 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | D-29 | **AC-SEARCH-05 是否属 M5 的 DoD，两种读法都成立**（2026-10-14 M5 批次 1 第一刀复核发现）：§9.1 的 M5 行写「AC-SEARCH 全通过」（含 AC-SEARCH-05「语法错误提示」），而勘误 **D-25** 把它收窄为「AC-SEARCH-01/04（含严格阈值）+ 顺延项」，未提 05 | **裁定：AC-SEARCH-05 属于 M5 的 DoD**（它是「高级语法」的必要配套：FR-SEARCH-27 要求未闭合引号给出明确提示、**不得**静默返回）。**处置**：D-25 行的接收清单追加 AC-SEARCH-05；「AC-SEARCH-01/04 含严格阈值」的既有口径不变 | §9.1 的 M5 行、D-25、AC-SEARCH-05、FR-SEARCH-27 |
 | D-30 | **「快速打开」的模糊匹配归属被技术方案外推，与需求原文不符**（2026-10-14 M5 批次 1 第一刀复核发现）：`FR-PALETTE-10` 的原文只说**命令面板**「本地模糊匹配，不走 IPC」，而它属 `FR-PALETTE`（命令面板）域、**只覆盖命令面板**；技术方案 §3.2.5 的 `fuse.js` 行与附录 B 的 `NFR-PERF-05` 测量方式却把这条外推成**快速打开也在前端模糊匹配**，与 §5.3.4 已有的 `search_quick_open` 命令互相矛盾 —— 同一功能两套真相：实现会分叉，性能也会测错对象 | **裁定（2026-10-14 项目所有者）：后端 `search_quick_open` 是「快速打开」的唯一真相，`fuse.js` 仅用于「命令面板」。** **处置（三处已在上一轮改好，本行只做留痕与串接，不重复改动）**：① PRD 的 `FR-SEARCH-40` 行写明「匹配由**后端 `search_quick_open`** 承担……`fuse.js` 仅用于**命令面板**」；② 技术方案 §3.2.5 的 `fuse.js` 行改为「**命令面板**模糊匹配」并注明快速打开不在前端；③ 技术方案附录 B 的 `NFR-PERF-05` 行改为「= 后端 `search_quick_open` 耗时（Rust `Instant`）+ 前端首屏渲染（`performance.mark`），判定取两段合计」 | FR-PALETTE-10、FR-SEARCH-40、NFR-PERF-05、§5.3.4 |
 | D-31 | **搜索域的入参子结构此前只在实现里、未进契约**（2026-10-14 M5 批次 1 复核发现；与 **D-28** 的返回结构是同一处缺陷的另一半）：§5.3.4 把 `search_fulltext` 的入参写作 `{ query, options, page }`，而 `SearchOptions`（`matchMode` / `sort` / `contextLines` / `maxSnippets` / `recordHistory`）与 `PageArg`（`offset` / `limit`）的**字段、缺省值与夹紧区间在 PRD 里没有任何一处定义** —— 只存在于 `src-tauri/src/commands/search.rs` | 契约不完整会让 TS 与 Rust 各自臆造形状而漂移（门禁 17 只校验命令名，不校验结构）。**处置**：新增 **§5.3.4.2**，照 §5.3.4.1 的模板逐字段定义（含缺省值与越界处置），字段逐条转写自当前实现 `src-tauri/src/commands/search.rs` 的 `SearchOptions` / `PageArg` | §5.3.4 / §5.3.4.2、D-28、D-11、D-18 |
+| D-32 | **搜索语法的三处口径或未定义、或与需求原文相反**（2026-10-15 M5 批次 1 第二刀复核发现）：① `-词` **单独使用**时实现退化为「按包含处理」（`-草稿` 返回**含**草稿的笔记），与 `FR-SEARCH-25` 的原文「`-词` 排除含该词的结果」相反，且 M3 的用例把这一错误行为锁死了；② 运算符的**大小写**与**空取值**规则真源里没有一处写明（`Tag:` 是否等价 `tag:`、`path:/` 是否合法都无从判定）；③ `line:(...)` 必须对**全部候选**读原文判定同一行，而候选数**无上限**，大 Vault 上会长时间阻塞且没有任何反馈 | **裁定（2026-10-15 项目所有者）**：① 统一为**排除**语义（全集 − 含该词的笔记），M3 的用例按新语义改写并在注释里注明依据；② 运算符**大小写不敏感**，但仍须位于词首且紧跟冒号；`path:` / `path:/` **合法**（= Vault 根），`file:` / `tag:` / `line:`（未跟括号或括号为空）一律 **`E_SEARCH_SYNTAX`**；③ `line:` 加**候选数上限**（`MAX_LINE_FILTER_CANDIDATES` = 5000），**超过**时返回 `E_SEARCH_SYNTAX` 且 message 提示「请先缩小范围」，**实测前不计入 `NFR-PERF-04` 的达标证据**（登记 `perf/d25-budgets.json`）。三项口径已落 **§5.3.4.3** | `FR-SEARCH-20~25`、`FR-SEARCH-27`、`NFR-PERF-04`、`§5.3.4.3` |
 
 ---
 

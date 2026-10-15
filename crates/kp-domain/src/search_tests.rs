@@ -59,14 +59,30 @@ fn special_chars_do_not_break_syntax() {
     assert!(!e.contains("(c)"), "括号必须被引号包裹：{e}");
 }
 
+/// **FR-SEARCH-25 + 2026-10-15 项目所有者裁定**（口径已落 PRD §5.3.4.3）：
+/// `-词` 单独使用时语义是**排除** = 全部笔记 − 含该词的笔记。
+///
+/// 这条用例**替换**了 M3 期的 `only_excludes_still_yields_a_usable_expr`：那时实现把
+/// 「只有排除项」退化成「按包含处理」（`-草稿` 返回**含**草稿的笔记），与 FR-SEARCH-25
+/// 的原文「`-词` 排除含该词的结果」正好相反，本刀按裁定改正并在此写明依据。
 #[test]
-fn only_excludes_still_yields_a_usable_expr() {
-    let e = expr("-草稿", MatchMode::All);
+fn only_excludes_is_a_pure_exclusion_query() {
+    let parsed = parse_query("-草稿", MatchMode::All).expect("解析");
+    assert!(parsed.positive_expr.is_empty(), "没有正面词");
+    assert_eq!(parsed.excludes, vec!["草稿".to_string()], "排除词已分词");
     assert!(
-        !e.is_empty(),
-        "不能返回空表达式（那会静默变成「无查询」）：{e}"
+        parsed.match_expr.is_empty(),
+        "没有正面词就没有 MATCH（FTS5 的 NOT 缺左侧操作数）：{}",
+        parsed.match_expr
     );
-    assert!(!e.contains("NOT"), "没有左侧操作数时不能用 NOT：{e}");
+    assert!(
+        !parsed.is_empty_query(),
+        "它不是空查询：语义是「全部笔记 − 含草稿的笔记」，必须真的去列笔记"
+    );
+    assert!(parsed.highlight.is_empty(), "排除词不入高亮");
+    // 有正面词时仍是链式 NOT（未受影响）
+    let mixed = parse_query("报告 -草稿", MatchMode::All).expect("解析");
+    assert!(mixed.match_expr.contains("NOT"), "{}", mixed.match_expr);
 }
 
 #[test]

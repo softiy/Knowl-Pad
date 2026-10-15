@@ -15,7 +15,8 @@ use crate::commands::paths::root_of;
 use crate::commands::search::{
     clamp_i64, clamp_usize, record_history_best_effort, PageArg, QuickOpenArgs, SearchFulltextArgs,
     SearchOptions, DEFAULT_MAX_SNIPPETS, DEFAULT_PAGE_LIMIT, DEFAULT_QUICK_OPEN_LIMIT,
-    MAX_CONTEXT_LINES, MAX_PAGE_LIMIT, MAX_QUICK_OPEN_LIMIT, MAX_SNIPPETS,
+    MAX_CONTEXT_LINES, MAX_LINE_FILTER_CANDIDATES, MAX_PAGE_LIMIT, MAX_QUICK_OPEN_LIMIT,
+    MAX_SNIPPETS,
 };
 use crate::commands::search_page::{
     page_with_line_filter, page_without_line_filter, PageWindow, ViewOptions,
@@ -98,7 +99,17 @@ pub(crate) fn search_fulltext_impl(
     let result = if parsed.filters.line_terms.is_empty() {
         page_without_line_filter(&pool, &root, &parsed, sort, view, page)?
     } else {
-        page_with_line_filter(&pool, &root, &parsed, sort, view, page)?
+        // line: 必须扫全部候选（见 search_page 的说明），因此带上候选数上限；
+        // 超限时这里会返回 E_SEARCH_SYNTAX + 「请先缩小范围」的提示（PRD §5.3.4.3）
+        page_with_line_filter(
+            &pool,
+            &root,
+            &parsed,
+            sort,
+            view,
+            page,
+            MAX_LINE_FILTER_CANDIDATES,
+        )?
     };
     if args.options.record_history.unwrap_or(false) {
         record_history_best_effort(state, &args.query);
