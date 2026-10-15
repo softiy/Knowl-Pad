@@ -24,6 +24,8 @@ pub const UNCLOSED_PAREN: &str = "line: 的括号未闭合：请写成 line:(词
 /// 过滤条件只有键没有值。
 pub const EMPTY_FILTER_VALUE: &str =
     "过滤条件缺少取值：path: / file: / tag: 后要跟内容，line: 的括号里至少要有一个词";
+/// `line:` 没有紧跟括号（`line:` 或 `line: 词` 这类写法）。
+pub const LINE_NEEDS_PAREN: &str = "line: 后面必须紧跟括号：请写成 line:(词1 词2)";
 
 /// `line:` 的运算符前缀（含左括号，便于一次性判断并消费）。
 const LINE_PREFIX: &str = "line:(";
@@ -74,7 +76,8 @@ pub fn extract_filters(query: &str) -> Result<(SearchFilters, String), AppError>
             }
             continue;
         }
-        if sc.starts_with(LINE_PREFIX) {
+        // 运算符**大小写不敏感**（PRD §5.3.4.3 的裁定）：Line:( 与 line:( 等价
+        if sc.starts_with_ignore_ascii_case(LINE_PREFIX) {
             sc.advance(LINE_PREFIX.len());
             filters
                 .line_terms
@@ -112,13 +115,16 @@ pub fn extract_quoted(text: &str) -> Result<(Vec<String>, String), AppError> {
 }
 
 /// 单个「键:值」词是否被识别为过滤条件；识别成功返回 true（该词不进全文）。
+///
+/// **运算符大小写不敏感**（PRD §5.3.4.3）：键先折叠成小写再比对，故 `Tag:#工作` 与 `tag:#工作` 等价。
+/// 前缀仍必须**位于词首且紧跟冒号** —— `xTag:#工作` 的键是 `xTag`，不会被当成运算符。
 fn absorb_prefixed(word: &str, filters: &mut SearchFilters) -> Result<bool, AppError> {
     let Some((key, value)) = word.split_once(':') else {
         return Ok(false);
     };
-    match key {
+    match key.to_ascii_lowercase().as_str() {
         "path" => {
-            // 空路径（path:/）等价于「整个 Vault」，视作没有这条过滤，而不是语法错误
+            // 空路径（path:/、path:）等价于「Vault 根」= 不加路径限制，**合法**（PRD §5.3.4.3）
             filters.path_prefix = normalize_path(value);
             Ok(true)
         }
@@ -130,6 +136,9 @@ fn absorb_prefixed(word: &str, filters: &mut SearchFilters) -> Result<bool, AppE
             filters.tags.push(normalize_tag(value)?);
             Ok(true)
         }
+        // 走到这里说明没有紧跟括号（带括号的写法在 extract_filters 里已被消费）：
+        // `line:` / `line: 词` 都是残缺语法，必须明说而不是当普通检索词吞掉
+        "line" => Err(AppError::SearchSyntax(LINE_NEEDS_PAREN.to_string())),
         _ => Ok(false),
     }
 }
@@ -206,8 +215,14 @@ impl<'a> Scanner<'a> {
         self.remaining().chars().next()
     }
 
-    fn starts_with(&self, prefix: &str) -> bool {
-        self.remaining().starts_with(prefix)
+    /// ASCII 大小写不敏感的前缀判断（运算符大小写不敏感，PRD §5.3.4.3）。
+    ///
+    /// 用 `get(..n)` 而不是切片：`n` 落在一个多字节字符中间时切片会 panic，
+    /// 而 `get` 返回 None（前缀更长，自然不匹配）。
+    fn starts_with_ignore_ascii_case(&self, prefix: &str) -> bool {
+        self.remaining()
+            .get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
     }
 
     fn advance(&mut self, bytes: usize) {

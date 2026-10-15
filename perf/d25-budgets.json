@@ -82,6 +82,16 @@
       "plan": ""
     },
     {
+      "id": "NFR-PERF-04-line-filter",
+      "kind": "pending",
+      "budget": null,
+      "unit": "ms",
+      "owning": "**独立计量**：`line:(...)` 查询的端到端耗时（全候选读盘 + 原文同行判定）—— 与常规全文搜索不可比，**不并入 NFR-PERF-04-search**",
+      "instrumented": false,
+      "plan": "M5 批次 5 用三档夹具实测",
+      "scope": "起点=命令入口；终点=返回第一页；含候选全量扫描与候选数上限判定。**实测前不计入 NFR-PERF-04 的达标证据**（2026-10-15 裁定，口径见 PRD §5.3.4.3）"
+    },
+    {
       "id": "NFR-PERF-10-incremental",
       "kind": "perf",
       "budget": {

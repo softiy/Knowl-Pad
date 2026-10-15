@@ -3,17 +3,21 @@
 //! 两条路径：
 //! - **常规**：分页交给 SQL，total 与 items 出自同一 spec（IPC-05 的分页一致性）；
 //! - **`line:(...)`**：先取**全部**候选读原文判「同一行」，再切片分页 —— 索引里没有换行信息
-//!   （plain_text 是 jieba 分词后空格连接的，FTS-01），SQL 表达不了这条约束。
+//!   （plain_text 是 jieba 分词后空格连接的，FTS-01），SQL 表达不了这条约束；
+//!   因此它有**候选数上限**（`MAX_LINE_FILTER_CANDIDATES`）：超限时返回明确的「请先缩小范围」
+//!   提示，而不是静默空结果或长时间无反馈（PRD §5.3.4.3）。
 //!
 //! 片段不进 SQL：FTS5 的 snippet() 作用在分词后的 plain_text 上（带空格、与原文不逐字一致），
 //! 这里按技术方案 §5.2「高亮还原」的口径做：命中 → 读原文 → 原文定位 → 截窗口。
 
 use std::path::Path;
 
+use crate::commands::search::TOO_MANY_LINE_CANDIDATES;
 use crate::commands::search_view::{snippet_at, SearchResultItem, SearchSnippet};
 use crate::error_wrapper::KpError;
 use crate::storage::pool::DbPool;
 use crate::storage::search_query::{self, FtsHit, SortOrder};
+use kp_domain::error::AppError;
 use kp_domain::search::ParsedQuery;
 use kp_domain::search_hits::{self, same_line, Hit};
 
@@ -32,6 +36,7 @@ pub(crate) struct PageWindow {
 }
 
 /// 一页结果（条目 + 命中总数）。
+#[derive(Debug)]
 pub(crate) struct PageResult {
     pub items: Vec<SearchResultItem>,
     pub total: i64,
@@ -113,11 +118,24 @@ pub(crate) fn page_without_line_filter(
     Ok(PageResult { items, total })
 }
 
+/// 候选数守卫（PRD §5.3.4.3）：超过上限时返回**明确的提示**而不是空结果或长时间阻塞。
+///
+/// 抽成纯函数是为了能直接断言边界（`max` 允许、`max + 1` 拒绝），不必真的造 5001 篇笔记。
+pub(crate) fn guard_candidate_count(candidates: usize, max: usize) -> Result<(), KpError> {
+    if candidates > max {
+        return Err(KpError(AppError::SearchSyntax(
+            TOO_MANY_LINE_CANDIDATES.to_string(),
+        )));
+    }
+    Ok(())
+}
+
 /// `line:(...)` 路径：先对**全部候选**判「同一行」，再切片分页。
 ///
 /// 为什么不能只过滤当前页：total 必须等于过滤后的命中数，否则 hasMore 与翻页会漏项/重复。
-/// 代价：候选数 = 含全部 line: 词的笔记数，这批笔记会被读一遍。line: 是 P2 的窄化语法
-/// （它本身就是在要求「几个词挤在同一行」），大 Vault 上的实测口径见本 PR 报告。
+/// 代价：候选数 = 含全部 line: 词的笔记数，这批笔记会被读一遍 —— 因此有 `max_candidates` 守卫
+/// （超限即 `E_SEARCH_SYNTAX` + 「请先缩小范围」，见 PRD §5.3.4.3）；
+/// `line:` 的耗时在实测标定前**不计入** NFR-PERF-04 的达标证据。
 pub(crate) fn page_with_line_filter(
     pool: &DbPool,
     root: &Path,
@@ -125,8 +143,10 @@ pub(crate) fn page_with_line_filter(
     sort: SortOrder,
     view: ViewOptions,
     window: PageWindow,
+    max_candidates: usize,
 ) -> Result<PageResult, KpError> {
     let rows = search_query::fulltext_scan(pool, parsed, sort).map_err(KpError)?;
+    guard_candidate_count(rows.len(), max_candidates)?;
     let mut passing: Vec<(&FtsHit, String)> = Vec::new();
     for hit in &rows {
         match crate::commands::link_view::read_note(root, &hit.rel_path) {

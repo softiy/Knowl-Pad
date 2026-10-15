@@ -38,6 +38,20 @@ pub const DEFAULT_MAX_SNIPPETS: usize = 5;
 pub const MAX_SNIPPETS: usize = 20;
 /// 片段上下文行数上限（PRD §4.11.3 的缺省值是 2；给 10^9 会让整篇笔记进响应）。
 pub const MAX_CONTEXT_LINES: usize = 20;
+/// `line:(...)` 的**候选数上限**（PRD §5.3.4.3 的裁定）。
+///
+/// 为什么需要它：索引里没有换行信息（`plain_text` 是分词后空格连接的，FTS-01），
+/// 「同一行共现」只能对**原文**判定，且为保证 `total` 与翻页一致必须扫描**全部**候选 ——
+/// 候选笔记会被逐篇读盘。没有上限时，一个宽泛的 `line:` 查询在大 Vault 上会长时间阻塞
+/// 且**没有任何反馈**（比慢更糟）。
+///
+/// 取值理由：5000 条候选 × 每篇一次读盘 + 一次子串扫描 ≈ 数百毫秒量级，是本产品
+/// 「任何 > 50 ms 的阻塞即缺陷」（R-08）之上仍**可被接受为一次显式操作**的上界；
+/// 它是保守估计，**待 M5 批次 5 用三档夹具实测后标定**（登记见 perf/d25-budgets.json）。
+pub const MAX_LINE_FILTER_CANDIDATES: usize = 5000;
+/// 候选数超限时的提示文案（与语法错误共用 E_SEARCH_SYNTAX 的「显示语法提示」通道）。
+pub const TOO_MANY_LINE_CANDIDATES: &str =
+    "line: 的候选笔记过多，请先缩小范围（加上关键词，或用 path: / tag: 限定）后再试";
 
 /// 全文搜索选项（PRD §5.3.4 的 options）。字段逐个注明需求出处。
 #[derive(Debug, Clone, Default, Deserialize)]

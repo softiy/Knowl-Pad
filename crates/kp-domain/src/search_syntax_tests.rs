@@ -97,12 +97,44 @@ fn filter_lookalike_inside_quotes_is_not_a_filter() {
     assert_eq!(rest("\"path:work\" 报告"), "\"path:work\" 报告");
 }
 
-/// 大小写不放宽：File: 不是运算符（PRD 只给了小写字面量）。
+/// **2026-10-15 项目所有者裁定**（口径已落 PRD §5.3.4.3）：运算符**大小写不敏感**。
 #[test]
-fn operators_are_case_sensitive() {
-    assert!(filters("File:报告").file_name.is_none());
-    assert!(filters("Path:work").path_prefix.is_none());
-    assert!(filters("TAG:#工作").tags.is_empty());
+fn operators_are_case_insensitive() {
+    assert_eq!(filters("Tag:#工作").tags, vec!["工作".to_string()]);
+    assert_eq!(filters("TAG:#工作").tags, vec!["工作".to_string()]);
+    assert_eq!(filters("tAg:#工作").tags, vec!["工作".to_string()]);
+    assert_eq!(filters("PATH:work/").path_prefix, Some("work".to_string()));
+    assert_eq!(filters("File:报告").file_name, Some("报告".to_string()));
+    assert_eq!(
+        filters("Line:(甲 乙)").line_terms,
+        vec!["甲".to_string(), "乙".to_string()],
+        "含括号的 line: 同样大小写不敏感"
+    );
+    assert_eq!(rest("Tag:#工作 内容"), "内容", "大写运算符同样不进全文");
+}
+
+/// 大小写放宽**不改变**「前缀必须位于词首且紧跟冒号」这条约束。
+#[test]
+fn operators_must_start_the_word_and_touch_the_colon() {
+    assert!(filters("xTag:#工作").tags.is_empty(), "前缀必须在词首");
+    assert_eq!(
+        rest("xTag:#工作"),
+        "xTag:#工作",
+        "词中出现的同形串按普通检索词处理"
+    );
+    assert!(filters("tag :#工作").tags.is_empty(), "冒号前不能有空格");
+    assert!(filters("tag#工作").tags.is_empty(), "缺冒号不是运算符");
+}
+
+/// `line:` 没有紧跟括号是**残缺语法**：必须报 E_SEARCH_SYNTAX，
+/// 不得当普通检索词悄悄吞掉（PRD §5.3.4.3 的空取值规则）。
+#[test]
+fn line_without_paren_is_a_syntax_error() {
+    for query in ["line:", "line: 词", "Line:", "LINE:甲"] {
+        let err = extract_filters(query).expect_err("必须报语法错误");
+        assert_eq!(err.code(), "E_SEARCH_SYNTAX", "查询：{query}");
+        assert!(err.to_string().contains("括号"), "查询：{query}：{err}");
+    }
 }
 
 /// 空查询与「无过滤条件」。
@@ -135,16 +167,23 @@ fn unclosed_line_group_reports_syntax_error() {
     assert!(err.to_string().contains("括号未闭合"), "{err}");
 }
 
-/// 只有键没有值的过滤条件必须明说，不能静默忽略（否则用户以为过滤生效了）。
+/// 空取值规则（**2026-10-15 裁定**，口径已落 PRD §5.3.4.3）：
+/// `path:/` 合法（= Vault 根）；`file:` / `tag:` / `line:()` 空取值报 E_SEARCH_SYNTAX。
+///
+/// 报错的理由：只有键没有值一定是笔误，静默忽略会让用户以为过滤已经生效。
 #[test]
 fn empty_filter_values_are_syntax_errors() {
-    for query in ["file:", "tag:", "tag:#", "line:()"] {
+    for query in ["file:", "tag:", "tag:#", "line:()", "FILE:", "Tag:#"] {
         let err = extract_filters(query).expect_err("必须报语法错误");
         assert_eq!(err.code(), "E_SEARCH_SYNTAX", "查询：{query}");
         assert!(err.to_string().contains("缺少取值"), "查询：{query}");
     }
-    // path: 的空值等价于「整个 Vault」，不是错误（见 normalize_path 的注释）
-    assert!(filters("path:/ 报告").path_prefix.is_none());
+    // path: 的空值等价于「Vault 根」= 不加路径限制 ⇒ **合法**，只是没有过滤效果
+    for query in ["path:/ 报告", "path: 报告", "PATH:/ 报告"] {
+        let (f, text) = extract_filters(query).expect("path: 的空值合法");
+        assert!(f.path_prefix.is_none(), "查询：{query}");
+        assert_eq!(text, "报告", "查询：{query}");
+    }
 }
 
 /// 语法错误的文案里**只含固定诊断**，不回显用户输入（SEC-09 / R-12 的同一纪律）。

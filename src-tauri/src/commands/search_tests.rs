@@ -9,11 +9,16 @@ use std::sync::Arc;
 use crate::commands::search::{
     search_history_clear_impl, search_history_get_impl, FindOptionsArg, InFileArgs, PageArg,
     QuickOpenArgs, ReplaceArgs, ReplaceMatchArg, SearchFulltextArgs, SearchOptions,
+    MAX_LINE_FILTER_CANDIDATES,
 };
 use crate::commands::search_file::{replace_in_file_impl, search_in_file_impl};
 use crate::commands::search_index::{search_fulltext_impl, search_quick_open_impl};
+use crate::commands::search_page::{
+    guard_candidate_count, page_with_line_filter, PageWindow, ViewOptions,
+};
 use crate::commands::search_view::{InFileMatch, SearchSnippet};
 use crate::state::AppState;
+use crate::storage::search_query::SortOrder;
 
 /// 建临时 Vault（真实文件）+ 索引库（真实全量索引）+ 全局库，返回 AppState。
 fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, AppState) {
@@ -554,4 +559,76 @@ fn empty_filter_value_reports_syntax_error() {
     let (_v, state) = fixture(&[("a.md", "任意内容\n")]);
     let err = search_fulltext_impl(&state, fulltext("tag: 内容")).expect_err("必须报语法错误");
     assert_eq!(err.0.code(), "E_SEARCH_SYNTAX");
+}
+
+// ── 2026-10-15 三项裁定的回归（口径见 PRD §5.3.4.3）──────────────────────────
+
+/// **裁定①** + FR-SEARCH-25：`-草稿` 单独使用时返回**补集**（全集 − 含草稿的笔记），
+/// 而不是「含草稿的笔记」——M3 的旧语义在本刀被改正。
+#[test]
+fn exclude_only_query_returns_the_complement_not_the_hits() {
+    let (_v, state) = fixture(&[
+        ("draft.md", "草稿 在这里\n"),
+        ("a.md", "正常内容\n"),
+        ("b.md", "另一篇正常内容\n"),
+    ]);
+    let page = search_fulltext_impl(&state, fulltext("-草稿")).expect("搜索");
+    let paths: Vec<&str> = page.items.iter().map(|i| i.rel_path.as_str()).collect();
+    assert_eq!(page.total, 2, "3 篇 − 含草稿的 1 篇 = 2：{paths:?}");
+    assert!(
+        !paths.contains(&"draft.md"),
+        "含排除词的笔记不得出现在结果里：{paths:?}"
+    );
+    // 对照：正向查询仍命中那一篇（证明上面不是「什么都没搜到」）
+    let hit = search_fulltext_impl(&state, fulltext("草稿")).expect("搜索");
+    assert_eq!(hit.total, 1);
+    assert_eq!(hit.items[0].rel_path, "draft.md");
+}
+
+/// **裁定③**（PRD §5.3.4.3）：`line:` 候选数超过上限时必须给出「请先缩小范围」的**明确提示**，
+/// 而不是静默空结果或长时间阻塞。上限由参数注入，故不必造 5001 篇笔记。
+#[test]
+fn line_filter_reports_a_hint_when_candidates_exceed_the_cap() {
+    let (_v, state) = fixture(&[
+        ("same.md", "季度 报告 在同一行\n"),
+        ("split.md", "季度 在第一行\n另一行 报告\n"),
+    ]);
+    let pool = state.index_db().expect("索引库");
+    let root = crate::commands::paths::root_of(&state).expect("Vault 根");
+    let parsed =
+        kp_domain::search::parse_query("line:(季度 报告)", kp_domain::search::MatchMode::All)
+            .expect("解析");
+    let view = ViewOptions {
+        context_lines: 2,
+        max_snippets: 5,
+    };
+    let window = PageWindow {
+        offset: 0,
+        limit: 20,
+    };
+    // 两个候选、上限 1 ⇒ 必须报错并带提示文案
+    let err = page_with_line_filter(&pool, &root, &parsed, SortOrder::Path, view, window, 1)
+        .expect_err("超限必须报错");
+    assert_eq!(err.0.code(), "E_SEARCH_SYNTAX", "与语法错误共用提示通道");
+    assert!(err.0.to_string().contains("缩小范围"), "{err}");
+    // 边界：上限**等于**候选数时放行（是「超过」才拒绝）
+    let ok = page_with_line_filter(&pool, &root, &parsed, SortOrder::Path, view, window, 2)
+        .expect("等于上限应放行");
+    assert_eq!(ok.total, 1, "只有同行共现的那篇命中");
+    assert_eq!(ok.items.len(), 1);
+    assert_eq!(ok.items[0].rel_path, "same.md");
+}
+
+/// **裁定③** 的纯函数边界；顺带钉住上限常量的取值 ——
+/// 改它必须同步 PRD §5.3.4.3 与 perf/d25-budgets.json。
+#[test]
+fn candidate_guard_boundary_and_documented_cap() {
+    assert_eq!(
+        MAX_LINE_FILTER_CANDIDATES, 5000,
+        "上限改动必须同步 PRD §5.3.4.3 与 perf/d25-budgets.json"
+    );
+    assert!(guard_candidate_count(5000, 5000).is_ok(), "等于上限放行");
+    let err = guard_candidate_count(5001, 5000).expect_err("超过上限必须报错");
+    assert_eq!(err.0.code(), "E_SEARCH_SYNTAX");
+    assert!(err.0.to_string().contains("缩小范围"), "{err}");
 }

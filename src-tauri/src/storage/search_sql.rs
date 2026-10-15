@@ -78,7 +78,9 @@ pub(super) struct QuerySpec {
 
 /// 组装 SQL。三条路径：
 /// ① 有全文正面词 → note_fts MATCH + 过滤谓词（bm25 可排序）；
-/// ② 只有过滤条件 → 直接列 file 表（没有 bm25，相关度无意义，固定按修改时间倒序）；
+/// ② **纯约束查询**（只有过滤条件，或只有排除项，或两者都有）→ 直接列 file 表：
+///    没有正面词就没有 bm25，相关度退化为修改时间倒序（其余排序照常），
+///    排除项改写为 NOT IN 子查询 —— 「只有 -词」的语义是**排除** = 全集 − 命中集（PRD §5.3.4.3）；
 /// ③ 什么都没有 → 恒假条件兜底，**绝不**退化成「列出全库」。
 pub(super) fn build_spec(parsed: &ParsedQuery, sort: SortOrder) -> QuerySpec {
     let (predicates, filter_params) = filter_predicates(parsed);
@@ -95,7 +97,9 @@ pub(super) fn build_spec(parsed: &ParsedQuery, sort: SortOrder) -> QuerySpec {
             params,
         };
     }
-    if parsed.filters.is_empty() {
+    // ② 与 ③ 的分界：过滤条件为空**且**没有排除项 ⇒ 真的什么都没有（空查询）。
+    // 只有排除项（如 -草稿）落进 ②，基集是「全部笔记」—— 这正是 PRD §5.3.4.3 的排除语义。
+    if parsed.filters.is_empty() && parsed.excludes.is_empty() {
         return QuerySpec {
             select: format!("SELECT {HIT_COLUMNS}, 0.0 AS score"),
             from_where: "FROM file f WHERE 0".to_string(),

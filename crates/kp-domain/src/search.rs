@@ -64,7 +64,8 @@ fn phrase_expr(phrase: &str) -> String {
 /// 避免三处各自解析导致「搜到的」与「高亮的」对不上）。
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ParsedQuery {
-    /// 完整 MATCH 表达式（正面词 + 链式 NOT）。空串表示**一个全文词都没有**。
+    /// 完整 MATCH 表达式（正面词 + 链式 NOT）。空串表示**没有正面词** ——
+    /// 纯过滤查询与「只有排除项」都属于这一类：它们的约束由 `filters` / `excludes` 表达。
     pub match_expr: String,
     /// 只含正面词的表达式片段。空串 = 这次查询没有全文正面词 —— storage 据此走「纯过滤查询」
     /// （没有正面词时 FTS5 缺左侧操作数，排除项只能改写成 NOT IN 子查询）。
@@ -78,11 +79,11 @@ pub struct ParsedQuery {
 }
 
 impl ParsedQuery {
-    /// 是否是一次「什么都没有」的查询（空串/纯空白）：既没有全文词也没有过滤条件。
+    /// 是否是一次「什么都没有」的查询（空串/纯空白）：没有正面词、没有过滤条件、也没有排除项。
     ///
-    /// 与「纯过滤查询」（如 `tag:#工作`）区分开 —— 前者返回空页，后者必须真的去列笔记。
+    /// 与「纯过滤查询」（`tag:#工作`）和「只有排除项」（`-草稿`）区分开 —— 后两者必须真的去列笔记。
     pub fn is_empty_query(&self) -> bool {
-        self.match_expr.is_empty() && self.filters.is_empty()
+        self.positive_expr.is_empty() && self.filters.is_empty() && self.excludes.is_empty()
     }
 }
 
@@ -108,13 +109,13 @@ pub fn parse_query(query: &str, mode: MatchMode) -> Result<ParsedQuery, AppError
     positives.extend(includes.iter().map(|t| escape_fts(t)));
     positives.extend(line_tokens.iter().map(|t| escape_fts(t)));
     let positive_expr = positives.join(mode.joiner());
-    // 5) 构造 MATCH：只有排除词时 FTS5 缺左侧操作数，退回这些词的 OR（M3 起的既有兜底语义）
+    // 5) 构造 MATCH：**没有正面词就没有 MATCH** —— 只有排除项时 FTS5 缺左侧操作数
+    //    （它没有「全部笔记」这个操作数），排除改由索引侧的 NOT IN 子查询表达
+    //    （见 ParsedQuery::excludes 与 storage::search_sql）。
+    //    2026-10-15 裁定（已落 PRD §5.3.4.3）：只有排除项时的语义是**排除** = 全集 − 命中集，
+    //    **不得**退化为「按包含处理」（M3 的 OR 兜底据此删除）。
     let match_expr = if positive_expr.is_empty() {
-        excludes
-            .iter()
-            .map(|t| escape_fts(t))
-            .collect::<Vec<_>>()
-            .join(" OR ")
+        String::new()
     } else {
         excludes.iter().fold(positive_expr.clone(), |acc, term| {
             format!("{acc} NOT {}", escape_fts(term))
@@ -160,6 +161,10 @@ fn merge_highlight(phrases: &[String], includes: &[String], line_tokens: &[Strin
 /// 构造 MATCH 表达式（函数名与技术方案 §5.2.2 一致）。
 ///
 /// 空查询返回空串（调用方应视为「无查询」而非语法错误）；**语法错误**才返回 `Err`。
+///
+/// ⚠️ **不要用「空串」判定「没有查询」**：只有排除项时（`-草稿`）同样返回空串 ——
+/// 它没有正面词、也就没有左侧操作数，但语义是「全部笔记 − 含该词的笔记」，必须真的去列笔记
+/// （PRD §5.3.4.3）。判断请用 `ParsedQuery::is_empty_query()`。
 pub fn build_match_expr(query: &str, mode: MatchMode) -> Result<String, AppError> {
     parse_query(query, mode).map(|parsed| parsed.match_expr)
 }

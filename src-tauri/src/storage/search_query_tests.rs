@@ -279,6 +279,38 @@ fn filter_only_query_lists_notes_by_filter() {
     assert_eq!(paths, vec!["a.md".to_string(), "b.md".to_string()]);
 }
 
+/// **FR-SEARCH-25 + 2026-10-15 裁定**（PRD §5.3.4.3）：`-词` 单独使用时
+/// 结果集 = **全集 − 含该词的笔记**。断言的是**集合关系**，不是「不报错」。
+#[test]
+fn exclude_only_query_returns_the_complement() {
+    let (_d, pool) = vault(&[
+        (
+            "a.md",
+            "草稿 在这里
+",
+        ),
+        (
+            "b.md",
+            "正常内容
+",
+        ),
+        (
+            "c.md",
+            "另一篇正常内容
+",
+        ),
+    ]);
+    let (hits, hit_total) = page(&pool, "草稿", SortOrder::Path, 10, 0);
+    assert_eq!(hit_total, 1, "含该词的恰好一篇：{hits:?}");
+    let (complement, total) = page(&pool, "-草稿", SortOrder::Path, 10, 0);
+    assert_eq!(total, 2, "补集应为两篇（3 − 1）：{complement:?}");
+    assert_eq!(complement, vec!["b.md".to_string(), "c.md".to_string()]);
+    assert!(
+        !complement.iter().any(|p| hits.contains(p)),
+        "补集与命中集不得相交：命中 {hits:?} / 补集 {complement:?}"
+    );
+}
+
 /// FR-SEARCH-24 的回归：引号短语必须**只**命中连着写的那篇。
 ///
 /// 这条用例同时锁住了 M3 期的一个真实缺陷：当时直接发 \"季度报告\"，

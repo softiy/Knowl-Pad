@@ -109,7 +109,31 @@ fn filter_only_exclusions_use_not_in_subquery() {
     );
 }
 
-/// 空查询（无全文词、无过滤条件）**绝不能**退化成「列出全库」。
+/// **FR-SEARCH-25 + 2026-10-15 裁定**（PRD §5.3.4.3）：只有排除项时基集是**全部笔记**，
+/// 语义 = 全集 − 含该词的笔记；**不得**退化成恒假条件（那会变成静默空结果）。
+#[test]
+fn exclude_only_uses_the_whole_note_set_as_base() {
+    let s = spec("-草稿");
+    assert!(
+        !s.from_where.ends_with("WHERE 0"),
+        "不得退化成恒假条件：{}",
+        s.from_where
+    );
+    assert!(s.from_where.contains("f.kind = 'note'"), "{}", s.from_where);
+    assert!(
+        s.from_where
+            .contains("f.id NOT IN (SELECT rowid FROM note_fts WHERE note_fts MATCH ?)"),
+        "{}",
+        s.from_where
+    );
+    assert!(
+        s.params.iter().any(|p| p.contains("草稿")),
+        "排除词必须作为绑定参数：{:?}",
+        s.params
+    );
+}
+
+/// 空查询（无正面词、无过滤条件、无排除项）**绝不能**退化成「列出全库」。
 #[test]
 fn empty_query_yields_a_false_condition() {
     let s = spec("   ");
