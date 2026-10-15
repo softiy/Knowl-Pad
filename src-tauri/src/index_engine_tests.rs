@@ -285,3 +285,53 @@ fn md_wl_04_disambiguation_prefers_same_dir_then_shallower_path() {
         .expect("读裁决");
     assert_eq!(dup, "ambiguous", "等深并列不得猜");
 }
+
+/// **标签写入的语义钉子**（2026-10-15 的 tag 写入优化引入）：
+/// 它钉的正是**拒绝**「进程内缓存 norm→tag_id」的那个理由 ——
+/// `tag` 表的 display / is_leaf 是**最后一次写入者胜**（`ON CONFLICT DO UPDATE`），
+/// 大小写不同的同 norm 标签会互相覆盖；缓存会让第一次的写入胜出，最终行就不再逐字节一致。
+///
+/// 同时覆盖：MD-TAG-03 的祖先展开、同一文件每次出现各留一行 `file_tag`。
+#[test]
+fn tag_write_semantics_are_last_writer_wins_and_expanded() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path();
+    // 索引顺序按 rel_path 升序：a.md 在前、b.md 在后 ⇒ norm=work 的 display 最终应是 b.md 的 "work"
+    write_note(root, "a.md", "#Work 与 #Work/子 出现两次 #Work\n");
+    write_note(root, "b.md", "#work/子/孙\n");
+    let pool = open(root).expect("建索引库");
+    full_index(&pool, root, |_, _| {}).expect("全量索引");
+
+    let tag_row = |norm: &str| -> (String, i64) {
+        pool.with_reader(|conn| {
+            conn.query_row(
+                "SELECT display, is_leaf FROM tag WHERE norm = ?1",
+                rusqlite::params![norm],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .map_err(|e| kp_domain::error::AppError::db_with("读 tag", &e))
+        })
+        .unwrap_or_else(|e| panic!("读 tag({norm}) 失败：{e}"))
+    };
+
+    assert_eq!(
+        tag_row("work").0,
+        "work",
+        "display 必须由**最后一次**写入决定（b.md 的 #work/子/孙）；缓存方案会留成 Work ⇒ 语义已变"
+    );
+    assert_eq!(tag_row("work").1, 0, "有后代 ⇒ is_leaf = 0");
+    assert_eq!(tag_row("work/子").0, "work/子", "祖先链按原大小写登记");
+    assert_eq!(tag_row("work/子/孙").1, 1, "最末级 is_leaf = 1");
+
+    // file_tag 逐次出现各一行：a.md = Work(1) + Work/子(2：自身+祖先) + Work(1) = 4；b.md = work/子/孙 展开 3 = 3
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM file_tag"),
+        7,
+        "每次出现都要各留一行 file_tag（MD-TAG-03 展开后）"
+    );
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM tag"),
+        3,
+        "祖先链展开成独立行：work、work/子、work/子/孙"
+    );
+}

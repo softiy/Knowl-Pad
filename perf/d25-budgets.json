@@ -53,10 +53,20 @@
         "stress": 480000
       },
       "unit": "ms",
-      "owning": "首次全量索引（含分词与 FTS 构建）",
-      "instrumented": false,
-      "plan": "M5 批次 1（后续 PR）",
-      "scope": "起点=扫描开始；终点=全量写入完成；含分词与 FTS"
+      "owning": "**空库上的**首次全量索引（含分词与 FTS 构建）。jieba 词典加载是一次性启动成本（应用启动时后台预热，见 main.rs），**不计入**本条",
+      "instrumented": true,
+      "plan": "",
+      "scope": "起点=命令入口 `full_index_cancellable`（索引库是**一次性空库**，不是夹具目录里的库）；终点=全量写入完成；含分词与 FTS。判据源 `D25 NFR-PERF-03-first-index ms=… scope=fresh-db`。**重建**（库已存在、含逐行删旧）另列 `NFR-PERF-03-rebuild`，**不并入**本条判优（口径见勘误 D-35）"
+    },
+    {
+      "id": "NFR-PERF-03-rebuild",
+      "kind": "proxy",
+      "budget": null,
+      "unit": "ms",
+      "owning": "**proxy（独立观测）**：同一夹具上的**重建**（库已存在 ⇒ 逐行删旧再写）—— 与首次不可比，**不作为 NFR-PERF-03 的判据**",
+      "instrumented": true,
+      "plan": "",
+      "scope": "起点=命令入口 `full_index_cancellable(Force)`（同一个库上第二次跑）；终点=全量写入完成；含逐行删旧。判据源 `D25 NFR-PERF-03-rebuild ms=…`。2026-10-15 实测（标准档 3000 篇）：重建 ≈16689 ms vs 首次 ≈14409 ms，差额集中在 delete_old（109 → 2411 ms）"
     },
     {
       "id": "NFR-PERF-04-search",
@@ -161,7 +171,7 @@
       "kind": "acceptance",
       "budget": null,
       "unit": "boolean",
-      "owning": "**AC-SEARCH-01**（中文命中：3 篇全中 + 排在前列 + 片段高亮 + **< 200 ms**）的严格阈值 —— 判据源 @@D25 AC-SEARCH-01-04-strict ok=1@@（perf_d25_tests::d25_ac_search_01_strict_chinese_search，缺省 10000 篇、可用 @@KP_AC_SEARCH01_NOTES@@ 缩小规模但**判据不放宽**）。**AC-SEARCH-04**（foo→bar 保存后 **2 秒内**搜索一致）**不在本行内**：它是 index_watch_tests::ac_search_04_modify_converges_within_two_seconds 的行为断言（随套件执行，非 D25 采样）",
+      "owning": "**AC-SEARCH-01**（中文命中：3 篇全中 + 排在前列 + 片段高亮 + **< 200 ms**）的严格阈值 —— 判据源 `D25 AC-SEARCH-01-04-strict ok=1`（perf_d25_tests::d25_ac_search_01_strict_chinese_search，缺省 10000 篇、可用 `KP_AC_SEARCH01_NOTES` 缩小规模但**判据不放宽**）。**AC-SEARCH-04**（foo→bar 保存后 **2 秒内**搜索一致）**不在本行内**：它是 index_watch_tests::ac_search_04_modify_converges_within_two_seconds 的行为断言（随套件执行，非 D25 采样）",
       "instrumented": true,
       "plan": ""
     }

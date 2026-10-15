@@ -60,23 +60,41 @@ fn pool_for(root: &Path) -> DbPool {
     open(&db).expect("打开索引库")
 }
 
-/// **NFR-PERF-03**：首次全量索引（含分词与 FTS 构建）。
+/// **一次性空库**：库放在自己的临时目录里（不碰夹具目录），因此测到的必然是
+/// **空库上的首次全量索引** —— 这正是 NFR-PERF-03 的语义（口径见勘误 D-35）。
+///
+/// 为什么不能沿用 `pool_for(root)`：夹具目录里的库会被别的 d25 用例（单线程采样器里
+/// `d25_nfr_perf_02_cold_open` 先跑）建好，于是"首次"变成了"重建"（多出逐行删旧的开销）。
+///
+/// 返回的 `TempDir` 是索引库的生命周期守卫，调用方必须持有到用例结束。
+fn d25_fresh_pool() -> (tempfile::TempDir, DbPool) {
+    let db_dir = tempfile::tempdir().expect("索引库临时目录");
+    let pool = open(&db_dir.path().join("index.db")).expect("打开索引库");
+    (db_dir, pool)
+}
+
+/// **NFR-PERF-03**：**空库上的**首次全量索引（含分词与 FTS 构建）。
+///
+/// 口径修正（2026-10-15，勘误 D-35）：此前用夹具目录里的 `<vault>/.knowlpad`，而单线程采样器里
+/// `d25_nfr_perf_02_cold_open` 会先在同一夹具上建好索引 ⇒ 这条实际测的是**重建**
+/// （采样器报 16807 ms ≈ 重建实测 16689 ms），与指标名不符。改为一次性空库后测得的才是**首次**。
+///
+/// 生产口径对齐：jieba 词典在应用启动时由后台线程预热（见 main.rs 的 setup_app），
+/// 因此这里也先预热再计时 —— 词典加载不是"首次索引"的成本，而是启动成本。
 #[test]
 fn d25_nfr_perf_03_first_index() {
-    let notes = std::env::var("KP_D25_NOTES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(300usize);
+    let notes = d25_notes_arg();
     let (guard, root) = d25_vault(notes);
-    let pool = pool_for(&root);
+    let (db_guard, pool) = d25_fresh_pool();
+    kp_domain::tokenize::warm_up();
     let started = Instant::now();
     let outcome =
         full_index_cancellable(&pool, &root, |_done, _total| {}, IndexMode::Force, || false)
             .expect("全量索引");
     let ms = started.elapsed().as_millis();
-    let _ = &guard;
+    let _ = (&guard, &db_guard);
     println!(
-        "D25 NFR-PERF-03-first-index ms={ms} notes={} indexed={} warnings={} engine_ms={}",
+        "D25 NFR-PERF-03-first-index ms={ms} notes={} indexed={} warnings={} engine_ms={} scope=fresh-db",
         notes,
         outcome.indexed,
         outcome.warnings.len(),
@@ -709,14 +727,33 @@ fn d25_ac_search_01_strict_chinese_search() {
         page.total
     );
 }
-/// **NFR-PERF-03 的分项计时**（M5 批次 5 定位用；**只测量，不改行为**）。
+/// 跑一次全量索引并取分项快照：返回（总毫秒, 引擎毫秒, 文件数, 阶段串）。
+fn d25_profile_once(pool: &DbPool, root: &Path) -> (u64, u64, u64, String) {
+    crate::index_profile::reset();
+    crate::index_profile::enable(true);
+    let started = Instant::now();
+    let outcome = full_index_cancellable(pool, root, |_, _| {}, IndexMode::Force, || false)
+        .expect("全量索引");
+    let total_ms = started.elapsed().as_millis() as u64;
+    crate::index_profile::enable(false);
+    let files = crate::index_profile::files().max(1);
+    let phases: Vec<String> = crate::index_profile::all_ms()
+        .into_iter()
+        .map(|(name, ms)| format!("{name}_ms={ms}"))
+        .collect();
+    (total_ms, outcome.duration_ms, files, phases.join(" "))
+}
+
+/// **NFR-PERF-03 的分项计时**（定位用；**只测量，不改行为**）。
 ///
-/// 预算与判据**一律不动**：本用例不判优，只把首次全量索引拆成阶段打印出来，供定位
-/// 「标准档 16807 ms > 预算 10000 ms」。阶段口径见 `index_profile` 的模块注释
-/// （各阶段串行累加、互不重叠；唯一例外是 `resolve` 覆盖它内部的子阶段与提交）。
+/// 预算与判据**一律不动**。两条线，都在**一次性空库**上跑，因此可复现、不受夹具目录里库状态影响：
+/// - `D25 NFR-PERF-03-breakdown`：**空库上的首次**全量索引（= NFR-PERF-03 的语义）；
+/// - `D25 NFR-PERF-03-rebuild`：同一个库再跑一遍 = **重建**（逐行删旧再写）——
+///   独立观测，**不并入首次判优**（口径见勘误 D-35）。
 ///
-/// 插桩开销：关闭时每个点只做一次 relaxed 原子读；本用例开启后每篇约 20 次 `Instant::now()`
-/// （合计微秒级），相对单篇毫秒级耗时**可忽略**，且**不改变任何索引参数**。
+/// 阶段口径见 `index_profile` 的模块注释（各阶段串行累加、互不重叠；唯一例外是 `resolve`
+/// 覆盖它内部的子阶段与提交）。插桩开销：本用例开启后每篇约 20 次 `Instant::now()`（微秒级），
+/// 相对单篇毫秒级耗时**可忽略**，且**不改变任何索引参数**。
 ///
 /// ⚠️ **必须单独跑**：计数器是进程级全局状态，并行时会统计到别的用例的索引工作。
 /// 正确跑法：`cargo test -p knowl-pad --locked d25_nfr_perf_03_breakdown -- --nocapture --test-threads=1`。
@@ -724,27 +761,21 @@ fn d25_ac_search_01_strict_chinese_search() {
 fn d25_nfr_perf_03_breakdown() {
     let notes = d25_notes_arg();
     let (guard, root) = d25_vault(notes);
-    let pool = pool_for(&root);
+    let (db_guard, pool) = d25_fresh_pool();
     let _lock = crate::index_profile::TEST_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    crate::index_profile::reset();
-    crate::index_profile::enable(true);
-    let started = Instant::now();
-    let outcome = full_index_cancellable(&pool, &root, |_, _| {}, IndexMode::Force, || false)
-        .expect("全量索引");
-    let total_ms = started.elapsed().as_millis() as u64;
-    crate::index_profile::enable(false);
-    let files = crate::index_profile::files().max(1);
-    let per_file_us = total_ms * 1000 / files;
-    let phases: Vec<String> = crate::index_profile::all_ms()
-        .into_iter()
-        .map(|(name, ms)| format!("{name}_ms={ms}"))
-        .collect();
-    let _ = &guard;
+
+    let (ms, engine_ms, files, phases) = d25_profile_once(&pool, &root);
     println!(
-        "D25 NFR-PERF-03-breakdown ms={total_ms} engine_ms={} notes={notes} files={files} us_per_file={per_file_us} {}",
-        outcome.duration_ms,
-        phases.join(" ")
+        "D25 NFR-PERF-03-breakdown ms={ms} engine_ms={engine_ms} notes={notes} files={files} us_per_file={} {phases}",
+        ms * 1000 / files
     );
+
+    let (ms, engine_ms, files, phases) = d25_profile_once(&pool, &root);
+    println!(
+        "D25 NFR-PERF-03-rebuild ms={ms} engine_ms={engine_ms} notes={notes} files={files} us_per_file={} {phases}",
+        ms * 1000 / files
+    );
+    let _ = (&guard, &db_guard);
 }
