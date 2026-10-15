@@ -606,11 +606,14 @@ fn line_filter_reports_a_hint_when_candidates_exceed_the_cap() {
         offset: 0,
         limit: 20,
     };
-    // 两个候选、上限 1 ⇒ 必须报错并带提示文案
+    // 两个候选、上限 1 ⇒ 必须报错并带提示文案（**含当前候选数与上限**，M5 计划 §7.2 第 5 步）
     let err = page_with_line_filter(&pool, &root, &parsed, SortOrder::Path, view, window, 1)
         .expect_err("超限必须报错");
     assert_eq!(err.0.code(), "E_SEARCH_SYNTAX", "与语法错误共用提示通道");
-    assert!(err.0.to_string().contains("缩小范围"), "{err}");
+    let msg = err.0.to_string();
+    assert!(msg.contains("缩小范围"), "{msg}");
+    assert!(msg.contains("当前 2 条"), "提示必须给出当前候选数：{msg}");
+    assert!(msg.contains("上限 1 条"), "提示必须给出上限：{msg}");
     // 边界：上限**等于**候选数时放行（是「超过」才拒绝）
     let ok = page_with_line_filter(&pool, &root, &parsed, SortOrder::Path, view, window, 2)
         .expect("等于上限应放行");
@@ -633,5 +636,10 @@ fn candidate_guard_boundary_and_documented_cap() {
     assert!(guard_candidate_count(300, 300).is_ok(), "等于上限放行");
     let err = guard_candidate_count(301, 300).expect_err("超过上限必须报错");
     assert_eq!(err.0.code(), "E_SEARCH_SYNTAX");
-    assert!(err.0.to_string().contains("缩小范围"), "{err}");
+    let msg = err.0.to_string();
+    assert!(msg.contains("缩小范围"), "{msg}");
+    assert!(
+        msg.contains("当前 301 条") && msg.contains("上限 300 条"),
+        "提示要让用户知道差多远（当前/上限都要报）：{msg}"
+    );
 }

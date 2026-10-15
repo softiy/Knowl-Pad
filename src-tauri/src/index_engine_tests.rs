@@ -3,7 +3,8 @@
 use std::fs;
 use std::path::Path;
 
-use crate::index_engine::{full_index, scan_vault, MAX_NOTE_BYTES};
+use crate::index_engine::{full_index, scan_vault};
+use crate::index_scan::MAX_NOTE_BYTES;
 use crate::storage::index::open;
 use crate::storage::pool::DbPool;
 

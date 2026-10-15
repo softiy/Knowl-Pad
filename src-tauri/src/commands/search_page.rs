@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use crate::commands::search::TOO_MANY_LINE_CANDIDATES;
+use crate::commands::search::too_many_line_candidates;
 use crate::commands::search_view::{snippet_at, SearchResultItem, SearchSnippet};
 use crate::error_wrapper::KpError;
 use crate::storage::pool::DbPool;
@@ -123,9 +123,9 @@ pub(crate) fn page_without_line_filter(
 /// 抽成纯函数是为了能直接断言边界（`max` 允许、`max + 1` 拒绝），不必真的造 5001 篇笔记。
 pub(crate) fn guard_candidate_count(candidates: usize, max: usize) -> Result<(), KpError> {
     if candidates > max {
-        return Err(KpError(AppError::SearchSyntax(
-            TOO_MANY_LINE_CANDIDATES.to_string(),
-        )));
+        return Err(KpError(AppError::SearchSyntax(too_many_line_candidates(
+            candidates, max,
+        ))));
     }
     Ok(())
 }
