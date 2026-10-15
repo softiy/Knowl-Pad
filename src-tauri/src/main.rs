@@ -15,6 +15,8 @@ mod index_reliability_tests;
 mod index_resolve;
 // 扫描侧（遍历/元信息/命名/指纹）—— 从 index_engine 拆出（CODE-11 硬上限）
 mod index_scan;
+// 索引写入路径的全部缓存 SQL（集中一处，便于用用例钉住 rusqlite 语句缓存的容量）
+mod index_sql;
 mod index_watch;
 mod index_watch_events;
 mod index_watch_paths;
