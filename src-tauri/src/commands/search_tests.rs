@@ -621,14 +621,17 @@ fn line_filter_reports_a_hint_when_candidates_exceed_the_cap() {
 
 /// **裁定③** 的纯函数边界；顺带钉住上限常量的取值 ——
 /// 改它必须同步 PRD §5.3.4.3 与 perf/d25-budgets.json。
+///
+/// 300 是 **M5 批次 5 的实测标定值**（最坏情况 ≈3.2 ms/候选；300 条实测 1070–1073 ms），
+/// 不是估计值。这条断言是**有意设置的绊线**：改常量就会红，逼着改的人同时更新真源与预算表。
 #[test]
 fn candidate_guard_boundary_and_documented_cap() {
     assert_eq!(
-        MAX_LINE_FILTER_CANDIDATES, 5000,
+        MAX_LINE_FILTER_CANDIDATES, 300,
         "上限改动必须同步 PRD §5.3.4.3 与 perf/d25-budgets.json"
     );
-    assert!(guard_candidate_count(5000, 5000).is_ok(), "等于上限放行");
-    let err = guard_candidate_count(5001, 5000).expect_err("超过上限必须报错");
+    assert!(guard_candidate_count(300, 300).is_ok(), "等于上限放行");
+    let err = guard_candidate_count(301, 300).expect_err("超过上限必须报错");
     assert_eq!(err.0.code(), "E_SEARCH_SYNTAX");
     assert!(err.0.to_string().contains("缩小范围"), "{err}");
 }

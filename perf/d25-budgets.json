@@ -67,10 +67,10 @@
         "stress": 500
       },
       "unit": "ms",
-      "owning": "全文搜索响应（后端查询部分）",
-      "instrumented": false,
-      "plan": "待 M5 批次 1 交付搜索命令后真测；当前只有 FTS 原语 proxy（见下方 proxy 条目）",
-      "scope": "起点=防抖结束；终点=结果呈现；端到端（待搜索命令交付）"
+      "owning": "**后端部分**：命令层 `search_fulltext_impl` 的耗时（含查询构造、FTS 检索、排序、片段定位与命中笔记读盘）。**不含** IPC 往返与前端渲染 —— PRD §6.1.4 的终点是「结果呈现」，那后半跳仍属**端到端/手工验收**；本条只判后端这一半，因此是达标的**下界**而非全部证据",
+      "instrumented": true,
+      "plan": "",
+      "scope": "起点=防抖结束（前端调用命令之前）；终点=命令返回第一页。判据源：`D25 NFR-PERF-04-search ms=… scope=backend`（perf_d25_tests::d25_nfr_perf_04_search；宽/窄两条查询各测一次，判**宽**查询）"
     },
     {
       "id": "NFR-PERF-04-search-fts-proxy",
@@ -83,13 +83,13 @@
     },
     {
       "id": "NFR-PERF-04-line-filter",
-      "kind": "pending",
+      "kind": "proxy",
       "budget": null,
       "unit": "ms",
-      "owning": "**独立计量**：`line:(...)` 查询的端到端耗时（全候选读盘 + 原文同行判定）—— 与常规全文搜索不可比，**不并入 NFR-PERF-04-search**",
-      "instrumented": false,
-      "plan": "M5 批次 5 用三档夹具实测",
-      "scope": "起点=命令入口；终点=返回第一页；含候选全量扫描与候选数上限判定。**实测前不计入 NFR-PERF-04 的达标证据**（2026-10-15 裁定，口径见 PRD §5.3.4.3）"
+      "owning": "**proxy（独立计量）**：`line:(...)` 查询的后端耗时（全候选读盘 + 原文同行判定）—— 与常规全文搜索不可比，**不并入 NFR-PERF-04-search**",
+      "instrumented": true,
+      "plan": "",
+      "scope": "起点=命令入口；终点=返回第一页；含候选全量扫描与候选数上限判定。**不计入 NFR-PERF-04 的达标证据**（2026-10-15 裁定，口径见 PRD §5.3.4.3）。2026-10-15 批次 5 实测（标准档 3000 篇 × 2KB，最坏情况 = 候选为全部笔记）：300 候选 1073/1070 ms、1000 候选 3314/3331 ms、3000 候选 9440/9611 ms ⇒ `MAX_LINE_FILTER_CANDIDATES` 由 5000 标定为 **300**；判据源 `D25 NFR-PERF-04-line-filter …`"
     },
     {
       "id": "NFR-PERF-10-incremental",
@@ -161,9 +161,9 @@
       "kind": "acceptance",
       "budget": null,
       "unit": "boolean",
-      "owning": "AC-SEARCH-01（中文命中）/ AC-SEARCH-04（搜索与索引一致）的严格阈值口径",
-      "instrumented": false,
-      "plan": "M5 批次 1（随搜索域功能）"
+      "owning": "**AC-SEARCH-01**（中文命中：3 篇全中 + 排在前列 + 片段高亮 + **< 200 ms**）的严格阈值 —— 判据源 @@D25 AC-SEARCH-01-04-strict ok=1@@（perf_d25_tests::d25_ac_search_01_strict_chinese_search，缺省 10000 篇、可用 @@KP_AC_SEARCH01_NOTES@@ 缩小规模但**判据不放宽**）。**AC-SEARCH-04**（foo→bar 保存后 **2 秒内**搜索一致）**不在本行内**：它是 index_watch_tests::ac_search_04_modify_converges_within_two_seconds 的行为断言（随套件执行，非 D25 采样）",
+      "instrumented": true,
+      "plan": ""
     }
   ],
   "existing": [

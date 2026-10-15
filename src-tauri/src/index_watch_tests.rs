@@ -55,6 +55,23 @@ fn link_status(pool: &crate::storage::pool::DbPool, target: &str) -> String {
     link_status_opt(pool, target).expect("读裁决")
 }
 
+/// 某个词是否命中指定笔记 —— 判据面是**搜索**（AC-SEARCH-04 的严格口径要求如此），
+/// 而不是"库里有一行"。返回命中行数（0 表示不再命中）。
+fn fts_hits(pool: &crate::storage::pool::DbPool, term: &str, rel_path: &str) -> i64 {
+    let expr = kp_domain::search::build_match_expr(term, kp_domain::search::MatchMode::All)
+        .expect("构造 MATCH");
+    pool.with_reader(|conn| {
+        conn.query_row(
+            "SELECT count(*) FROM note_fts JOIN file f ON f.id = note_fts.rowid \
+             WHERE note_fts MATCH ?1 AND f.rel_path = ?2 AND f.deleted = 0",
+            rusqlite::params![expr, rel_path],
+            |r| r.get(0),
+        )
+        .map_err(|e| AppError::db(&format!("查 FTS：{e}")))
+    })
+    .expect("查 FTS")
+}
+
 /// **等待**某目标的裁决变成期望值（带截止时间）。
 ///
 /// 为什么必须等：`apply_changes` 的顺序是"增量写库 → 事件回调 → 一次裁决与计数重算"，
@@ -113,14 +130,21 @@ fn merge_events_dedupes_and_ignores() {
     );
 }
 
-/// **AC-SEARCH-04**：外部新增一篇笔记 → 监听触发 → 增量索引 → 可检索。
+/// **AC-SEARCH-04（严格阈值，PRD §4.5.2）**：把 `a.md` 里的 `foo` 改成 `bar` 并保存 ⇒
+/// **2 秒内**搜 `foo` 不再命中 `a.md`、搜 `bar` 命中 `a.md`，且**无需手动重建索引**。
+///
+/// M3 期的宽松口径（10 秒上限、只断言"新增的内容可检索"）在此升级为验收口径：
+/// 判据面是**搜索**（FTS 命中集合），而不是"库里有一行"。
+///
+/// 顺带覆盖（**不属于 AC-SEARCH-04 的判据**）：同一次增量里的链接裁决 dangling → resolved。
 #[test]
-fn ac_search_04_external_change_is_indexed_and_searchable() {
+fn ac_search_04_modify_converges_within_two_seconds() {
     let dir = tempfile::tempdir().expect("临时目录");
     let root = dir.path().to_path_buf();
-    fs::write(root.join("a.md"), "# 甲\n\n已有内容，指向 [[未来]]\n").expect("写笔记");
+    fs::write(root.join("a.md"), "# 甲\n\nfoo 指向 [[未来]]\n").expect("写笔记");
     let pool = Arc::new(open(&root).expect("建索引库"));
     full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    assert_eq!(fts_hits(&pool, "foo", "a.md"), 1, "基线：foo 命中 a.md");
 
     let (tx, rx) = std::sync::mpsc::channel::<Vec<Change>>();
     let handle = start_watcher_with(
@@ -134,45 +158,34 @@ fn ac_search_04_external_change_is_indexed_and_searchable() {
     .expect("启动监听");
 
     std::thread::sleep(SETTLE_BEFORE_CHANGE);
-    fs::write(root.join("外部新增.md"), "# 外部新增\n\n中文内容可检索\n").expect("外部写入");
 
+    // 外部保存：foo → bar（PRD 的原文场景），**不手动触发任何重建**
     let started = std::time::Instant::now();
+    fs::write(root.join("a.md"), "# 甲\n\nbar 指向 [[未来]]\n").expect("外部保存");
+    let deadline = started + Duration::from_secs(2);
+    let mut converged = false;
+    while std::time::Instant::now() < deadline {
+        if fts_hits(&pool, "bar", "a.md") == 1 && fts_hits(&pool, "foo", "a.md") == 0 {
+            converged = true;
+            break;
+        }
+        std::thread::sleep(POLL_STEP_FAST);
+    }
+    let elapsed_ms = started.elapsed().as_millis();
+    println!("AC-SEARCH-04（严格）foo→bar 保存 → 搜索一致：{elapsed_ms} ms");
+    assert!(
+        converged,
+        "PRD §4.5.2：保存后 2 秒内搜索必须一致（foo 不再命中、bar 命中），实测 {elapsed_ms} ms 仍未收敛"
+    );
     let changes = rx
         .recv_timeout(Duration::from_secs(15))
         .expect("应收到变更事件");
-    let elapsed_ms = started.elapsed().as_millis();
-    println!("AC-SEARCH-04 耗时（外部写入 → 收到事件）：{elapsed_ms} ms");
-    assert!(
-        elapsed_ms < 10_000,
-        "外部变更到事件耗时 {elapsed_ms} ms 超出宽松上限"
-    );
     assert!(
         changes
             .iter()
-            .any(|c| matches!(c, Change::Created(p) if p == "外部新增.md")),
-        "变更应为 created：{changes:?}"
+            .any(|c| matches!(c, Change::Modified(p) if p == "a.md")),
+        "变更应为 modified：{changes:?}"
     );
-    assert_eq!(
-        count(
-            &pool,
-            "SELECT count(*) FROM file WHERE rel_path = '外部新增.md'"
-        ),
-        1,
-        "AC-SEARCH-04：外部新增应已被索引"
-    );
-    let expr = kp_domain::search::build_match_expr("中文内容", kp_domain::search::MatchMode::All)
-        .expect("构造 MATCH");
-    let hits: i64 = pool
-        .with_reader(|conn| {
-            conn.query_row(
-                "SELECT count(*) FROM note_fts WHERE note_fts MATCH ?1",
-                rusqlite::params![expr],
-                |r| r.get(0),
-            )
-            .map_err(|_| AppError::db("FTS 查询"))
-        })
-        .expect("FTS 查询");
-    assert!(hits >= 1, "外部新增的内容应可检索（expr = {expr}）");
     // 增量裁决：a.md 里有一条指向 `未来.md` 的链接，此刻应为 dangling
     let status_before = wait_for_status(&pool, "未来", "dangling", Duration::from_secs(10));
     assert_eq!(status_before, "dangling", "文件还不存在时链接应为 dangling");

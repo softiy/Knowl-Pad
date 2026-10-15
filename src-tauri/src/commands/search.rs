@@ -45,10 +45,23 @@ pub const MAX_CONTEXT_LINES: usize = 20;
 /// 候选笔记会被逐篇读盘。没有上限时，一个宽泛的 `line:` 查询在大 Vault 上会长时间阻塞
 /// 且**没有任何反馈**（比慢更糟）。
 ///
-/// 取值理由：5000 条候选 × 每篇一次读盘 + 一次子串扫描 ≈ 数百毫秒量级，是本产品
-/// 「任何 > 50 ms 的阻塞即缺陷」（R-08）之上仍**可被接受为一次显式操作**的上界；
-/// 它是保守估计，**待 M5 批次 5 用三档夹具实测后标定**（登记见 perf/d25-budgets.json）。
-pub const MAX_LINE_FILTER_CANDIDATES: usize = 5000;
+/// **取值依据（2026-10-15 M5 批次 5 实测；标准档夹具 3000 篇 × 2KB；最坏情况 =
+/// 不带关键词与 path:/tag: 限定 ⇒ 候选 = 全部笔记；走命令入口取第一页）**：
+///
+/// | 候选数 | 实测耗时（两轮独立测量） |
+/// | --- | --- |
+/// | 300 | 1073 ms / 1070 ms |
+/// | 1000 | 3314 ms / 3331 ms |
+/// | 3000 | 9440 ms / 9611 ms |
+///
+/// ⇒ 约 **3.2 ms/候选**、线性。原定的 5000 条按此外推是 **≈16 秒**（3000 条实测已 9.4 s），
+/// 远超「可被接受为一次显式操作」的范围（R-08：> 50 ms 的阻塞即缺陷）。故上限取 **300**：
+/// 它的最坏耗时是**实测点**（≈1.07 s），不是外推值。
+///
+/// 复现：`KP_D25_VAULT=<夹具> KP_D25_NOTES=<篇数> cargo test -p knowl-pad --locked
+/// d25_nfr_perf_04_line_filter -- --nocapture --test-threads=1`。
+/// 数字同步登记在 PRD §5.3.4.3 与 perf/d25-budgets.json 的 NFR-PERF-04-line-filter 条目。
+pub const MAX_LINE_FILTER_CANDIDATES: usize = 300;
 /// 候选数超限时的提示文案（与语法错误共用 E_SEARCH_SYNTAX 的「显示语法提示」通道）。
 pub const TOO_MANY_LINE_CANDIDATES: &str =
     "line: 的候选笔记过多，请先缩小范围（加上关键词，或用 path: / tag: 限定）后再试";

@@ -27,8 +27,13 @@ if (!existsSync(BUDGETS)) {
 const spec = JSON.parse(readFileSync(BUDGETS, "utf8"));
 
 // 一次跑完所有 D25 用例（同一个测试二进制，避免多次编译/多进程干扰墙钟）。
-console.log("▶ 运行 D-25 度量用例（tier=" + tier + "）");
-const line = ["cargo", "test", "-p", "knowl-pad", "--locked", "--", "--nocapture", "d25_"].join(" ");
+//
+// ⚠️ `--test-threads=1` 是**必须**的（2026-10-15 M5 批次 5 实测发现）：
+//   ① 多个 d25 用例会索引同一个夹具目录，并行时互相踩库 —— 实测两个用例同时全量索引会让
+//      `full_index_cancellable` 直接失败（不是"慢"，是错）；
+//   ② 墙钟类指标在并行下会被同机竞争污染，测出来的数字不能作为预算判据。
+console.log("▶ 运行 D-25 度量用例（tier=" + tier + "，单线程）");
+const line = ["cargo", "test", "-p", "knowl-pad", "--locked", "--", "--nocapture", "--test-threads=1", "d25_"].join(" ");
 const res = spawnSync(line, { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", shell: true, env: { ...process.env, KP_D25_TIER: tier } });
 const out = (res.stdout || "") + (res.stderr || "");
 
