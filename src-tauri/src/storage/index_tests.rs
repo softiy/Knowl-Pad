@@ -329,7 +329,8 @@ fn fts_roundtrip_matches_chinese_phrase_after_tokenization() {
     .expect("写入 FTS");
 
     let hit_expr =
-        kp_domain::search::build_match_expr("力导向布局", kp_domain::search::MatchMode::All);
+        kp_domain::search::build_match_expr("力导向布局", kp_domain::search::MatchMode::All)
+            .expect("构造 MATCH");
     let hits: i64 = pool
         .with_reader(|conn| {
             conn.query_row(
@@ -343,7 +344,8 @@ fn fts_roundtrip_matches_chinese_phrase_after_tokenization() {
     assert!(hits >= 1, "中文短语应命中（expr = {hit_expr}）");
 
     let miss_expr =
-        kp_domain::search::build_match_expr("量子纠缠退相干", kp_domain::search::MatchMode::All);
+        kp_domain::search::build_match_expr("量子纠缠退相干", kp_domain::search::MatchMode::All)
+            .expect("构造 MATCH");
     let misses: i64 = pool
         .with_reader(|conn| {
             conn.query_row(
@@ -362,7 +364,8 @@ fn fts_roundtrip_matches_chinese_phrase_after_tokenization() {
 fn fts_special_characters_do_not_error() {
     let dir = tempfile::tempdir().expect("临时目录");
     let pool = crate::storage::index::open(dir.path()).expect("建索引库");
-    let expr = kp_domain::search::build_match_expr("a*b (c) ^d", kp_domain::search::MatchMode::All);
+    let expr = kp_domain::search::build_match_expr("a*b (c) ^d", kp_domain::search::MatchMode::All)
+        .expect("构造 MATCH");
     let res: Result<i64, _> = pool.with_reader(|conn| {
         conn.query_row(
             "SELECT count(*) FROM note_fts WHERE note_fts MATCH ?1",

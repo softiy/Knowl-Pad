@@ -4,13 +4,19 @@
 //! （FTS5 的 snippet() 作用于分词后的 plain_text，会带空格、与原文不逐字一致，
 //! 见 kp_domain::search_hits 的模块注释），故片段生成在命令层。
 //!
+//! **高级语法过滤条件在这里落成 SQL 谓词**（FR-SEARCH-20~22）：path: → rel_path 前缀、
+//! file: → name 子串、tag: → file_tag/tag 关联（含层级前缀）。它们**不进 MATCH**，
+//! 理由见 kp_domain::search_syntax 顶部。
+//!
 //! **排序方向只来自本模块的枚举**：ORDER BY 片段不接受任何来自前端的字符串，
-//! 从结构上消除 SQL 注入面（而不是靠转义）。
+//! 从结构上消除 SQL 注入面（而不是靠转义）。过滤条件的取值一律走**绑定参数**。
 
 use kp_domain::error::AppError;
-use rusqlite::params;
+use kp_domain::search::ParsedQuery;
+use rusqlite::{params_from_iter, ToSql};
 
 use crate::storage::pool::DbPool;
+use crate::storage::search_sql::{build_spec, QuerySpec};
 
 /// 全文搜索排序（FR-SEARCH-06：相关度 / 修改时间 / 文件名 / 路径；默认相关度）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,12 +41,16 @@ impl SortOrder {
 
     /// ORDER BY 片段。bm25() 返回**负值**，越小越相关（FTS5 官方口径）；
     /// 一律追加 rel_path 作为**同分决胜键**，否则分页边界的顺序不稳定（同一页可能重复/漏项）。
-    fn order_by(self) -> &'static str {
-        match self {
-            Self::Relevance => "score ASC, f.rel_path ASC",
-            Self::Mtime => "f.mtime_ms DESC, f.rel_path ASC",
-            Self::Name => "f.name COLLATE NOCASE ASC, f.rel_path ASC",
-            Self::Path => "f.rel_path ASC",
+    ///
+    /// `has_score` 为 false 表示这次查询没有 MATCH（纯过滤查询），此时**没有 bm25 可用**：
+    /// 相关度退化为「修改时间倒序」，其余三种排序（FR-SEARCH-06）照常生效 ——
+    /// 早期版本在纯过滤查询里**一律**按修改时间排，把用户选的「按路径/按文件名」静默吃掉了。
+    pub(super) fn order_by(self, has_score: bool) -> &'static str {
+        match (self, has_score) {
+            (Self::Relevance, true) => "score ASC, f.rel_path ASC",
+            (Self::Relevance, false) | (Self::Mtime, _) => "f.mtime_ms DESC, f.rel_path ASC",
+            (Self::Name, _) => "f.name COLLATE NOCASE ASC, f.rel_path ASC",
+            (Self::Path, _) => "f.rel_path ASC",
         }
     }
 }
@@ -51,33 +61,37 @@ pub struct FtsHit {
     pub rel_path: String,
     pub name: String,
     pub mtime_ms: i64,
-    /// bm25 相关度（负值，越小越相关）
+    /// bm25 相关度（负值，越小越相关）；纯过滤查询没有 bm25，固定为 0。
     pub score: f64,
 }
 
-const FROM_WHERE: &str =
-    "FROM note_fts JOIN file f ON f.id = note_fts.rowid WHERE note_fts MATCH ?1 AND f.deleted = 0";
-
-/// 分页全文搜索：返回（本页命中, 命中总数）。total 与 items 走同一表达式，避免"总数与结果对不上"。
-pub fn fulltext_page(
+/// 执行主查询；`page` 为 None 时不加 LIMIT（供 `line:` 的全候选扫描用）。
+fn fetch(
     pool: &DbPool,
-    expr: &str,
-    sort: SortOrder,
-    limit: i64,
-    offset: i64,
-) -> Result<(Vec<FtsHit>, i64), AppError> {
-    let expr = expr.to_string();
+    spec: QuerySpec,
+    page: Option<(i64, i64)>,
+) -> Result<Vec<FtsHit>, AppError> {
     pool.with_reader(move |conn| {
+        let tail = if page.is_some() {
+            " LIMIT ? OFFSET ?"
+        } else {
+            ""
+        };
         let sql = format!(
-            "SELECT f.rel_path, f.name, f.mtime_ms, bm25(note_fts) AS score {FROM_WHERE} \
-             ORDER BY {} LIMIT ?2 OFFSET ?3",
-            sort.order_by()
+            "{} {} ORDER BY {}{tail}",
+            spec.select, spec.from_where, spec.order_by
         );
+        let mut values: Vec<&dyn ToSql> = spec.params.iter().map(|p| p as &dyn ToSql).collect();
+        let (limit, offset) = page.unwrap_or((0, 0));
+        if page.is_some() {
+            values.push(&limit);
+            values.push(&offset);
+        }
         let mut stmt = conn
             .prepare(&sql)
             .map_err(|e| AppError::db_with("准备全文搜索", &e))?;
         let rows = stmt
-            .query_map(params![expr, limit, offset], |r| {
+            .query_map(params_from_iter(values), |r| {
                 Ok(FtsHit {
                     rel_path: r.get(0)?,
                     name: r.get(1)?,
@@ -90,15 +104,45 @@ pub fn fulltext_page(
         for row in rows {
             hits.push(row.map_err(|e| AppError::db_with("读取全文搜索结果", &e))?);
         }
-        let total: i64 = conn
-            .query_row(
-                &format!("SELECT count(*) {FROM_WHERE}"),
-                params![expr],
-                |r| r.get(0),
-            )
-            .map_err(|e| AppError::db_with("统计全文搜索总数", &e))?;
-        Ok((hits, total))
+        Ok(hits)
     })
+}
+
+/// 分页全文搜索：返回（本页命中, 命中总数）。
+///
+/// total 与 items 走**同一 spec**（同一 MATCH 表达式 + 同一过滤谓词），
+/// 否则会出现「总数与结果对不上」，分页随即漏项或重复（IPC-05）。
+pub fn fulltext_page(
+    pool: &DbPool,
+    parsed: &ParsedQuery,
+    sort: SortOrder,
+    limit: i64,
+    offset: i64,
+) -> Result<(Vec<FtsHit>, i64), AppError> {
+    let spec = build_spec(parsed, sort);
+    let count_sql = format!("SELECT count(*) {}", spec.from_where);
+    let count_params: Vec<String> = spec.params.clone();
+    let hits = fetch(pool, spec, Some((limit, offset)))?;
+    let total = pool.with_reader(move |conn| {
+        conn.query_row(&count_sql, params_from_iter(count_params.iter()), |r| {
+            r.get::<_, i64>(0)
+        })
+        .map_err(|e| AppError::db_with("统计全文搜索总数", &e))
+    })?;
+    Ok((hits, total))
+}
+
+/// 取**全部**候选行（不分页）。
+///
+/// 只有 `line:(...)` 需要它：同一行共现无法在 SQL 里表达（索引里没有换行信息），
+/// 必须拿到完整候选集合才能读原文过滤，并据此算出**过滤后**的 total。
+pub fn fulltext_scan(
+    pool: &DbPool,
+    parsed: &ParsedQuery,
+    sort: SortOrder,
+) -> Result<Vec<FtsHit>, AppError> {
+    let spec = build_spec(parsed, sort);
+    fetch(pool, spec, None)
 }
 
 /// 快速打开的候选（FR-SEARCH-40：**只按文件名/路径，不搜正文**）。

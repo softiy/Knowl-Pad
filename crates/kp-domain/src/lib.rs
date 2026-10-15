@@ -20,6 +20,7 @@ pub mod quick_open;
 pub mod search;
 pub mod search_history;
 pub mod search_hits;
+pub mod search_syntax;
 pub mod snippet;
 pub mod tokenize;
 pub mod vault_paths;

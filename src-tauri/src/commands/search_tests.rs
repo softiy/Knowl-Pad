@@ -436,3 +436,122 @@ fn history_without_global_db_reports_error() {
     let err = search_history_get_impl(&state).expect_err("没有全局库");
     assert_eq!(err.0.code(), "E_DB_ERROR");
 }
+
+// ── 高级语法（FR-SEARCH-20~27）与语法错误提示（AC-SEARCH-05）────────────────
+
+/// 文件较多时按 (相对路径, 正文) 建夹具（AC-SEARCH-02 需要 50 篇的规模）。
+fn fixture_many(files: &[(String, String)]) -> (tempfile::TempDir, AppState) {
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    fixture(&refs)
+}
+
+/// AC-SEARCH-02 的原文场景：50 篇带 `#工作/2026`，其中 8 篇含短语「季度报告」、
+/// 2 篇同时含「草稿」⇒ `tag:#工作/2026 "季度报告" -草稿` 必须返回 **6** 条（8 − 2）。
+#[test]
+fn ac_search_02_advanced_syntax_combination_returns_six() {
+    let mut files: Vec<(String, String)> = Vec::new();
+    for i in 0..50 {
+        let body = match i {
+            // 前 2 篇：含短语 + 草稿（应被 -草稿 排除）
+            0..=1 => format!("#工作/2026 季度报告 草稿 编号{i}\n"),
+            // 接着 6 篇：含短语（应命中）
+            2..=7 => format!("#工作/2026 季度报告 编号{i}\n"),
+            _ => format!("#工作/2026 其它内容 编号{i}\n"),
+        };
+        files.push((format!("work/2026/n{i:02}.md"), body));
+    }
+    let (_v, state) = fixture_many(&files);
+    let page =
+        search_fulltext_impl(&state, fulltext("tag:#工作/2026 \"季度报告\" -草稿")).expect("搜索");
+    assert_eq!(
+        page.total, 6,
+        "8 篇含短语、其中 2 篇含草稿 → 6（AC-SEARCH-02 的原文场景）"
+    );
+    assert_eq!(page.items.len(), 6, "本页条数与 total 一致");
+    for item in &page.items {
+        assert!(item.hit_count >= 1, "每条都应命中短语：{item:?}");
+    }
+}
+
+/// FR-SEARCH-23：`line:(...)` 要求组内词在**同一行**共现 —— 分处两行的笔记不命中。
+#[test]
+fn line_filter_requires_terms_on_one_line() {
+    let (_v, state) = fixture(&[
+        ("same.md", "季度 报告 在同一行\n别的行\n"),
+        ("split.md", "季度 在第一行\n另一行 报告\n"),
+        ("none.md", "毫不相关\n"),
+    ]);
+    let page = search_fulltext_impl(&state, fulltext("line:(季度 报告)")).expect("搜索");
+    let paths: Vec<&str> = page.items.iter().map(|i| i.rel_path.as_str()).collect();
+    assert_eq!(page.total, 1, "只有同行共现的那篇：{paths:?}");
+    assert_eq!(paths, vec!["same.md"]);
+}
+
+/// FR-SEARCH-22：只写 `tag:#工作` 也要能列笔记（纯过滤查询，没有全文词）。
+#[test]
+fn tag_only_query_lists_tagged_notes() {
+    let (_v, state) = fixture(&[("a.md", "#工作/2026 甲\n"), ("b.md", "#私事 乙\n")]);
+    let page = search_fulltext_impl(&state, fulltext("tag:#工作")).expect("搜索");
+    assert_eq!(page.total, 1);
+    assert_eq!(page.items[0].rel_path, "a.md");
+    assert!(!page.has_more);
+}
+
+/// FR-SEARCH-20/21：path: 与 file: 是**过滤条件**，正文里出现同样的字不算命中。
+#[test]
+fn path_and_file_filters_do_not_search_the_body() {
+    let (_v, state) = fixture(&[
+        ("work/report.md", "季度 内容\n"),
+        ("other/report.md", "季度 内容\n"),
+        (
+            "other/note.md",
+            "work/report.md 只是正文里的一串字，也含 内容 二字\n",
+        ),
+    ]);
+    let by_path = search_fulltext_impl(&state, fulltext("path:work/ 季度")).expect("搜索");
+    assert_eq!(by_path.total, 1, "只有 work/ 下的那篇");
+    assert_eq!(by_path.items[0].rel_path, "work/report.md");
+    let by_file = search_fulltext_impl(&state, fulltext("file:note 内容")).expect("搜索");
+    assert_eq!(by_file.total, 1, "只有文件名带 note 的那篇");
+    assert_eq!(by_file.items[0].rel_path, "other/note.md");
+}
+
+/// AC-SEARCH-05：未闭合引号必须给出**明确的语法错误提示**，
+/// 而不是静默返回空结果（本夹具的正文里**确实**有这串字，静默空结果会被这条用例抓住）。
+#[test]
+fn ac_search_05_unclosed_quote_reports_syntax_error_not_empty_results() {
+    let (_v, state) = fixture(&[("a.md", "未闭合的短语 就在正文里\n")]);
+    let err = search_fulltext_impl(&state, fulltext("\"未闭合的短语")).expect_err("必须报语法错误");
+    assert_eq!(err.0.code(), "E_SEARCH_SYNTAX");
+    assert_eq!(err.0.kind(), "SearchSyntax");
+    let message = err.0.to_string();
+    assert!(
+        message.contains("双引号未闭合"),
+        "提示必须指出原因：{message}"
+    );
+    assert!(
+        !message.contains("未闭合的短语"),
+        "提示不得回显用户查询串（SEC-09 的同一纪律）：{message}"
+    );
+}
+
+/// FR-SEARCH-27：`line:(` 括号未闭合同样是语法错误，不得静默当成普通词。
+#[test]
+fn unclosed_line_group_reports_syntax_error() {
+    let (_v, state) = fixture(&[("a.md", "任意内容\n")]);
+    let err =
+        search_fulltext_impl(&state, fulltext("line:(季度 报告")).expect_err("必须报语法错误");
+    assert_eq!(err.0.code(), "E_SEARCH_SYNTAX");
+    assert!(err.0.to_string().contains("括号未闭合"), "{err}");
+}
+
+/// 只有键没有值的过滤条件要明说，不能静默忽略（否则用户以为过滤生效了）。
+#[test]
+fn empty_filter_value_reports_syntax_error() {
+    let (_v, state) = fixture(&[("a.md", "任意内容\n")]);
+    let err = search_fulltext_impl(&state, fulltext("tag: 内容")).expect_err("必须报语法错误");
+    assert_eq!(err.0.code(), "E_SEARCH_SYNTAX");
+}

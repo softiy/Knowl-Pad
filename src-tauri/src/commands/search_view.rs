@@ -11,10 +11,10 @@ use kp_domain::find_in_file::LocatedMatch;
 use kp_domain::search_hits::Hit;
 use kp_domain::snippet::{extract_snippet, Snippet};
 
-/// 片段中的一行。
+/// 片段中的一行（契约名见 PRD §5.3.4.1 的 `SnippetLine`；Rust 侧同名，两端一致）。
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct SnippetLineView {
+pub struct SnippetLine {
     pub line: u32,
     pub text: String,
     /// 命中所在行（与反链片段的 isLinkLine 同义，按搜索语境改名）
@@ -28,7 +28,7 @@ pub struct SnippetLineView {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchSnippet {
-    pub lines: Vec<SnippetLineView>,
+    pub lines: Vec<SnippetLine>,
     pub highlight_line: u32,
     pub highlight_start: usize,
     pub highlight_end: usize,
@@ -40,7 +40,7 @@ impl From<Snippet> for SearchSnippet {
             lines: s
                 .lines
                 .into_iter()
-                .map(|l| SnippetLineView {
+                .map(|l| SnippetLine {
                     line: l.line,
                     text: l.text,
                     is_hit_line: l.is_link_line,

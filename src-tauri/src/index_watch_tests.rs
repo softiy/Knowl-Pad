@@ -160,7 +160,8 @@ fn ac_search_04_external_change_is_indexed_and_searchable() {
         1,
         "AC-SEARCH-04：外部新增应已被索引"
     );
-    let expr = kp_domain::search::build_match_expr("中文内容", kp_domain::search::MatchMode::All);
+    let expr = kp_domain::search::build_match_expr("中文内容", kp_domain::search::MatchMode::All)
+        .expect("构造 MATCH");
     let hits: i64 = pool
         .with_reader(|conn| {
             conn.query_row(

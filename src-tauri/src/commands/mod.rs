@@ -20,6 +20,7 @@ pub mod paths;
 pub mod search;
 mod search_file;
 mod search_index;
+mod search_page;
 #[cfg(test)]
 mod search_tests;
 mod search_view;

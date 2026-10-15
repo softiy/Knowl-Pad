@@ -61,6 +61,41 @@ pub fn locate(content: &str, terms: &[String]) -> Vec<Hit> {
         .collect()
 }
 
+/// FR-SEARCH-23：`line:(...)` 要求组内词**出现在同一行**。
+///
+/// **为什么不在 FTS 里做**：写入 `note_fts.plain_text` 的是 jieba 分词后用**单空格**连接的结果
+/// （FTS-01），换行信息在索引里**根本不存在** —— SQL 侧无法表达「同一行」。因此这一条只能对
+/// **原文**判定，代价是带 `line:` 的查询必须把候选笔记读一遍（见 commands::search_index 的说明）。
+///
+/// 词表为空 = 没有这条约束。
+pub fn same_line(content: &str, terms: &[String]) -> bool {
+    let mut shared: Option<Vec<u32>> = None;
+    for term in terms {
+        let lines = lines_of(content, term);
+        match shared.as_mut() {
+            None => shared = Some(lines),
+            Some(acc) => {
+                acc.retain(|line| lines.binary_search(line).is_ok());
+                if acc.is_empty() {
+                    return false;
+                }
+            }
+        }
+    }
+    shared.is_none_or(|lines| !lines.is_empty())
+}
+
+/// 某个词在原文里出现的全部行号（升序去重）。
+fn lines_of(content: &str, term: &str) -> Vec<u32> {
+    let mut lines: Vec<u32> = find_all(content, term, FindOptions::default())
+        .into_iter()
+        .map(|m| m.line)
+        .collect();
+    lines.sort_unstable();
+    lines.dedup();
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +156,43 @@ mod tests {
         let mut sorted = hits.clone();
         sorted.sort_by_key(|h| h.start_byte);
         assert_eq!(hits, sorted, "输出必须按位置升序");
+    }
+
+    /// FR-SEARCH-23：组内词必须**同一行**共现 —— 分处两行的笔记不算命中。
+    #[test]
+    fn same_line_requires_all_terms_on_one_line() {
+        assert!(
+            same_line("季度 报告 在一行\n别的行\n", &terms(&["季度", "报告"])),
+            "第 1 行共现"
+        );
+        assert!(
+            !same_line("季度 在前\n另一行 报告\n", &terms(&["季度", "报告"])),
+            "分处两行不算共现"
+        );
+    }
+
+    /// 三个词时同样要求**存在一行同时含全部三个**，而不是两两共现。
+    #[test]
+    fn same_line_intersects_all_terms() {
+        let doc = "a b\nb c\na c\n";
+        assert!(
+            !same_line(doc, &terms(&["a", "b", "c"])),
+            "没有任何一行同时含三个词"
+        );
+        assert!(
+            same_line("a b c\n", &terms(&["a", "b", "c"])),
+            "同一行含三个词"
+        );
+    }
+
+    #[test]
+    fn same_line_without_terms_is_unconstrained() {
+        assert!(same_line("任意正文", &[]), "没有 line: 约束就不限制");
+    }
+
+    #[test]
+    fn same_line_with_one_term_is_presence() {
+        assert!(same_line("这里 草稿", &terms(&["草稿"])));
+        assert!(!same_line("这里没有那个词", &terms(&["草稿"])));
     }
 }

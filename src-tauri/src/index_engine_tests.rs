@@ -140,7 +140,8 @@ fn fts_query_finds_chinese_content_through_the_engine() {
     let dir = setup_vault();
     let pool = open(dir.path()).expect("建索引库");
     full_index(&pool, dir.path(), |_, _| {}).expect("全量索引");
-    let expr = kp_domain::search::build_match_expr("段落内容", kp_domain::search::MatchMode::All);
+    let expr = kp_domain::search::build_match_expr("段落内容", kp_domain::search::MatchMode::All)
+        .expect("构造 MATCH");
     let hits: i64 = pool
         .with_reader(|conn| {
             conn.query_row(
