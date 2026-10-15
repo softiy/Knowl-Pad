@@ -779,3 +779,181 @@ fn d25_nfr_perf_03_breakdown() {
     );
     let _ = (&guard, &db_guard);
 }
+/// fts 细分实验的**单个变体**：空库 → `BEGIN IMMEDIATE` → N 行 → `COMMIT`，返回总微秒。
+///
+/// 与生产一致地放在**一个显式事务**里：第一版实验漏了这点、每行 autocommit，
+/// 量到的主要是每行一次 fsync 的提交成本（不是插入成本）。`tiny` 把文本换成 "x"，
+/// 用来判断成本是否随文本长度变化。
+fn fts_bench(
+    plain: bool,
+    tiny: bool,
+    cached: bool,
+    prepare_once: bool,
+    text: &str,
+    n: usize,
+) -> u128 {
+    let d = tempfile::tempdir().expect("临时目录");
+    let pool = open(&d.path().join("index.db")).expect("建索引库");
+    let owned = if tiny {
+        "x".to_string()
+    } else {
+        text.to_string()
+    };
+    let t = Instant::now();
+    pool.with_writer(move |conn| {
+        conn.execute_batch("BEGIN IMMEDIATE").expect("begin");
+        if prepare_once {
+            {
+                let mut st = conn
+                    .prepare_cached(crate::index_sql::FTS_INSERT_SQL)
+                    .expect("prepare_cached");
+                for i in 0..n {
+                    st.execute(rusqlite::params![i as i64 + 1, owned])
+                        .expect("execute");
+                }
+            }
+        } else {
+            for i in 0..n {
+                if plain {
+                    let mut st = conn
+                        .prepare_cached(crate::index_sql::FILE_INSERT_SQL)
+                        .expect("prepare_cached");
+                    st.execute(rusqlite::params![
+                        format!("n{i}.md"),
+                        format!("n{i}.md"),
+                        format!("n{i}"),
+                        "md",
+                        "note",
+                        owned.len() as i64,
+                        1_700_000_000_000i64 + i as i64,
+                        format!("{i:016x}"),
+                        1_700_000_000_000i64
+                    ])
+                    .expect("execute");
+                } else if cached {
+                    let mut st = conn
+                        .prepare_cached(crate::index_sql::FTS_INSERT_SQL)
+                        .expect("prepare_cached");
+                    st.execute(rusqlite::params![i as i64 + 1, owned])
+                        .expect("execute");
+                } else {
+                    conn.execute(
+                        crate::index_sql::FTS_INSERT_SQL,
+                        rusqlite::params![i as i64 + 1, owned],
+                    )
+                    .expect("execute");
+                }
+            }
+        }
+        conn.execute_batch("COMMIT").expect("commit");
+        Ok(())
+    })
+    .expect("fts_bench");
+    let us = t.elapsed().as_micros();
+    drop(d);
+    us
+}
+
+/// **批量多行写法**（batch 行/语句）的对照：判断"每行固定成本"能否靠摊销省掉。
+fn fts_bench_batched(text: &str, n: usize, batch: usize) -> u128 {
+    let cols: Vec<String> = (0..batch)
+        .map(|j| format!("(?{}, ?{})", j * 2 + 1, j * 2 + 2))
+        .collect();
+    let sql = format!(
+        "INSERT INTO note_fts(rowid, plain_text) VALUES {}",
+        cols.join(",")
+    );
+    let d = tempfile::tempdir().expect("临时目录");
+    let pool = open(&d.path().join("index.db")).expect("建索引库");
+    let owned = text.to_string();
+    let t = Instant::now();
+    pool.with_writer(move |conn| {
+        conn.execute_batch("BEGIN IMMEDIATE").expect("begin");
+        let mut st = conn.prepare(&sql).expect("prepare");
+        let mut rowid = 1i64;
+        for _ in 0..(n / batch) {
+            let mut vals: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(batch * 2);
+            for _ in 0..batch {
+                vals.push(Box::new(rowid));
+                vals.push(Box::new(owned.clone()));
+                rowid += 1;
+            }
+            let refs: Vec<&dyn rusqlite::ToSql> = vals.iter().map(|b| b.as_ref()).collect();
+            st.execute(refs.as_slice()).expect("execute");
+        }
+        conn.execute_batch("COMMIT").expect("commit");
+        Ok(())
+    })
+    .expect("fts_bench_batched");
+    let us = t.elapsed().as_micros();
+    drop(d);
+    us
+}
+
+/// **fts 写入为何收益偏低**：把 `INSERT INTO note_fts` 的每行成本拆开（**只测量，不改行为**）。
+///
+/// 五个变体**各自用一个空库**（FTS 索引越大插入越慢，同库顺序测会带先后偏差），
+/// 每个变体写 N 行，并且整批放在**一个显式事务**里 —— 与生产一致（索引写入都在分批事务内）。
+///
+/// - A 生产写法：每次 `prepare_cached(FTS_INSERT_SQL)`
+/// - B 下界：循环外 prepare 一次、循环内复用（完全没有 prepare 开销）
+/// - C 优化前：每次 `conn.execute(...)`（每次重新 prepare）
+/// - D 文本长度对照：同语句、文本 = "x"（1 个 token）
+/// - E 非 FTS 对照：同规模写 `file` 表（普通表 + 索引）
+///
+/// 判读口径：**A ≈ B ≈ C ⇒ prepare 不是这条语句的成本**（若 A ≫ B 是缓存没命中的真缺陷）；
+/// **A ≈ D ⇒ 成本与文本长度无关**；**A − E ⇒ FTS5 阴影表维护多出来的开销**。
+#[test]
+fn d25_nfr_perf_03_fts_write_breakdown() {
+    const N: usize = 1000;
+    // 与标准档夹具同量级的"已分词"文本：约 2.4 KB、几百个中英文 token
+    let real_text: String =
+        "知识图谱 力导向布局 markdown fts5 索引 分词 性能 优化 note index search 中文 测试 "
+            .repeat(24);
+
+    // 预热一次（去掉首次建库/页缓存冷启动），不计入结果
+    let _ = fts_bench(false, false, true, false, &real_text, 50);
+
+    let a = fts_bench(false, false, true, false, &real_text, N);
+    let b = fts_bench(false, false, false, true, &real_text, N);
+    let c = fts_bench(false, false, false, false, &real_text, N);
+    let d = fts_bench(false, true, true, false, &real_text, N);
+    let e = fts_bench(true, false, true, false, &real_text, N);
+    let per = |us: u128| us as f64 / N as f64;
+    println!(
+        "D25 NFR-PERF-03-fts-write rows={N} text_bytes={} \
+         a_cached_us={a} b_prepared_once_us={b} c_uncached_us={c} d_tiny_text_us={d} e_plain_table_us={e} \
+         a_per_row_us={:.1} b_per_row_us={:.1} c_per_row_us={:.1} d_per_row_us={:.1} e_per_row_us={:.1} \
+         prepare_saved_us={} cache_vs_once_us={} fts_real_work_us={} fts_vs_plain_us={}",
+        real_text.len(),
+        per(a),
+        per(b),
+        per(c),
+        per(d),
+        per(e),
+        c.saturating_sub(a),
+        a.saturating_sub(b),
+        a.saturating_sub(d),
+        a.saturating_sub(e)
+    );
+
+    // 行数扫描：判断"每行固定成本"是否随索引变大而增长（b-tree/段合并效应）。
+    let mut sweep = Vec::new();
+    for n in [100usize, 500, 1000, 2000] {
+        let us = fts_bench(false, false, true, false, &real_text, n);
+        sweep.push(format!("n{n}={us}us/{:.1}us_per_row", us as f64 / n as f64));
+    }
+    println!(
+        "D25 NFR-PERF-03-fts-write-sweep {} (每条都是空库 + 单事务；每行微秒若基本恒定 ⇒ 固定每行成本)",
+        sweep.join(" ")
+    );
+
+    // 批量多行写法：判断上面那笔固定成本能否靠摊销省掉。
+    let f = fts_bench_batched(&real_text, N, 10);
+    println!(
+        "D25 NFR-PERF-03-fts-write-batched rows={N} batch=10 f_batched_us={f} f_per_row_us={:.1} \
+         (与 a_per_row_us={:.1} 对比：接近 ⇒ 每行成本是真实工作量，批量省不掉)",
+        per(f),
+        per(a)
+    );
+}

@@ -2,6 +2,18 @@
   "schema": 1,
   "note": "D-25 接收清单的预算真值与覆盖现状。budgets 来自 PRD §6.1.2（标准库/大库/压力库三档）；owning 说明该判据由谁度量。",
   "generatedAt": "2026-10-13",
+  "environment": {
+    "baseline_prd": "PRD §6.1.1：4 核 @2.5GHz / 8GB 内存 / SATA SSD",
+    "measured_on": "开发机（**非基准机**：核数、主频、磁盘类型均未按 PRD §6.1.1 标定）",
+    "rule": "本文件与 perf/d25-report.json 里的**任何实测数字都来自非基准机**。它只能说明「当前实现处于什么量级、瓶颈在哪一阶段」，**不足以判定达标与否**；判定必须在基准环境复测后才能定论。**不得据此放行、也不得据此放宽预算。**",
+    "how_to_rerun": [
+      "① 在基准环境（或与 PRD §6.1.1 同档的机器 / CI runner）上生成夹具：node scripts/gen-fixture-vault.mjs --tier standard --out <夹具目录>",
+      "② 跑整轮采样与预算比对：KP_D25_VAULT=<夹具目录> KP_D25_NOTES=3000 node scripts/perf-d25.mjs --tier standard",
+      "③ 只复测首次索引（最快，也是当前唯一超预算的判定项）：KP_D25_VAULT=<夹具目录> KP_D25_NOTES=3000 cargo test -p knowl-pad --locked d25_nfr_perf_03_first_index -- --nocapture --test-threads=1",
+      "④ 复测分项（看瓶颈在哪一阶段）：KP_D25_VAULT=<夹具目录> KP_D25_NOTES=3000 cargo test -p knowl-pad --locked d25_nfr_perf_03_breakdown -- --nocapture --test-threads=1",
+      "⑤ 采样器会写 perf/d25-report.json（已 gitignore）并逐条打印 已达标 / 超预算 / proxy / 待接入；**报告里必须同时记录机器规格**，否则数字仍然不可比"
+    ]
+  },
   "budgets": [
     {
       "id": "AC-VAULT-01-parse",
@@ -56,7 +68,7 @@
       "owning": "**空库上的**首次全量索引（含分词与 FTS 构建）。jieba 词典加载是一次性启动成本（应用启动时后台预热，见 main.rs），**不计入**本条",
       "instrumented": true,
       "plan": "",
-      "scope": "起点=命令入口 `full_index_cancellable`（索引库是**一次性空库**，不是夹具目录里的库）；终点=全量写入完成；含分词与 FTS。判据源 `D25 NFR-PERF-03-first-index ms=… scope=fresh-db`。**重建**（库已存在、含逐行删旧）另列 `NFR-PERF-03-rebuild`，**不并入**本条判优（口径见勘误 D-35）"
+      "scope": "起点=命令入口 `full_index_cancellable`（索引库是**一次性空库**，不是夹具目录里的库）；终点=全量写入完成；含分词与 FTS。判据源 `D25 NFR-PERF-03-first-index ms=… scope=fresh-db`。**重建**（库已存在、含逐行删旧）另列 `NFR-PERF-03-rebuild`，**不并入**本条判优（口径见勘误 D-35）。**环境**：本条的实测值来自非基准机（见顶层 environment），**判定必须在 PRD §6.1.1 的基准环境复测后才能定论**"
     },
     {
       "id": "NFR-PERF-03-rebuild",
