@@ -1674,6 +1674,19 @@ interface KpError {
 
 > **实现状态**：搜索域 6 命令已于 M5 批次 1 第一刀落地（后端 + IPC 契约 + 测试）；本节形状即该实现的逐字段转写。
 
+#### 5.3.4.2 搜索域入参子结构（权威定义）
+
+> **来源**：§5.3.4 把 `search_fulltext` 的入参写作 `{ query, options, page }`，而 `SearchOptions` 与 `PageArg` 的**字段、缺省值与夹紧区间从未进过真源**——它们此前只存在于实现里（2026-10-14 M5 批次 1 复核发现，见勘误 **D-31**；与本域返回结构的勘误 **D-28** 是同一处缺陷的另一半）。
+> 本节为权威定义；字段逐条转写自当前实现 `src-tauri/src/commands/search.rs`（`SearchOptions` / `PageArg`），缺省值与夹紧区间取自同文件的上限常量与 `search_index.rs` 的应用点；IPC 传输键为 **camelCase**（技术方案 §8.4），Rust 结构体内部字段保持 snake_case。
+> 命名注：`PageArg` 在 TS 契约里的同形状类型名为 `SearchPage`（`src/core/ipc/searchCommands.ts`），两者字段一致；IPC 类型名以本表为准。
+
+| 结构 | 字段（IPC 键） | 说明 |
+| --- | --- | --- |
+| `SearchOptions` | `matchMode?`、`sort?`、`contextLines?`、`maxSnippets?`、`recordHistory?` | `search_fulltext` 的可选选项，**五项全部可缺省**（`options` 本身也可整体省略，等价于 `{}`）。`matchMode` 为词间连接方式：`"all"`（**缺省**，PRD §4.11.3「默认匹配模式 AND」）/ `"any"`；`sort` 为排序口径：`"relevance"`（**缺省**，FR-SEARCH-06「默认按相关度」）/ `"mtime"` / `"name"` / `"path"`；两者的**未知取值一律退回缺省而不报错**（解析返回 `None` 时命令层取缺省）。`contextLines` 为片段上下文行数：**缺省 2**（PRD §4.11.3），夹紧到 `0..=20`；`maxSnippets` 为每条结果最多返回的片段数：**缺省 5**，夹紧到 `1..=20`（IPC-05 的载荷控制；FR-SEARCH-05 的「可展开查看全部片段」由前端按此上限取用）；`recordHistory` 为是否把本次查询记入历史（FR-SEARCH-10）：**缺省 `false`**，理由见 §5.3.4.1 末的「命令集口径」 |
+| `PageArg` | `offset?`、`limit?` | `search_fulltext` 的分页参数，**两项均可缺省**（`page` 本身也可整体省略）。`offset`：**缺省 0**，负数按 0 处理；`limit`：每页条数，**缺省 20**，夹紧到 `1..=100`。越界一律**夹紧而不报错**（前端传错不该让搜索失败）；`SearchResultPage` 回传的 `offset` / `limit` 是**夹紧后**的值，`hasMore` 亦按夹紧值计算——前端据此对齐分页游标 |
+
+> **实现状态**：搜索域 6 命令已于 M5 批次 1 第一刀落地（后端 + IPC 契约 + 测试）；本节的字段、缺省值与夹紧区间即该实现的逐条转写（`SearchOptions` / `PageArg` 见 `src-tauri/src/commands/search.rs`，应用点见 `search_index.rs` 的 `resolve_page` / `match_mode` / `sort_order`），未含实现里不存在的字段。
+
 #### 5.3.5 链接与图谱域（9）
 
 | Command | 入参 | 返回 | 说明 |
@@ -2325,6 +2338,8 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | D-27 | **性能指标的口径未定义，导致"同一数字两种结论"**（2026-10-13 M5 性能设施阶段发现）：`NFR-PERF-10` 的实测在 **34–77 ms** 间摆动（预算 50 ms），差额主要来自**是否把索引库的持久化落盘计入**；`NFR-PERF-13/14` 未说明是否含 WebView 子进程；`NFR-PERF-11` 的"到 UI 反映"未说明自动判据止于何处 | 新增 **§6.1.4 度量口径**：逐条写明起点/终点/含与不含，并规定 `NFR-PERF-10` 判定用**批内处理时间**（持久化另测不判定，理由见该节）、`NFR-PERF-13/14` 按**进程树合计**、`NFR-PERF-11` 自动判据止于**事件 emit**。`perf/d25-budgets.json` 的 `scope` 字段与 M5 计划 §7.1 同步该口径 | §6.1.2、§6.1.4、NFR-PERF-10/11/13/14 |
 | D-28 | **搜索域只给出返回类型名、从未定义字段**（与 **D-11**（文件域）/ **D-18**（索引域）同类缺陷）：§5.3.4 的 4 个返回类型（`SearchResultPage`/`QuickOpenItem`/`InFileMatch`/`ReplaceResult`）没有任何字段定义；M3 计划 WP1 第 3 条与第 73 行承诺的「形状补进 PRD §5.3.4」**从未兑现**（2026-10-14 M5 批次 1 第一刀复核发现） | 契约不完整会让 TS 与 Rust 各自臆造形状而漂移（门禁 17 只校验命令名，不校验结构）。**处置**：新增 **§5.3.4.1**，照 §5.3.2.1 的模板逐字段定义，字段转写自当前实现 `src-tauri/src/commands/search_view.rs` 并逐条注明需求出处 | §5.3.4 / §5.3.4.1、D-11、D-18、M3 计划 WP1 |
 | D-29 | **AC-SEARCH-05 是否属 M5 的 DoD，两种读法都成立**（2026-10-14 M5 批次 1 第一刀复核发现）：§9.1 的 M5 行写「AC-SEARCH 全通过」（含 AC-SEARCH-05「语法错误提示」），而勘误 **D-25** 把它收窄为「AC-SEARCH-01/04（含严格阈值）+ 顺延项」，未提 05 | **裁定：AC-SEARCH-05 属于 M5 的 DoD**（它是「高级语法」的必要配套：FR-SEARCH-27 要求未闭合引号给出明确提示、**不得**静默返回）。**处置**：D-25 行的接收清单追加 AC-SEARCH-05；「AC-SEARCH-01/04 含严格阈值」的既有口径不变 | §9.1 的 M5 行、D-25、AC-SEARCH-05、FR-SEARCH-27 |
+| D-30 | **「快速打开」的模糊匹配归属被技术方案外推，与需求原文不符**（2026-10-14 M5 批次 1 第一刀复核发现）：`FR-PALETTE-10` 的原文只说**命令面板**「本地模糊匹配，不走 IPC」，而它属 `FR-PALETTE`（命令面板）域、**只覆盖命令面板**；技术方案 §3.2.5 的 `fuse.js` 行与附录 B 的 `NFR-PERF-05` 测量方式却把这条外推成**快速打开也在前端模糊匹配**，与 §5.3.4 已有的 `search_quick_open` 命令互相矛盾 —— 同一功能两套真相：实现会分叉，性能也会测错对象 | **裁定（2026-10-14 项目所有者）：后端 `search_quick_open` 是「快速打开」的唯一真相，`fuse.js` 仅用于「命令面板」。** **处置（三处已在上一轮改好，本行只做留痕与串接，不重复改动）**：① PRD 的 `FR-SEARCH-40` 行写明「匹配由**后端 `search_quick_open`** 承担……`fuse.js` 仅用于**命令面板**」；② 技术方案 §3.2.5 的 `fuse.js` 行改为「**命令面板**模糊匹配」并注明快速打开不在前端；③ 技术方案附录 B 的 `NFR-PERF-05` 行改为「= 后端 `search_quick_open` 耗时（Rust `Instant`）+ 前端首屏渲染（`performance.mark`），判定取两段合计」 | FR-PALETTE-10、FR-SEARCH-40、NFR-PERF-05、§5.3.4 |
+| D-31 | **搜索域的入参子结构此前只在实现里、未进契约**（2026-10-14 M5 批次 1 复核发现；与 **D-28** 的返回结构是同一处缺陷的另一半）：§5.3.4 把 `search_fulltext` 的入参写作 `{ query, options, page }`，而 `SearchOptions`（`matchMode` / `sort` / `contextLines` / `maxSnippets` / `recordHistory`）与 `PageArg`（`offset` / `limit`）的**字段、缺省值与夹紧区间在 PRD 里没有任何一处定义** —— 只存在于 `src-tauri/src/commands/search.rs` | 契约不完整会让 TS 与 Rust 各自臆造形状而漂移（门禁 17 只校验命令名，不校验结构）。**处置**：新增 **§5.3.4.2**，照 §5.3.4.1 的模板逐字段定义（含缺省值与越界处置），字段逐条转写自当前实现 `src-tauri/src/commands/search.rs` 的 `SearchOptions` / `PageArg` | §5.3.4 / §5.3.4.2、D-28、D-11、D-18 |
 
 ---
 
