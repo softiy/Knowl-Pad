@@ -473,3 +473,239 @@ fn d25_nfr_perf_11_external_change_proxy() {
         "外部新增的文件必须在索引里可见（proxy 的核心断言）"
     );
 }
+
+// ── M5 批次 5：搜索域的真测（NFR-PERF-04 后端部分 / line: 候选上限标定）──────────
+
+use std::sync::Arc;
+
+use crate::commands::search::{
+    PageArg, SearchFulltextArgs, SearchOptions, MAX_LINE_FILTER_CANDIDATES,
+};
+use crate::commands::search_index::search_fulltext_impl;
+use crate::commands::search_page::{page_with_line_filter, PageWindow, ViewOptions};
+use crate::state::AppState;
+use crate::storage::search_query::{self, SortOrder};
+use kp_domain::search::{parse_query, MatchMode};
+
+/// 夹具规模（与既有 d25 用例同一约定：KP_D25_NOTES，缺省 300）。
+fn d25_notes_arg() -> usize {
+    std::env::var("KP_D25_NOTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300usize)
+}
+
+/// 索引夹具并装配 AppState（搜索命令的入口需要 state）。
+///
+/// **索引库放在自己的临时目录里**（不是 `<vault>/.knowlpad`）：同一个夹具会被多个 d25 用例共用，
+/// 若都往夹具目录里的那个库写，并行跑就会互相踩（实测：两个用例同时全量索引 ⇒ `全量索引` 直接失败）。
+/// 夹具文件只被**只读**访问，因此各用各的库既能并行又互不影响。
+///
+/// 返回的 `TempDir` 是索引库的**生命周期守卫**，调用方必须持有到用例结束。
+fn d25_index_and_state(root: &Path) -> (tempfile::TempDir, Arc<DbPool>, AppState) {
+    let db_dir = tempfile::tempdir().expect("索引库临时目录");
+    let pool = Arc::new(open(&db_dir.path().join("index.db")).expect("打开索引库"));
+    full_index_cancellable(&pool, root, |_, _| {}, IndexMode::Force, || false).expect("全量索引");
+    let state = AppState::new();
+    state.set_root(Some(root.to_path_buf()));
+    state.set_index_db(Some(pool.clone()));
+    (db_dir, pool, state)
+}
+
+/// 索引里的笔记数（**从库里取**，不靠环境变量自报）。
+fn d25_note_count(pool: &DbPool) -> i64 {
+    pool.with_reader(|c| {
+        c.query_row(
+            "SELECT count(*) FROM file WHERE deleted = 0 AND kind = 'note'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| kp_domain::error::AppError::db_with("统计笔记数", &e))
+    })
+    .expect("统计笔记数")
+}
+
+fn d25_search_args(query: &str) -> SearchFulltextArgs {
+    SearchFulltextArgs {
+        query: query.to_string(),
+        options: SearchOptions::default(),
+        page: PageArg::default(),
+    }
+}
+
+/// 走**命令入口**测一次全文搜索：返回（毫秒, 命中总数）。
+fn d25_search_once(state: &AppState, query: &str) -> (u128, i64) {
+    let started = Instant::now();
+    let page = search_fulltext_impl(state, d25_search_args(query)).expect("全文搜索");
+    (started.elapsed().as_millis(), page.total)
+}
+
+/// **NFR-PERF-04（后端部分）**：全文搜索响应。
+///
+/// 口径（PRD §6.1.4）：起点 = 输入停顿（防抖结束）；终点 = 结果呈现。
+/// 这里测的是**后端部分** —— 命令层 `search_fulltext_impl` 的耗时（含查询构造、FTS 检索、排序、
+/// 片段定位与命中笔记读盘）；**不含** IPC 往返与前端渲染 —— 「到结果呈现」的后半跳仍属端到端/手工验收
+/// （边界写在 `perf/d25-budgets.json` 的 `owning` 里）。
+///
+/// 两条查询：`ms` = 宽查询（命中全部笔记 ⇒ 走满一页并读 20 篇原文取片段，**最重**的常规情形）；
+/// `ms_narrow` = 窄查询（确定性数字词，命中 0~1 篇）。先做一次不计时的热身，排除一次性初始化。
+#[test]
+fn d25_nfr_perf_04_search() {
+    let notes_arg = d25_notes_arg();
+    let (guard, root) = d25_vault(notes_arg);
+    let (db_guard, pool, state) = d25_index_and_state(&root);
+    let notes = d25_note_count(&pool);
+
+    let narrow = format!("{}", 131 * (notes_arg / 2) + 5); // 开发夹具里必然存在的数字词
+    let _ = d25_search_once(&state, "热身"); // 不计时：排除一次性初始化
+    let (ms, hits) = d25_search_once(&state, "内容");
+    let (ms_narrow, hits_narrow) = d25_search_once(&state, &narrow);
+    let _ = (&guard, &db_guard);
+    println!(
+        "D25 NFR-PERF-04-search ms={ms} ms_narrow={ms_narrow} hits={hits} hits_narrow={hits_narrow} notes={notes} scope=backend query_wide=内容"
+    );
+    assert!(hits > 0, "宽查询在夹具上必须命中，否则这个耗时没有意义");
+}
+
+/// **NFR-PERF-04-line-filter（`line:` 候选上限的标定）**。
+///
+/// 口径（PRD §6.1.4 + §5.3.4.3）：起点 = 命令入口 `search_fulltext_impl`；终点 = 返回第一页。
+/// 查询取**最坏情况**：只用 `line:(...)`、不带关键词与 path:/tag: 限定 ⇒ 候选 = 全部笔记。
+///
+/// 两条路径如实标出用的是哪条：
+///  · 候选数 ≤ 上限 ⇒ 走**命令入口**（`path=command`，与 scope 一致）；
+///  · 候选数 > 上限 ⇒ 命令入口会按 §5.3.4.3 拒绝（打印 `cmd_rejected=true`），此时改测
+///    **同一组装路径**（`page_with_line_filter`，上限临时放开）以取得真实代价（`path=page-uncapped`）
+///    —— 那是标定用的观测值，**不是**产品行为。
+#[test]
+fn d25_nfr_perf_04_line_filter() {
+    let notes_arg = d25_notes_arg();
+    let (guard, root) = d25_vault(notes_arg);
+    let (db_guard, pool, state) = d25_index_and_state(&root);
+    let notes = d25_note_count(&pool);
+
+    let query =
+        std::env::var("KP_D25_LINE_QUERY").unwrap_or_else(|_| "line:(内容 笔记)".to_string());
+    let parsed = parse_query(&query, MatchMode::All).expect("解析 line: 查询");
+    let candidates = search_query::fulltext_scan(&pool, &parsed, SortOrder::Path)
+        .expect("取候选")
+        .len();
+    let _ = d25_search_once(&state, "热身"); // 不计时
+
+    if candidates <= MAX_LINE_FILTER_CANDIDATES {
+        let started = Instant::now();
+        let page = search_fulltext_impl(&state, d25_search_args(&query)).expect("line: 搜索");
+        let ms = started.elapsed().as_millis();
+        println!(
+            "D25 NFR-PERF-04-line-filter ms={ms} candidates={candidates} notes={notes} hits={} cap={MAX_LINE_FILTER_CANDIDATES} path=command scope=backend",
+            page.total
+        );
+    } else {
+        let cmd_rejected = search_fulltext_impl(&state, d25_search_args(&query)).is_err();
+        let started = Instant::now();
+        let page = page_with_line_filter(
+            &pool,
+            &root,
+            &parsed,
+            SortOrder::Path,
+            ViewOptions {
+                context_lines: 2,
+                max_snippets: 5,
+            },
+            PageWindow {
+                offset: 0,
+                limit: 20,
+            },
+            usize::MAX,
+        )
+        .expect("不受上限约束的组装路径");
+        let ms = started.elapsed().as_millis();
+        println!(
+            "D25 NFR-PERF-04-line-filter ms={ms} candidates={candidates} notes={notes} hits={} cap={MAX_LINE_FILTER_CANDIDATES} path=page-uncapped cmd_rejected={cmd_rejected} scope=backend",
+            page.total
+        );
+    }
+    let _ = (&guard, &db_guard);
+}
+
+/// 按**给定正文**写一篇笔记（AC-SEARCH-01 的夹具要精确控制哪些笔记含目标短语）。
+fn write_note_body(root: &Path, rel: &str, body: &str) {
+    let p = root.join(rel);
+    if let Some(dir) = p.parent() {
+        fs::create_dir_all(dir).expect("建目录");
+    }
+    fs::write(p, body).expect("写笔记");
+}
+
+/// **AC-SEARCH-01（严格阈值，PRD §4.5.2）**：Vault 中 3 篇正文含「知识图谱的力导向布局」，
+/// 另有只含**片段词之一**（力导向 / 布局）的干扰笔记；搜「力导向布局」⇒
+/// ① 3 篇全中（干扰项不得混入）；② 排在前列；③ 片段里「力导向布局」被高亮；④ 响应 < 200 ms。
+///
+/// 规模缺省按 PRD 取 **10000** 篇，可用 `KP_AC_SEARCH01_NOTES` 覆盖（CI 用得起的小规模）；
+/// **四条判据一条都不随规模放宽**。打印 `D25 AC-SEARCH-01-04-strict ok=…` 供采样器判读。
+#[test]
+fn d25_ac_search_01_strict_chinese_search() {
+    let notes: usize = std::env::var("KP_AC_SEARCH01_NOTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10_000);
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    const PHRASE: &str = "知识图谱的力导向布局";
+    let mut expected: Vec<String> = Vec::new();
+    for i in 0..notes {
+        let rel = format!("d{}/note-{i}.md", i % 50);
+        let body = match i {
+            0..=2 => {
+                expected.push(rel.clone());
+                format!("# 笔记 {i}\n\n{PHRASE} 很关键\n")
+            }
+            3..=7 => format!("# 笔记 {i}\n\n只讲 力导向 这一个词\n"),
+            8..=12 => format!("# 笔记 {i}\n\n只讲 布局 这一个词\n"),
+            _ => format!("# 笔记 {i}\n\n与本主题无关的内容 {i}\n"),
+        };
+        write_note_body(&root, &rel, &body);
+    }
+    let (db_guard, _pool, state) = d25_index_and_state(&root);
+
+    let started = Instant::now();
+    let page = search_fulltext_impl(&state, d25_search_args("力导向布局")).expect("搜索");
+    let ms = started.elapsed().as_millis();
+
+    // ① 恰好 3 篇：只含单个片段词的干扰笔记**不得**混进来
+    let got: Vec<String> = page.items.iter().map(|i| i.rel_path.clone()).collect();
+    assert_eq!(
+        page.total, 3,
+        "必须恰好命中 3 篇（干扰项不得混入），实得：{got:?}"
+    );
+    // ② 排在前列：total = 3 ⇒ 本页给出的前三条就是它们
+    assert_eq!(page.items.len(), 3, "本页应给出这 3 条：{got:?}");
+    for rel in &expected {
+        assert!(got.contains(rel), "缺少命中：{rel} / 实得 {got:?}");
+    }
+    // ③ 片段高亮：高亮区间必须正好覆盖整条短语（FR-SEARCH-04）
+    let first = page.items.first().expect("应有结果");
+    let snippet = first.snippets.first().expect("应带片段");
+    let line = snippet
+        .lines
+        .iter()
+        .find(|l| l.line == snippet.highlight_line)
+        .expect("高亮行必须在片段里");
+    let marked: String = line
+        .text
+        .chars()
+        .skip(snippet.highlight_start)
+        .take(snippet.highlight_end - snippet.highlight_start)
+        .collect();
+    assert_eq!(marked, "力导向布局", "片段必须高亮命中的短语：{snippet:?}");
+    // ④ 严格阈值
+    assert!(
+        ms < 200,
+        "PRD §4.5.2：响应须 < 200 ms，实测 {ms} ms（notes={notes}）"
+    );
+    let _ = db_guard;
+    println!(
+        "D25 AC-SEARCH-01-04-strict ok=1 ms={ms} notes={notes} total={} highlighted={marked}",
+        page.total
+    );
+}
