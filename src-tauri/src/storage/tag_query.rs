@@ -115,3 +115,26 @@ fn collect_notes<P: rusqlite::Params>(
         .map_err(|e| AppError::db_with("读取标签笔记行", &e))?;
     Ok(rows)
 }
+
+/// 需要改写的**候选文件**（FR-TAG-07）：写了该标签**或其后代**的笔记。
+///
+/// 为什么含后代：改名 `a` → `x` 时 `#a/b` 要变成 `#x/b`（"含层级子标签的前缀更新"），
+/// 所以 `a/b` 所在的文件也必须进计划。
+pub fn files_with_tag(pool: &DbPool, tag_norm: &str) -> Result<Vec<String>, AppError> {
+    pool.with_reader(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT f.rel_path FROM tag t \
+                 JOIN file_tag ft ON ft.tag_id = t.id JOIN file f ON f.id = ft.file_id \
+                 WHERE f.deleted = 0 AND f.kind = 'note' AND (t.norm = ?1 OR t.norm LIKE ?1 || '/%') \
+                 ORDER BY f.rel_path",
+            )
+            .map_err(|e| AppError::db_with("准备读取候选文件", &e))?;
+        let rows = stmt
+            .query_map([tag_norm], |r| r.get::<_, String>(0))
+            .map_err(|e| AppError::db_with("读取候选文件", &e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::db_with("读取候选文件行", &e))?;
+        Ok(rows)
+    })
+}

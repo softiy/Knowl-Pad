@@ -30,6 +30,9 @@ mod search_view;
 pub mod settings;
 pub mod system;
 pub mod tag;
+pub mod tag_rewrite;
+#[cfg(test)]
+mod tag_rewrite_tests;
 #[cfg(test)]
 mod tag_tests;
 mod tag_view;

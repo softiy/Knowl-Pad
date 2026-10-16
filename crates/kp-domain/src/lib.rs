@@ -22,6 +22,7 @@ pub mod search_history;
 pub mod search_hits;
 pub mod search_syntax;
 pub mod snippet;
+pub mod tag_rewrite;
 pub mod tag_tree;
 pub mod tokenize;
 pub mod vault_paths;
