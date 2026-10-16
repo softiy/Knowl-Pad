@@ -51,6 +51,7 @@ use commands::search::{
 use commands::settings::{preference_get, preference_set, vault_state_get, vault_state_set};
 use commands::system::{ping, system_info};
 use commands::tag::{tag_notes, tag_tree};
+use commands::tag_rewrite::{tag_rename_apply, tag_rename_preview};
 use commands::vault::{
     index_status, vault_close, vault_create, vault_current, vault_list, vault_open, vault_pin,
     vault_register_remove, vault_relocate, vault_rename,
@@ -206,7 +207,9 @@ fn main() {
             search_history_get,
             search_history_clear,
             tag_tree,
-            tag_notes
+            tag_notes,
+            tag_rename_preview,
+            tag_rename_apply
         ])
         .run(tauri::generate_context!())
         .expect("error while running Knowl Pad");

@@ -5,6 +5,7 @@
 //! 写操作（`tag_rename_preview` / `tag_rename_apply`）属 PR-B，届时在 links 域的两步确认里接。
 
 import { call } from './client';
+import type { RewritePreview, RewriteResult } from './linkCommands';
 
 /**
  * 标签树节点（FR-TAG-01/02；AC-TAG-01）。
@@ -46,3 +47,25 @@ export const tagTree = (): Promise<TagNode[]> => call<TagNode[]>('tag_tree');
  */
 export const tagNotes = (tagNorm: string, includeChildren = false): Promise<TaggedNote[]> =>
   call<TaggedNote[]>('tag_notes', { args: { tagNorm, includeChildren } });
+/**
+ * 标签重命名**预览**（FR-TAG-07/08；只读，不写盘）。
+ *
+ * 返回**复用链接域的 `RewritePreview`**（裁定：不叉类型）—— 其中 `edits[].occurrences[]` 的语义是
+ * 「该文件中标签出现的位置（正文行或 frontmatter 行）」。`toTag` 非法（空/首尾斜杠/连续斜杠/空白/循环）时
+ * 后端返回 `E_INVALID_FILENAME`，磁盘零改动。
+ */
+export const tagRenamePreview = (fromTag: string, toTag: string): Promise<RewritePreview> =>
+  call<RewritePreview>('tag_rename_preview', { args: { fromTag, toTag } });
+
+/**
+ * 标签批量重命名（**⚠️ 写操作**：UI 必须先走预览并二次确认）。
+ *
+ * `previewId` **一次性消费**（过期/已用 ⇒ `E_PREVIEW_EXPIRED`）；预览之后文件被外部改动 ⇒
+ * `E_REWRITE_FAILED` 且磁盘零改动。整批"全有或全无"（AC-TAG-02）。
+ */
+export const tagRenameApply = (
+  fromTag: string,
+  toTag: string,
+  previewId: string,
+): Promise<RewriteResult> =>
+  call<RewriteResult>('tag_rename_apply', { args: { fromTag, toTag, previewId } });

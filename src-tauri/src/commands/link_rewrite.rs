@@ -71,7 +71,7 @@ fn pool_of(state: &AppState) -> Result<std::sync::Arc<crate::storage::pool::DbPo
     state.index_db().ok_or(KpError(AppError::VaultNotOpen))
 }
 
-fn backup_root(root: &std::path::Path) -> std::path::PathBuf {
+pub(crate) fn backup_root(root: &std::path::Path) -> std::path::PathBuf {
     root.join(kp_domain::vault_paths::INTERNAL_DIR)
         .join(kp_domain::vault_paths::BACKUP_DIR)
 }
@@ -84,7 +84,7 @@ fn candidates(pool: &crate::storage::pool::DbPool, from_ref: &str) -> Result<Vec
 /// **预览**（只读）：定位将改写的处数并冻结，返回 \`preview_id\`（FR-FILE-21 ②）。
 /// 命令体（把状态作为参数传入，便于测试 —— 项目既有做法，见 DEBT-14）。
 /// 把改写计划映射成预览用的逐文件条目（含逐处差异）。
-fn plan_to_edits(plan: &kp_domain::link_rewrite_apply::RewritePlan) -> Vec<RewriteEdit> {
+pub(crate) fn plan_to_edits(plan: &kp_domain::link_rewrite_apply::RewritePlan) -> Vec<RewriteEdit> {
     /// 每个文件最多展示多少处差异（IPC 载荷控制）。
     const MAX_PER_FILE: usize = 20;
     plan.changes
@@ -106,6 +106,44 @@ fn plan_to_edits(plan: &kp_domain::link_rewrite_apply::RewritePlan) -> Vec<Rewri
             .collect(),
         })
         .collect()
+}
+
+/// 陈旧检测（技术方案 §6.1.5，双重保护：mtime + 内容）。**链接改写与标签改名共用本实现。**
+///
+/// 预览冻结了每个待改文件的 (mtime, 原文)。预览到执行之间用户可能切到别的编辑器改了文件 ——
+/// 那时按旧内容整文件覆盖就是**静默覆盖用户数据**（P-2 / R-07 禁止）。
+/// 任一文件不一致 ⇒ 返回 `E_REWRITE_FAILED`，调用方必须**整体中止且磁盘零改动**。
+pub(crate) fn ensure_fresh(
+    root: &std::path::Path,
+    plan: &kp_domain::link_rewrite_apply::RewritePlan,
+    mtimes: &[(String, i64)],
+) -> Result<(), AppError> {
+    let mut stale: Vec<String> = Vec::new();
+    for change in &plan.changes {
+        let abs = root.join(&change.rel_path);
+        let expect_mtime = mtimes
+            .iter()
+            .find(|(rel, _)| rel == &change.rel_path)
+            .map(|(_, m)| *m);
+        let changed = match expect_mtime {
+            // ① mtime 变了 → 陈旧
+            Some(m) if m != kp_domain::note_io::mtime_ms(&abs).unwrap_or(0) => true,
+            // ② mtime 没变（或没记录）时比内容；读不到（被删/权限变）也算陈旧
+            _ => std::fs::read_to_string(&abs)
+                .map(|now| now != change.old_content)
+                .unwrap_or(true),
+        };
+        if changed {
+            stale.push(change.rel_path.clone());
+        }
+    }
+    if stale.is_empty() {
+        return Ok(());
+    }
+    Err(AppError::RewriteFailed(format!(
+        "预览之后这些文件已被外部修改，已中止且未改动任何文件：{}",
+        stale.join("、")
+    )))
 }
 
 pub(crate) fn link_rewrite_preview_impl(
@@ -164,7 +202,7 @@ pub(crate) fn link_rewrite_preview_impl(
 /// 域层不依赖 tracing，所以日志在这里做。注意 **SEC-09**：日志的上下文里**不得出现用户数据**
 /// （文件路径也不行）—— 这里只记变体名与失败数；具体是哪些文件，走**面向用户**的错误消息。
 /// 这一点与技术方案 §6.1.6 的示意代码（`tracing::error!(?failures, …)`）不同，按 SEC-09 从严。
-fn log_rollback_failure(e: &AppError) {
+pub(crate) fn log_rollback_failure(e: &AppError) {
     if let AppError::RollbackFailed { failures, .. } = e {
         tracing::error!(
             kind = e.kind(),
@@ -192,36 +230,8 @@ pub(crate) fn link_rewrite_apply_impl(
         .map(|r| (r.from, r.to))
         .or_else(|| stored.rename.clone());
 
-    // ── 陈旧检测（技术方案 §6.1.5，双重保护：mtime + 内容）──────────────────────
-    // 预览冻结了每个待改文件的 (mtime, 原文)。预览到执行之间用户可能切到别的编辑器改了
-    // 文件 —— 那时按旧内容整文件覆盖就是**静默覆盖用户数据**（P-2 / R-07 禁止）。
-    // 任一文件不一致 → 整体中止，**磁盘零改动**（技术方案称这是最危险的失败模式）。
-    let mut stale: Vec<String> = Vec::new();
-    for change in &stored.plan.changes {
-        let abs = stored.vault_root.join(&change.rel_path);
-        let expect_mtime = stored
-            .mtimes
-            .iter()
-            .find(|(rel, _)| rel == &change.rel_path)
-            .map(|(_, m)| *m);
-        let changed = match expect_mtime {
-            // ① mtime 变了 → 陈旧
-            Some(m) if m != kp_domain::note_io::mtime_ms(&abs).unwrap_or(0) => true,
-            // ② mtime 没变（或没记录）时比内容；读不到（被删/权限变）也算陈旧
-            _ => std::fs::read_to_string(&abs)
-                .map(|now| now != change.old_content)
-                .unwrap_or(true),
-        };
-        if changed {
-            stale.push(change.rel_path.clone());
-        }
-    }
-    if !stale.is_empty() {
-        return Err(KpError(AppError::RewriteFailed(format!(
-            "预览之后这些文件已被外部修改，已中止且未改动任何文件：{}",
-            stale.join("、")
-        ))));
-    }
+    // ── 陈旧检测（技术方案 §6.1.5）────────────────────────────────────────────
+    ensure_fresh(&stored.vault_root, &stored.plan, &stored.mtimes).map_err(KpError)?;
 
     let operation_id = next_id("op");
     let (report, renamed) = match &rename_spec {
