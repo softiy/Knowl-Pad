@@ -29,6 +29,10 @@ mod search_tests;
 mod search_view;
 pub mod settings;
 pub mod system;
+pub mod tag;
+#[cfg(test)]
+mod tag_tests;
+mod tag_view;
 pub mod vault;
 pub mod vault_lifecycle;
 pub mod vault_types;

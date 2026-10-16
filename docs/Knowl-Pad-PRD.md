@@ -1796,13 +1796,22 @@ interface KpError {
 
 | 结构 | 字段（IPC 键） | 说明 |
 | --- | --- | --- |
-| `TagNode` | `norm`、`display`、`depth`、`isLeaf`、`refCount`、`totalCount`、`unclassified`、`children: TagNode[]` | 标签树节点（FR-TAG-01/02）。`norm` 为**小写规范键**（`a/b/c`；AC-TAG-03 要求 `norm = work`）；`display` 为**首次出现的原文形式**（AC-TAG-03，取自 `tag.display`）；`depth` 为层级深度（`a/b/c` = 3）；`isLeaf` 取 `tag.is_leaf`，**仅最末级为真**（AC-TAG-01）；`refCount` 为该标签**自身**的引用数（= `tag.ref_count`；AC-TAG-03 的 `ref_count = 3` 断言它）；`totalCount` = **自身 + 全部子孙**的引用总和（AC-TAG-01「各级计数为其自身及全部子孙的引用总和」，面板显示的计数用它）；`unclassified` **仅「未分类」条目为 true**（见下）；`children` 按 `norm` 升序 |
+| `TagNode` | `norm`、`display`、`depth`、`isLeaf`、`refCount`、`unclassified`、`children: TagNode[]` | 标签树节点（FR-TAG-01/02）。`norm` 为**小写规范键**（`a/b/c`；AC-TAG-03 要求 `norm = work`）；`display` 取自 `tag.display`（**AC-TAG-03 要求"首次出现的形式"，而现状是"最后一次写入者胜" ⇒ 冲突待裁定，见勘误 D-40①**）；`depth` 为层级深度（`a/b/c` = 3）；`isLeaf` 取 `tag.is_leaf`，**仅最末级为真**（AC-TAG-01）；`refCount` = `tag.ref_count`，**行数口径**（见下方"计数口径"）；`unclassified` **仅「未分类」条目为 true**（见下）；`children` 按 `norm` 升序 |
+
+> **计数口径（2026-10-16 PR-A 实测后定稿；W0 初稿的 `totalCount` 已删除）**：`tag.ref_count` 是 **file_tag 行数**，不是"笔记篇数" ——
+> ① AC-TAG-04 与 FR-TAG-12 的原文就把它定义成 `COUNT(*) FROM file_tag WHERE tag_id = ?`（**行数**），这是权威口径；
+> ② 因为 MD-TAG-03 要求「层级标签**同时**登记自身与全部祖先」，**祖先的 `ref_count` 天然已含全部子孙**
+>    （`#项目/alpha/前端` 会给 `项目/alpha`、`项目` 各写一行）⇒ AC-TAG-01 的「各级计数为其自身及全部子孙的引用总和」
+>    **已经由 ref_count 本身满足**，因此**不需要也不能**再逐级相加（相加会重复计数）。W0 初稿据此写了 `totalCount = 自身 + 全部子孙`，
+>    PR-A 实测发现它与 ref_count **重复**，故**删除该字段**（形状随之更新 —— 走"先实现后回写、但必须一致"的流程）。
+> ③ 推论：**"引用数" ≠ "笔记篇数"**。同一篇里写两次算两行；面板若要显示"篇数"应使用 `tag_notes` 的**列表长度**。
+> ④ 「未分类」条目是**例外**：它没有 file_tag 行，`refCount` 是**笔记篇数**（单位不同，由 `unclassified` 标志区分）。
 | `TaggedNote` | `relPath`、`name`、`mtimeMs` | 某标签下的一篇笔记（FR-TAG-03；AC-TAG-03 末句「点击该标签列出全部 3 篇笔记」）。**不含来源标记**：FR-TAG-10 的「来源可在笔记的标签列表中区分标识」子项本轮不做（`file_tag` 无 source 列，加列属 schema 变更）⇒ 顺延**批次 4**（那时 PARSER_VERSION 升 1 必然全量重建，顺带加列最省），见勘误 **D-39** |
 | `TagSuggestion` | `norm`、`display`、`refCount` | 标签补全候选（§5.3.6 的 `tag_suggest`；唯一消费者是 FR-TAG-06 的编辑器内补全）。**本轮不实现**（编辑器补全基础设施缺失：`mdEditorV3.triggerSuggest()` 现直接抛 `EditorFeaturePendingError`）⇒ 契约条目保留、实现缺位登记在勘误 **D-38**／**D-39** |
 
 > **「未分类」条目的表达（2026-10-15 决策，理由随行）**：FR-TAG-13 要求「无标签的笔记数量在标签面板中可见（「未分类」条目）」，
 > 而 §5.3.6 已把 `tag_tree` 的返回钉死为 `TagNode[]`。本轮**用一个 `unclassified: true` 的合成节点**表达它：
-> `norm = ""`、`display = "未分类"`、`depth = 0`、`isLeaf = true`、`refCount = totalCount = 无标签笔记数`、`children = []`，**排在全部标签之后**；
+> `norm = ""`、`display = "未分类"`、`depth = 0`、`isLeaf = true`、**`refCount` = 无标签笔记数**（该条目没有 file_tag 行，单位是**篇数** —— 见上方"计数口径"④）、`children = []`，**排在全部标签之后**；
 > 其余节点的 `unclassified` 恒为 `false`。**为什么不让 `tag_tree` 改返对象**：那属于**改契约形状**，而本轮的目标是把"只有名字"补成"有形状"。
 
 #### 5.3.6.2 标签域入参子结构（权威定义）
@@ -1812,7 +1821,7 @@ interface KpError {
 
 | 结构 | 字段（IPC 键） | 说明 |
 | --- | --- | --- |
-| `TagNotesArgs`（`tag_notes` 入参） | `tag_norm`、`include_children` | `tag_norm` **必填**（小写规范键，取自 `TagNode.norm`）；`include_children` **缺省 `false`**（只列该标签自身关联的笔记；为 `true` 时含**全部子孙**，对应 FR-TAG-03「可切换是否含子级」）。`tag_norm` 为空串 ⇒ 按**「未分类」查询**处理（列出无任何标签的笔记），与 `TagNode.unclassified` 节点一一对应 |
+| `TagNotesArgs`（`tag_notes` 入参） | `tag_norm`、`include_children` | `tag_norm` **必填**（小写规范键，取自 `TagNode.norm`）；`include_children` **缺省 `false`**（只列该标签自身关联的笔记；为 `true` 时含**全部子孙**，对应 FR-TAG-03「可切换是否含子级」）。`tag_norm` 为空串 ⇒ 按**「未分类」查询**处理（列出无任何标签的笔记），与 `TagNode.unclassified` 节点一一对应。<br>⚠️ **2026-10-16 PR-A 实测：该开关对"有子孙的标签"目前是 no-op** —— MD-TAG-03 的祖先登记让 `#项目/alpha/前端` 也在 `file_tag` 里写了一行 `项目`，于是"只含自身"与"含全部子孙"返回**同一批**笔记（用例 `include_children_switch_is_currently_a_no_op_for_ancestors` 钉住该事实）。要真正区分需在 `file_tag` 加 explicit 标记 ⇒ 与 FR-TAG-10 的 source 列**一并顺延批次 4**（见勘误 **D-40②**） |
 | `TagSuggestArgs`（`tag_suggest` 入参） | `prefix`、`limit?` | `prefix` 必填（空串 = 列全部候选，按 `refCount` 降序）；`limit` **缺省 20**，夹紧到 `1..=100`（口径同搜索域的 `QuickOpenArgs`）。**本轮不实现**（见 §5.3.6.1 的 `TagSuggestion` 行） |
 | `TagRenamePreviewArgs`（`tag_rename_preview` 入参） | `from_tag`、`to_tag` | 两项必填。`from_tag` 为**现存标签的规范键**；`to_tag` 为**目标名称**（允许大小写与 `/` 层级）。非法嵌套或循环按 FR-TAG-08 **拒绝**（不静默改写） |
 | `TagRenameApplyArgs`（`tag_rename_apply` 入参） | `from_tag`、`to_tag`、`preview_id` | 三项必填；`preview_id` 来自 `tag_rename_preview` 的返回，**一次性消费**，过期或已用 ⇒ `E_PREVIEW_EXPIRED`（PRD §5.2） |
@@ -2462,6 +2471,7 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | D-37 | **"搜索范围太大"此前复用语法错误码，前端只能按 message 子串猜（脆耦合）**（2026-10-15 M5 批次 1 搜索 UI 落地时暴露）：`line:` 候选超限与"语法写错"共用 `E_SEARCH_SYNTAX`，前端 `classifySearchError` 只能看文案里有没有「候选 / 上限」这类词 ⇒ **后端一改文案，分类就静默退化成"语法提示"**（用户语法没错却被提示语法错误）。**裁定（项目所有者 2026-10-15 裁定①：选 A）**：**新增专用错误码 `E_SEARCH_TOO_BROAD`**，两者在错误码层面分开。**落地（四处同改）**：① 后端 `AppError::SearchTooBroad` + `code()` 映射 + `search_page.rs` 上限守卫；② §5.2 错误码表新增一行；③ §5.3.4.3 由"待定取舍"改为"已裁定并落地"并修正旧措辞；④ 前端 `errors.ts` 的常量与 `isSearchTooBroadError`、`logic.ts` 的 `classifySearchError`（**主路径按码**；旧子串匹配降级为**仅当响应无码时**的显式兜底，有用例钉住"语法码 + 文案含特征串 ⇒ 仍判 syntax"） | `FR-SEARCH-27`、`AC-SEARCH-05`、PRD §5.2 / §5.3.4.3、M5 批次 1 |
 | D-38 | **标签域的命令"只有名字没有形状"，且有两条命令实现缺位**（2026-10-15 M5 批次 2 复核发现；与 **D-28**（搜索域）/ **D-11**（文件域）/ **D-18**（索引域）同类缺陷）：§5.3.6 的 5 条命令只写「→ `TagNode[]` / `TaggedNote[]` / `TagSuggestion[]`」，而这**三个类型在全仓（含文档）只有名字**；入参写作 `{ tag_norm, include_children }` 这种字面，**缺省值 / 夹紧区间 / 空值语义**也从未进真源。此外后端 `src-tauri/src/commands/` **没有 tag 模块**、`main.rs` 的 invoke_handler **零 `tag*` 注册** ⇒ `tag_suggest` 与 `tag_delete_apply` 属"**契约写着、实现没有**" | **处置（2026-10-15）**：① 新增 **§5.3.6.1 标签域返回结构** 与 **§5.3.6.2 标签域入参子结构**（权威定义，字段与缺省值逐条转写自实现）；② 实现缺位**显式登记**：`tag_suggest` 的唯一消费者 FR-TAG-06 本轮不做（见 **D-39**①）⇒ 契约条目保留、实现随 FR-TAG-06；`tag_delete_apply` 对应 FR-TAG-11 是 **P2** ⇒ 契约保留、待后续批次；③ 本轮只实现 4 条：`tag_tree` / `tag_notes` / `tag_rename_preview` / `tag_rename_apply` | §5.3.6、**§5.3.6.1**、**§5.3.6.2**、FR-TAG-01~13 |
 | D-39 | **本轮范围之外的三个缺口（每一个都有去向，不留白）**（2026-10-15 M5 批次 2 范围裁定）：① **FR-TAG-06（P0）归属冲突** —— M5 计划 §3 把 `FR-TAG-01~09` 整体列入标签域（含 06），而 §7 的批次 2 行只写「标签树 / 标签视图 / 标签重命名 + FR-LINK-16 + DEBT-34」**没写 06** ⇒ **真源内部冲突**；② **FR-TAG-10 的「来源可在笔记的标签列表中区分标识」子项无落点** —— `file_tag` 只有 `(file_id, tag_id, line, col)`，**没有 source 列**；③ **FR-LINK-16 形态未定义** —— 归属已由 **D-26** 定为 M5，但 PRD 只有一句需求，**没有命令、没有返回类型、没有 UI 形态** | **裁定（2026-10-15，项目所有者）**：① **FR-TAG-06 随 M8 编辑器内核一并处理** —— 编辑器补全基础设施缺失（`mdEditorV3.triggerSuggest()` 现直接抛 `EditorFeaturePendingError`），做它等于从零实现补全的触发/候选渲染/键盘选择/插入，且与 **DEBT-01**（M8 换内核）纠缠；计划 §3 那一行的措辞已与之一致化；② **顺延批次 4** —— 该批 `PARSER_VERSION` 升 1 必然全量重建，**顺带加 source 列最省**；「按行号是否落在 frontmatter 区间推断」的方案**不用**（脆弱且有假阴性）；**主体**（frontmatter 的 `tags:` 与正文标签**统一纳入面板与计数**）**本轮实现并断言**；③ **本轮只登记"需要先立契约"**（命令 / 返回类型 / UI 形态三项都缺），实现留后续批次 | M5 计划 §3 与 §7、**DEBT-34**、FR-TAG-06、FR-TAG-10、**FR-LINK-16**、**D-26**、DEBT-01 |
+| D-40 | **标签域两处"验收原文 vs 当前实现"的冲突**（2026-10-16 M5 批次 2 的 PR-A 实测发现）：① **AC-TAG-03 要求 `display` 为「首次出现的形式」，而现状是「最后一次写入者胜」** —— 索引写入用 `ON CONFLICT(norm) DO UPDATE SET display = excluded.display`（`index_sql.rs` 的 `TAG_UPSERT_SQL`），文件按 `rel_path` 升序处理 ⇒ 三篇 `#Work`/`#work`/`#WORK` 的实测 `display` 是 **`WORK`**（用例 `ac_tag_03_display_is_currently_last_writer_not_first` 如实钉住现状）；② **FR-TAG-03 的「可切换是否含子级」在当前索引设计下是 no-op** —— MD-TAG-03 要求层级标签**同时登记自身与全部祖先**，`#项目/alpha/前端` 因此也在 `file_tag` 里写了一行 `项目` ⇒ "只含自身"与"含全部子孙"返回同一批笔记（用例 `include_children_switch_is_currently_a_no_op_for_ancestors` 钉住） | **⏳ 待裁定（两项都未自行选择）**：① 二选一 —— (a) 改索引写入为"**首次**写入者胜"（在 `DO UPDATE` 里给 display 加条件，或改 `DO NOTHING`），代价是改 `index_sql.rs` 与既有的"最后一次写入者胜"语义钉子用例；(b) 改 AC-TAG-03 的措辞为"取最后一次索引的写法"。② 候选：批次 4 与 FR-TAG-10 的 `source` 列**一并**给 `file_tag` 加 explicit/origin 标记，届时才谈得上"含/不含子级"；在那之前 `include_children` 保留但**如实标注为 no-op** | `AC-TAG-03`、`FR-TAG-03`、MD-TAG-03、`index_sql.rs`、PRD §5.3.6.1/§5.3.6.2、M5 批次 2（PR-A） |
 
 ---
 
