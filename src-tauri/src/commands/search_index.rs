@@ -100,7 +100,7 @@ pub(crate) fn search_fulltext_impl(
         page_without_line_filter(&pool, &root, &parsed, sort, view, page)?
     } else {
         // line: 必须扫全部候选（见 search_page 的说明），因此带上候选数上限；
-        // 超限时这里会返回 E_SEARCH_SYNTAX + 「请先缩小范围」的提示（PRD §5.3.4.3）
+        // 超限时这里会返回 E_SEARCH_TOO_BROAD + 「请先缩小范围」的提示（PRD §5.3.4.3）
         page_with_line_filter(
             &pool,
             &root,

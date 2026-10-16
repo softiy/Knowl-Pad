@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { KpError, E_SEARCH_SYNTAX } from '@core/ipc/errors';
+import { KpError, E_SEARCH_SYNTAX, E_SEARCH_TOO_BROAD } from '@core/ipc/errors';
 import type { SearchResultItem } from '@core/ipc/searchCommands';
 import {
   EMPTY_HINTS,
@@ -41,9 +41,9 @@ describe('搜索：错误分类（两种情形必须区分呈现）', () => {
     expect(c.message).toContain('示例');
   });
 
-  it('候选过多（同一个错误码）⇒ too-broad，且**原样透出后端文案里的数字**', () => {
+  it('范围太大走**专用码** ⇒ too-broad，且**原样透出后端文案里的数字**', () => {
     const err = new KpError({
-      code: E_SEARCH_SYNTAX,
+      code: E_SEARCH_TOO_BROAD,
       message: 'line: 的候选笔记过多（当前 1234 条、上限 300 条），请先缩小范围',
     });
     const c = classifySearchError(err);
@@ -52,6 +52,31 @@ describe('搜索：错误分类（两种情形必须区分呈现）', () => {
     expect(c.message).toContain('当前 1234 条');
     expect(c.message).toContain('上限 300 条');
     expect(c.message).not.toContain('示例'); // 不是语法提示，不该混入语法示例
+  });
+
+  it('**码优先于文案**：语法码 + 文案里恰好含"候选/上限" ⇒ 仍判 syntax（子串不再覆盖码）', () => {
+    // 这条是裁定①的绊线：旧实现只看 message 子串，这种输入会被误判成"范围太大"。
+    const err = new KpError({
+      code: E_SEARCH_SYNTAX,
+      message: '双引号未闭合（顺带一提：这个词在候选与上限的说明里出现过）',
+    });
+    const c = classifySearchError(err);
+    expect(c.kind).toBe('syntax');
+    expect(c.title).toBe('语法提示');
+    expect(c.message).toContain('示例');
+  });
+
+  it('兜底路径（**仅当响应无码时**）：裸 Error 且文案含特征串 ⇒ too-broad', () => {
+    // 这不是主路径：老版本响应/测试构造的裸 Error 没有 code，只能按文案猜。
+    const c = classifySearchError(new Error('line: 的候选笔记过多（当前 9 条、上限 3 条）'));
+    expect(c.kind).toBe('too-broad');
+    expect(c.message).toContain('当前 9 条');
+  });
+
+  it('兜底路径也不乱猜：无码且文案没有特征串 ⇒ other', () => {
+    const c = classifySearchError(new Error('连接被重置'));
+    expect(c.kind).toBe('other');
+    expect(c.title).toBe('搜索失败');
   });
 
   it('其它错误 ⇒ other（既不加示例也不改标题）', () => {

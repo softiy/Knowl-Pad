@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
-import { KpError, E_SEARCH_SYNTAX } from '@core/ipc/errors';
+import { KpError, E_SEARCH_SYNTAX, E_SEARCH_TOO_BROAD } from '@core/ipc/errors';
 import type { SearchResultPage } from '@core/ipc/searchCommands';
 
 const hoisted = vi.hoisted(() => ({ fulltext: vi.fn(), quick: vi.fn() }));
@@ -185,8 +185,9 @@ describe('搜索面板（FR-SEARCH-01~11）', () => {
     expect(syntax.text()).toContain('语法提示');
 
     setActivePinia(createPinia());
+    // 2026-10-15 裁定①：范围太大已是**专用码**（旧实现复用 E_SEARCH_SYNTAX、只能按文案区分）
     hoisted.fulltext.mockRejectedValueOnce(
-      new KpError({ code: E_SEARCH_SYNTAX, message: 'line: 的候选笔记过多（当前 301 条、上限 300 条）' }),
+      new KpError({ code: E_SEARCH_TOO_BROAD, message: 'line: 的候选笔记过多（当前 301 条、上限 300 条）' }),
     );
     const w2 = mount(SearchPanel);
     await typeInto(w2, 'line:(x)');

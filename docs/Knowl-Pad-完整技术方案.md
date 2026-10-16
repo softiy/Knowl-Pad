@@ -2627,6 +2627,7 @@ impl AppError {
             Self::RollbackFailed { .. } => "E_REWRITE_FAILED",   // 复用码，context 区分
             Self::PreviewExpired => "E_PREVIEW_EXPIRED",
             Self::SearchSyntax(_) => "E_SEARCH_SYNTAX",
+            Self::SearchTooBroad(_) => "E_SEARCH_TOO_BROAD",   // 2026-10-15 裁定①：范围太大不再复用语法码
             Self::DbError(_) | Self::Sqlite(_) => "E_DB_ERROR",
             Self::LinkAmbiguous => "E_LINK_AMBIGUOUS",
             Self::ParseFrontmatter(_) => "E_PARSE_FRONTMATTER",
