@@ -63,6 +63,16 @@ export const useSearchStore = defineStore('search', () => {
     return item.snippets[0]?.highlightLine ?? 1;
   }
 
+  /**
+   * 命中**列区间**（相对命中行文本，左闭右开）——渲染高亮用的就是这对数据，
+   * 跳转时把它一并交给编辑器，就能精确选中命中处（FR-SEARCH-07），而不是整行。
+   * 没有片段时返回 undefined ⇒ 编辑器回退成整行选中。
+   */
+  function hitRangeFor(item: SearchResultItem): { start: number; end: number } | undefined {
+    const s0 = item.snippets[0];
+    return s0 ? { start: s0.highlightStart, end: s0.highlightEnd } : undefined;
+  }
+
   function snippetsOf(item: SearchResultItem) {
     return visibleSnippets(item, expanded.value.includes(item.relPath));
   }
@@ -200,7 +210,7 @@ export const useSearchStore = defineStore('search', () => {
     panelOpen, quickOpenVisible, query, sort, matchMode, results, total, loading,
     searched, error, expanded, selected, quickQuery, quickItems, quickSelected,
     isEmpty, hasMore,
-    hitLineFor, snippetsOf, toggleExpand, setQuery, setSort, setMatchMode,
+    hitLineFor, hitRangeFor, snippetsOf, toggleExpand, setQuery, setSort, setMatchMode,
     loadMore, moveSelection, runFulltext, setQuickQuery, moveQuickSelection,
     openPanel, closePanel, openQuickOpen, closeQuickOpen, runQuick,
     selectedItem, selectedQuick,

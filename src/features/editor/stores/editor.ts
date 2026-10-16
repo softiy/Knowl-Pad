@@ -68,7 +68,12 @@ const openError = ref<string | null>(null);
  * 待定位行（FR-LINK-13）：点击反链后由 store 记下，视图侧消费一次。
  * 之所以放在 store：**打开笔记是异步的**，组件可能还没挂上，定位请求不能丢。
  */
-const pendingReveal = ref<{ relPath: string; line: number } | null>(null);
+const pendingReveal = ref<{
+  relPath: string;
+  line: number;
+  /** 行内区间（相对该行文本）；只有"跳到命中处"才带（FR-SEARCH-07）。 */
+  range?: { start: number; end: number };
+} | null>(null);
   const mode = ref<EditorMode>('edit');
   const autosaveDelayMs = ref(AUTOSAVE_DEFAULT_MS);
   /** 每个缓冲区的自动保存定时器（关闭/卸载时必须清掉，ED-01 的同源约束） */
@@ -284,10 +289,19 @@ const pendingReveal = ref<{ relPath: string; line: number } | null>(null);
     activeRelPath.value = null;
   }
 
-  /** 打开来源笔记并请求定位到该行（FR-LINK-13）。 */
-  async function reveal(relPath: string, line: number): Promise<void> {
+  /**
+   * 打开来源笔记并请求定位（FR-LINK-13 的行级；FR-SEARCH-07 的列级命中）。
+   *
+   * `range` 只在传了才写进请求对象：既有用例断言的是 `{relPath, line}` 这一形状，
+   * 不传时保持原样（不引入多余的 `range: undefined`）。
+   */
+  async function reveal(
+    relPath: string,
+    line: number,
+    range?: { start: number; end: number },
+  ): Promise<void> {
     await openNote(relPath);
-    pendingReveal.value = { relPath, line };
+    pendingReveal.value = range ? { relPath, line, range } : { relPath, line };
   }
 
   /** 视图消费完定位请求后清除（避免重复定位）。 */

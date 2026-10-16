@@ -91,9 +91,12 @@ function onOpenLink(payload: { relPath: string; line: number }): void {
   void editor.reveal(payload.relPath, payload.line);
 }
 
-/** 点击搜索结果：同一条既有通路（FR-SEARCH-07 的"跳转并定位到命中位置"）。 */
-function onOpenHit(relPath: string, line: number): void {
-  void editor.reveal(relPath, line);
+/**
+ * 点击搜索结果：同一条既有通路（FR-SEARCH-07 的"跳转并定位到命中位置"）。
+ * 带上命中列区间 ⇒ 精确选中命中处；没有区间时编辑器回退成整行选中。
+ */
+function onOpenHit(relPath: string, line: number, range?: { start: number; end: number }): void {
+  void editor.reveal(relPath, line, range);
 }
 
 /** 快速打开只负责"打开文件"，不请求行定位（它不是命中跳转）。 */

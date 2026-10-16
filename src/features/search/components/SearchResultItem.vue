@@ -16,9 +16,17 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  open: [relPath: string, line: number];
+  open: [relPath: string, line: number, range?: { start: number; end: number }];
   toggle: [relPath: string];
 }>();
+
+/** 首个片段的命中位置（行 + 列区间）：行用来滚动，区间用来精确选中。 */
+function firstHit(): { line: number; range?: { start: number; end: number } } {
+  const s = props.item.snippets[0];
+  return s
+    ? { line: s.highlightLine, range: { start: s.highlightStart, end: s.highlightEnd } }
+    : { line: 1 };
+}
 
 const snippets = computed(() => visibleSnippets(props.item, props.expanded));
 const canExpand = computed(() => props.item.snippets.length > 1);
@@ -41,7 +49,7 @@ function segments(snippet: SearchSnippet, lineNo: number, text: string) {
     class="kp-hit"
     :class="{ 'kp-hit--selected': props.selected }"
     data-testid="search-result"
-    @click="emit('open', props.item.relPath, props.item.snippets[0]?.highlightLine ?? 1)"
+    @click="emit('open', props.item.relPath, firstHit().line, firstHit().range)"
   >
     <div class="kp-hit__head">
       <span class="kp-hit__name" data-testid="search-result-name">{{ props.item.name }}</span>

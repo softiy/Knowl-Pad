@@ -129,11 +129,26 @@ describe('搜索面板（FR-SEARCH-01~11）', () => {
     expect(mark.text()).toBe('beta');
   });
 
-  it('点击结果 ⇒ 带着**命中行号** emit open（跳转定位用）', async () => {
+  it('点击结果 ⇒ 带着**命中行号 + 列区间** emit open（跳转定位用，FR-SEARCH-07）', async () => {
     const wrapper = mount(SearchPanel);
     await typeInto(wrapper, 'beta');
     await wrapper.findAll('[data-testid="search-result"]')[0]?.trigger('click');
-    expect(wrapper.emitted('open')?.[0]).toEqual(['work/report.md', 7]);
+    // 列区间就是渲染高亮用的那一对（第 1 条片段的 6..10）⇒ 编辑器可精确选中命中处
+    expect(wrapper.emitted('open')?.[0]).toEqual(['work/report.md', 7, { start: 6, end: 10 }]);
+  });
+
+  it('没有片段的结果 ⇒ 不带列区间（由编辑器回退成整行选中）', async () => {
+    hoisted.fulltext.mockResolvedValue({
+      items: [{ ...page().items[0]!, snippets: [] }],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      hasMore: false,
+    });
+    const wrapper = mount(SearchPanel);
+    await typeInto(wrapper, 'beta');
+    await wrapper.findAll('[data-testid="search-result"]')[0]?.trigger('click');
+    expect(wrapper.emitted('open')?.[0]).toEqual(['work/report.md', 1, undefined]);
   });
 
   it('换排序 ⇒ 用新的 sort **重新查询**（排序真相在后端）', async () => {
@@ -209,7 +224,7 @@ describe('搜索面板（FR-SEARCH-01~11）', () => {
     const input = wrapper.find('[data-testid="search-input"]');
     await input.trigger('keydown', { key: 'ArrowDown' });
     await input.trigger('keydown', { key: 'Enter' });
-    expect(wrapper.emitted('open')?.[0]).toEqual(['notes/other.md', 2]);
+    expect(wrapper.emitted('open')?.[0]).toEqual(['notes/other.md', 2, { start: 0, end: 4 }]);
   });
 
   it('Esc ⇒ emit close；关闭按钮同理', async () => {

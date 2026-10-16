@@ -11,6 +11,7 @@ vi.mock('@core/ipc/commands', () => ({
 
 import { useEditorStore } from '@features/editor';
 import { consumeReveal } from '@features/editor/adapter/consumeReveal';
+import { revealLineIn } from '@features/editor/adapter/revealLine';
 
 describe('编辑器行定位（FR-LINK-13）', () => {
   beforeEach(() => setActivePinia(createPinia()));
@@ -95,5 +96,94 @@ describe('默认降级路径', () => {
     expect(cleared).toBe(1);
     stop();
     warn.mockRestore();
+  });
+});
+describe('列级定位（FR-SEARCH-07 的"跳到命中处"）', () => {
+  /** 真 DOM：把 textarea 放进宿主，断言**实际**选中的偏移，而不是"应该能"。 */
+  function hostWith(value: string): { root: HTMLElement; ta: HTMLTextAreaElement } {
+    const root = document.createElement('div');
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    root.appendChild(ta);
+    document.body.appendChild(root);
+    return { root, ta };
+  }
+
+  const VALUE = '第一行\nsecond line here\n第三行';
+  // 第 1 行 3 个字符 + \n ⇒ 第 2 行从下标 4 开始
+  const LINE2 = 4;
+
+  it('给了列区间 ⇒ 精确选中命中处（不是整行）', () => {
+    const { root, ta } = hostWith(VALUE);
+    expect(revealLineIn(root, VALUE, 2, { start: 7, end: 11 })).toBe(true);
+    expect(ta.selectionStart).toBe(LINE2 + 7);
+    expect(ta.selectionEnd).toBe(LINE2 + 11);
+    expect(VALUE.slice(ta.selectionStart, ta.selectionEnd)).toBe('line');
+  });
+
+  it('不给区间 ⇒ 仍选中整行（反链 FR-LINK-13 的既有行为不变）', () => {
+    const { root, ta } = hostWith(VALUE);
+    expect(revealLineIn(root, VALUE, 2)).toBe(true);
+    expect(ta.selectionStart).toBe(LINE2);
+    expect(ta.selectionEnd).toBe(LINE2 + 'second line here'.length);
+  });
+
+  it('区间越界/为空/反向 ⇒ 一律退回整行（绝不选空）', () => {
+    const { root, ta } = hostWith(VALUE);
+    // 实测行为：两端都夹到行尾后区间为空 ⇒ 走"退回整行"分支（不是"选中行尾的空区间"）
+    revealLineIn(root, VALUE, 2, { start: 999, end: 9999 });
+    expect(ta.selectionStart).toBe(LINE2);
+    expect(ta.selectionEnd).toBe(LINE2 + 'second line here'.length);
+
+    revealLineIn(root, VALUE, 2, { start: 5, end: 5 });
+    expect(ta.selectionStart).toBe(LINE2); // 空区间 ⇒ 退回整行
+    expect(ta.selectionEnd).toBe(LINE2 + 'second line here'.length);
+
+    revealLineIn(root, VALUE, 2, { start: 9, end: 3 });
+    expect(ta.selectionStart).toBe(LINE2); // 反向 ⇒ 退回整行
+    expect(ta.selectionEnd).toBe(LINE2 + 'second line here'.length);
+  });
+
+  it('行号越界仍按既有规则收敛，且区间照样生效', () => {
+    const { root, ta } = hostWith(VALUE);
+    revealLineIn(root, VALUE, 99, { start: 0, end: 1 });
+    expect(VALUE.slice(ta.selectionStart, ta.selectionEnd)).toBe('第');
+  });
+
+  it('没有 textarea 的宿主 ⇒ 返回 false（如实降级，不假装选中）', () => {
+    const root = document.createElement('div');
+    expect(revealLineIn(root, VALUE, 1, { start: 0, end: 1 })).toBe(false);
+  });
+
+  it('consumeReveal 会把列区间一并交给适配器', () => {
+    const seen: Array<{ line: number; range?: { start: number; end: number } }> = [];
+    let req: { relPath: string; line: number; range?: { start: number; end: number } } | null = {
+      relPath: 'a.md',
+      line: 5,
+      range: { start: 2, end: 6 },
+    };
+    const stop = consumeReveal({
+      current: () => req,
+      active: () => 'a.md',
+      clear: () => {
+        req = null;
+      },
+      adapter: () => ({
+        revealLine: (line: number, range?: { start: number; end: number }) => {
+          seen.push(range ? { line, range } : { line });
+          return true;
+        },
+      }),
+    });
+    expect(seen).toEqual([{ line: 5, range: { start: 2, end: 6 } }]);
+    stop();
+  });
+
+  it('store.reveal 带区间时写进请求；不带时保持原形状（既有断言不破）', async () => {
+    const store = useEditorStore();
+    await store.reveal('a.md', 7, { start: 1, end: 3 });
+    expect(store.pendingReveal).toEqual({ relPath: 'a.md', line: 7, range: { start: 1, end: 3 } });
+    await store.reveal('a.md', 8);
+    expect(store.pendingReveal).toEqual({ relPath: 'a.md', line: 8 });
   });
 });
