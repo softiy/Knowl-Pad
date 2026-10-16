@@ -121,9 +121,12 @@ pub(crate) fn page_without_line_filter(
 /// 候选数守卫（PRD §5.3.4.3）：超过上限时返回**明确的提示**而不是空结果或长时间阻塞。
 ///
 /// 抽成纯函数是为了能直接断言边界（`max` 允许、`max + 1` 拒绝），不必真的造 5001 篇笔记。
+///
+/// 错误码用 **E_SEARCH_TOO_BROAD**（2026-10-15 裁定①）：它表示"查询语法没问题、只是范围太大"，
+/// 与"语法写错"（E_SEARCH_SYNTAX）在**码层面**分开 —— 前端因此不必按 message 猜。
 pub(crate) fn guard_candidate_count(candidates: usize, max: usize) -> Result<(), KpError> {
     if candidates > max {
-        return Err(KpError(AppError::SearchSyntax(too_many_line_candidates(
+        return Err(KpError(AppError::SearchTooBroad(too_many_line_candidates(
             candidates, max,
         ))));
     }
@@ -134,7 +137,7 @@ pub(crate) fn guard_candidate_count(candidates: usize, max: usize) -> Result<(),
 ///
 /// 为什么不能只过滤当前页：total 必须等于过滤后的命中数，否则 hasMore 与翻页会漏项/重复。
 /// 代价：候选数 = 含全部 line: 词的笔记数，这批笔记会被读一遍 —— 因此有 `max_candidates` 守卫
-/// （超限即 `E_SEARCH_SYNTAX` + 「请先缩小范围」，见 PRD §5.3.4.3）；
+/// （超限即 `E_SEARCH_TOO_BROAD` + 「请先缩小范围」，见 PRD §5.3.4.3）；
 /// `line:` 的耗时在实测标定前**不计入** NFR-PERF-04 的达标证据。
 pub(crate) fn page_with_line_filter(
     pool: &DbPool,

@@ -609,7 +609,14 @@ fn line_filter_reports_a_hint_when_candidates_exceed_the_cap() {
     // 两个候选、上限 1 ⇒ 必须报错并带提示文案（**含当前候选数与上限**，M5 计划 §7.2 第 5 步）
     let err = page_with_line_filter(&pool, &root, &parsed, SortOrder::Path, view, window, 1)
         .expect_err("超限必须报错");
-    assert_eq!(err.0.code(), "E_SEARCH_SYNTAX", "与语法错误共用提示通道");
+    // 2026-10-15 裁定①：超限走**专用码** E_SEARCH_TOO_BROAD（不再复用语法错误码）。
+    // 旧断言是 "与语法错误共用提示通道"，那是裁定前的过渡做法，已作废。
+    assert_eq!(
+        err.0.code(),
+        "E_SEARCH_TOO_BROAD",
+        "范围太大与语法错误必须在码层面分开"
+    );
+    assert_eq!(err.0.kind(), "SearchTooBroad");
     let msg = err.0.to_string();
     assert!(msg.contains("缩小范围"), "{msg}");
     assert!(msg.contains("当前 2 条"), "提示必须给出当前候选数：{msg}");
@@ -635,7 +642,15 @@ fn candidate_guard_boundary_and_documented_cap() {
     );
     assert!(guard_candidate_count(300, 300).is_ok(), "等于上限放行");
     let err = guard_candidate_count(301, 300).expect_err("超过上限必须报错");
-    assert_eq!(err.0.code(), "E_SEARCH_SYNTAX");
+    // 2026-10-15 裁定①：范围太大用**专用码**，不再复用 E_SEARCH_SYNTAX
+    // （旧实现复用同一个码，前端只能按 message 子串区分 —— 后端改文案就会静默退化）。
+    assert_eq!(err.0.code(), "E_SEARCH_TOO_BROAD");
+    assert_eq!(err.0.kind(), "SearchTooBroad");
+    assert_ne!(
+        err.0.code(),
+        "E_SEARCH_SYNTAX",
+        "不得再复用语法错误码（这条断言就是裁定①的绊线）"
+    );
     let msg = err.0.to_string();
     assert!(msg.contains("缩小范围"), "{msg}");
     assert!(

@@ -73,6 +73,14 @@ pub enum AppError {
     /// 拼接原查询就等于把搜索词搬到错误通道上（SEC-09 / R-12 的同一纪律）。
     #[error("搜索语法错误：{0}")]
     SearchSyntax(String),
+    /// 2026-10-15 裁定①（PRD §5.3.4.3 已由"待定取舍"改为"已裁定并落地"）：
+    /// **查询本身合法、但候选范围太大**（例如 line: 的候选数超过上限）与"语法写错"是**两件事**，
+    /// 必须用**不同的错误码**区分 —— 否则前端只能靠 message 子串去猜，后端一改文案就静默退化成"语法提示"。
+    ///
+    /// 消息纪律同 SearchSyntax：只放**固定诊断文案 + 计数**，不回显用户查询串
+    /// （命令层的错误出口会把 Debug 形式的错误放进 IPC 响应的 detail 字段 —— SEC-09 / R-12）。
+    #[error("搜索范围过大：{0}")]
+    SearchTooBroad(String),
 }
 
 impl AppError {
@@ -99,6 +107,8 @@ impl AppError {
             Self::RollbackFailed { .. } => "E_REWRITE_FAILED",
             // PRD §5.2 第 1561 行：搜索语法错误 / 400 / 显示语法提示
             Self::SearchSyntax(_) => "E_SEARCH_SYNTAX",
+            // PRD §5.2（2026-10-15 新增行）：搜索范围过大 / 400 / 提示缩小范围（与语法错误分开）
+            Self::SearchTooBroad(_) => "E_SEARCH_TOO_BROAD",
         }
     }
 }
@@ -166,6 +176,7 @@ impl AppError {
             Self::RewriteFailed(_) => "RewriteFailed",
             Self::RollbackFailed { .. } => "RollbackFailed",
             Self::SearchSyntax(_) => "SearchSyntax",
+            Self::SearchTooBroad(_) => "SearchTooBroad",
         }
     }
 }

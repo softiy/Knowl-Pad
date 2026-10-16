@@ -8,9 +8,34 @@
  */
 export const E_SEARCH_SYNTAX = 'E_SEARCH_SYNTAX';
 
+/**
+ * 搜索"范围太大"错误码（PRD §5.2，2026-10-15 裁定①新增）。
+ *
+ * 为什么单独一个码：候选数超限（如 `line:` 的候选超过上限）**语法没写错**，只是范围太大。
+ * 此前它与语法错误共用 {@link E_SEARCH_SYNTAX}，前端只能按 message 子串猜 —— 后端一改文案就静默
+ * 退化成"语法提示"。现在两者在**码层面**分开，前端主路径只看码。
+ */
+export const E_SEARCH_TOO_BROAD = 'E_SEARCH_TOO_BROAD';
+
 /** 是否搜索语法错误（把错误码收敛到一处，调用点不再手写字符串）。 */
 export function isSearchSyntaxError(err: unknown): boolean {
   return asKpError(err).code === E_SEARCH_SYNTAX;
+}
+
+/** 是否"搜索范围太大"（与语法错误分开的专用码；见 {@link E_SEARCH_TOO_BROAD}）。 */
+export function isSearchTooBroadError(err: unknown): boolean {
+  return asKpError(err).code === E_SEARCH_TOO_BROAD;
+}
+
+/**
+ * 该错误是否**真的带了 IPC 错误码**（而不是被 {@link asKpError} 兜底合成出来的 `E_INTERNAL`）。
+ *
+ * 用途只有一个：让"按 message 子串猜"的旧逻辑退化成**显式兜底**（仅当响应无码时才启用），
+ * 而不是与码并行的第二条真相。
+ */
+export function hasWireCode(err: unknown): boolean {
+  if (err instanceof KpError) return true;
+  return isRecord(err) && typeof err.code === 'string' && typeof err.message === 'string';
 }
 
 export interface KpErrorInit {

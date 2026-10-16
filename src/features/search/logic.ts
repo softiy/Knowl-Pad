@@ -5,7 +5,7 @@
  * ② 这里的判定（错误分类、防抖取消、选中项）正是最容易写错、也最该被测的部分。
  */
 
-import { asKpError, isSearchSyntaxError } from '@core/ipc/errors';
+import { asKpError, hasWireCode, isSearchSyntaxError, isSearchTooBroadError } from '@core/ipc/errors';
 import type { SearchResultItem, SearchSnippet } from '@core/ipc/searchCommands';
 
 /** 输入防抖窗口（FR-SEARCH-08：防抖 200ms，且能取消上一次）。 */
@@ -22,43 +22,55 @@ export const SORT_OPTIONS: ReadonlyArray<{ value: SearchSort; label: string }> =
 ];
 
 /**
- * 错误呈现的**两种情形**（项目所有者裁定的过渡做法）。
+ * 错误呈现的**两种情形**。
  *
- * 背景：语法错误与"候选过多"共用 `E_SEARCH_SYNTAX` 这一个错误码，因此**只能按 message 区分**。
- * - `syntax`：用户自身语法写错（未闭合引号等）⇒ 呈现为"语法提示"；
- * - `too-broad`：查询合法但候选太多（后端文案含「当前候选 N 条、上限 300 条」）⇒ 原样呈现后端文案，
- *   因为文案里带着**具体数字**，是用户判断"该再收窄多少"的唯一依据；
- * - `other`：其余错误，照常显示 message。
+ * **主路径按错误码判定**（2026-10-15 裁定①落地后）：
+ * - `E_SEARCH_TOO_BROAD` ⇒ `too-broad`：查询**语法没问题**，只是范围太大（如 `line:` 候选超限）。
+ *   正文**原样透出后端文案** —— 里面有「当前 N 条、上限 300 条」这类**具体数字**，
+ *   是用户判断"还要收窄多少"的唯一依据；
+ * - `E_SEARCH_SYNTAX` ⇒ `syntax`：用户语法写错（未闭合引号等）⇒ 呈现为"语法提示"并附示例；
+ * - 其余 ⇒ `other`。
  *
- * ⚠️ 这是**过渡实现**：真正的解法是后端给出独立的错误码（已作为待裁定项登记）。
- * 在那之前，这里的匹配串必须与后端文案同步改 —— 见 `src-tauri/src/commands/search.rs`。
+ * **兜底**（`TOO_BROAD_MARKERS`）：仅当响应**没有带 IPC 错误码**时才按 message 子串猜。
+ * 为什么保留而不是删掉：老版本的响应、以及测试/第三方构造的裸 Error 都可能没码；
+ * 没有兜底时这类输入会被显示成"搜索失败"，比"范围太大"更难懂。**它不再是主路径** ——
+ * 带码的响应一律只看码（有用例专门钉住"旧码 + 含特征串的文案 ⇒ 仍判 syntax"）。
  */
 export type SearchErrorKind = 'syntax' | 'too-broad' | 'other';
 
-/** 后端"候选过多"文案的特征串（search.rs 的 too_many_line_candidates）。 */
+/**
+ * "候选过多"文案的特征串 —— **兜底专用**（仅无码时启用）。
+ * 文案出处：`src-tauri/src/commands/search.rs` 的 `too_many_line_candidates`。
+ */
 const TOO_BROAD_MARKERS = ['候选', '上限'];
 
 export interface ClassifiedError {
   kind: SearchErrorKind;
   /** 面向用户的一行标题。 */
   title: string;
-  /** 正文：语法错误给示例，候选过多原样透出后端文案（含具体数字）。 */
+  /** 正文：语法错误给示例，范围太大原样透出后端文案（含具体数字）。 */
   message: string;
 }
 
 export function classifySearchError(err: unknown): ClassifiedError {
   const message = asKpError(err).message;
-  if (!isSearchSyntaxError(err)) {
-    return { kind: 'other', title: '搜索失败', message };
-  }
-  if (TOO_BROAD_MARKERS.some((m) => message.includes(m))) {
+  // ① 主路径：专用码（范围太大）
+  if (isSearchTooBroadError(err)) {
     return { kind: 'too-broad', title: '结果范围太大', message };
   }
-  return {
-    kind: 'syntax',
-    title: '语法提示',
-    message: `${message}（示例："完整短语" 用引号、tag:标签 限标签、path:目录/ 限路径）`,
-  };
+  // ② 主路径：语法错误码
+  if (isSearchSyntaxError(err)) {
+    return {
+      kind: 'syntax',
+      title: '语法提示',
+      message: `${message}（示例："完整短语" 用引号、tag:标签 限标签、path:目录/ 限路径）`,
+    };
+  }
+  // ③ 兜底：**只有响应无码时**才按文案猜（见上方注释）
+  if (!hasWireCode(err) && TOO_BROAD_MARKERS.some((m) => message.includes(m))) {
+    return { kind: 'too-broad', title: '结果范围太大', message };
+  }
+  return { kind: 'other', title: '搜索失败', message };
 }
 
 /**

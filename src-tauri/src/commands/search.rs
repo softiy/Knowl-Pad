@@ -62,7 +62,7 @@ pub const MAX_CONTEXT_LINES: usize = 20;
 /// d25_nfr_perf_04_line_filter -- --nocapture --test-threads=1`。
 /// 数字同步登记在 PRD §5.3.4.3 与 perf/d25-budgets.json 的 NFR-PERF-04-line-filter 条目。
 pub const MAX_LINE_FILTER_CANDIDATES: usize = 300;
-/// 候选数超限时的提示文案（与语法错误共用 E_SEARCH_SYNTAX 的「显示语法提示」通道）。
+/// 候选数超限时的提示文案（走专用码 `E_SEARCH_TOO_BROAD`，**不再**与语法错误共用通道 —— 2026-10-15 裁定①）。
 ///
 /// **必须报出「当前多少条、上限多少条」**（M5 计划 §7.2 第 5 步）：只说"太多了"用户不知道自己
 /// 离门槛有多远 —— 差 1 条与差 100 倍，该加一个词还是该换查询，是完全不同的动作。
