@@ -51,6 +51,33 @@ vi.mock('@features/editor', async () => {
   };
 });
 
+// 搜索域同样整体替身：本 spec 刻意不装 Pinia（每个 feature 都用替身），
+// 而 SearchPanel/QuickOpen 的真身要读 Pinia store —— 这里只保留"布局用到的那几个面"。
+vi.mock('@features/search', async () => {
+  const { reactive } = await import('vue');
+  const store = reactive({
+    panelOpen: false,
+    quickOpenVisible: false,
+    openPanel: vi.fn(() => {
+      store.panelOpen = true;
+    }),
+    closePanel: vi.fn(() => {
+      store.panelOpen = false;
+    }),
+    openQuickOpen: vi.fn(() => {
+      store.quickOpenVisible = true;
+    }),
+    closeQuickOpen: vi.fn(() => {
+      store.quickOpenVisible = false;
+    }),
+  });
+  return {
+    SearchPanel: { name: 'SearchPanel', template: '<div data-testid="search-panel" />' },
+    QuickOpen: { name: 'QuickOpen', template: '<div data-testid="quick-open" />' },
+    useSearchStore: () => store,
+  };
+});
+
 vi.mock('@features/file-tree', () => ({
   FileTree: { template: '<div />' },
   FileOpsDialog: { template: '<div />' },
