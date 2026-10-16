@@ -70,6 +70,17 @@ pub const ALL_CACHED_SQL: [&str; 12] = [
     ALIAS_INSERT_SQL,
 ];
 
+/// 清理**孤儿标签行**：没有任何 `file_tag` 引用（`ref_count = 0`）的 `tag` 行。
+///
+/// **依据**（2026-10-16 裁定，见 PRD 勘误 **D-41**）：
+/// - AC-TAG-02 末句要求「`#old` 若无其他子孙则从标签表中消失」；
+/// - 重建结果必须与一次性索引**逐表一致**（AC-REL-03 的口径）—— 孤儿行会让两者不同，
+///   属**正确性缺陷**而不是面板美观问题（它还会被 `tag_tree` 列出来，点进去是空列表）。
+///
+/// **只在全量重建收尾调用**：重建中途某标签可能暂时为 0（它的文件还没轮到），早删会把后面还要用的标签删掉。
+pub const ORPHAN_TAGS_DELETE_SQL: &str = "DELETE FROM tag WHERE ref_count = 0 AND NOT EXISTS \
+     (SELECT 1 FROM file_tag ft WHERE ft.tag_id = tag.id)";
+
 #[cfg(test)]
 mod tests {
     use super::*;
