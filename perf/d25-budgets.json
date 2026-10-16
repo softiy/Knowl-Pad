@@ -11,8 +11,15 @@
       "② 跑整轮采样与预算比对：KP_D25_VAULT=<夹具目录> KP_D25_NOTES=3000 node scripts/perf-d25.mjs --tier standard",
       "③ 只复测首次索引（最快，也是当前唯一超预算的判定项）：KP_D25_VAULT=<夹具目录> KP_D25_NOTES=3000 cargo test -p knowl-pad --locked d25_nfr_perf_03_first_index -- --nocapture --test-threads=1",
       "④ 复测分项（看瓶颈在哪一阶段）：KP_D25_VAULT=<夹具目录> KP_D25_NOTES=3000 cargo test -p knowl-pad --locked d25_nfr_perf_03_breakdown -- --nocapture --test-threads=1",
-      "⑤ 采样器会写 perf/d25-report.json（已 gitignore）并逐条打印 已达标 / 超预算 / proxy / 待接入；**报告里必须同时记录机器规格**，否则数字仍然不可比"
-    ]
+      "⑤ 采样器会写 perf/d25-report.json（已 gitignore）并逐条打印 已达标 / 超预算 / proxy / 待接入；**报告里必须同时记录机器规格**，否则数字仍然不可比",
+      "⑥ **基准机不可得时的可比方法**（2026-10-15 新增）：跑校准微基准 —— cargo test -p knowl-pad --locked calib_ -- --nocapture --test-threads=1 —— 输出两个机器可比标量：`D25 CALIB-cpu us_per_iter=…`（固定笔记上的解析+分词，单核吞吐）与 `D25 CALIB-persist us_per_commit=… checkpoint_us=…`（与生产同一套 PRAGMA 下的小事务提交与 WAL 检查点）。**有第二个数据点（任意 CI runner 即可）才有归一化的分母**；只有一个点不足以判定，只能给区间。",
+      "⑦ 机器档案取证（Windows）：`Get-CimInstance Win32_Processor`（型号/物理核/逻辑核/主频）、`Get-CimInstance Win32_PhysicalMemory` 与 `Win32_ComputerSystem.TotalPhysicalMemory`（内存）、`Get-PhysicalDisk` 与 `Get-Partition -DriveLetter C | Get-Disk`（承载索引库的磁盘是 SATA / NVMe / 网络盘）。**档案必须与数字一起记录**。"
+    ],
+    "comparable_method": {
+      "why": "PRD §6.1.1 的基准机（4 核 @2.5GHz / 8GB / SATA SSD）通常不可得，CI runner 也不是基准机。要判断「某台机器上的 11637 ms 换到基准环境量级是多少」，必须先把机器差异压成可比的标量。",
+      "model": "总耗时 ≈ CPU 侧 / c + 持久化侧 × d。c = 基准机单核吞吐 ÷ 本机单核吞吐（来自 CALIB-cpu），d = 基准机持久化延迟 ÷ 本机（来自 CALIB-persist 的 checkpoint 量级）。**假设**：索引是单线程的 ⇒ 与核数无关；解析/分词/扫描/派生表写入随单核吞吐缩放；分批 COMMIT/检查点随持久化延迟缩放。",
+      "not_a_verdict": "这是**换算**，不是判定：它给出的是区间与盈亏平衡点，**不得**据此放行、**不得**据此放宽预算。"
+    }
   },
   "budgets": [
     {

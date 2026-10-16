@@ -25,6 +25,8 @@ mod index_watch_poll;
 mod index_watch_tests;
 mod logging;
 #[cfg(test)]
+mod perf_calib_tests;
+#[cfg(test)]
 mod perf_d25_tests;
 mod platform;
 mod state;
