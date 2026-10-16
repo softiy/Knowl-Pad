@@ -133,13 +133,14 @@ fn ac_tag_03_case_insensitive_dedup_and_notes_listing() {
     assert_eq!(notes(&state, "work", false), vec!["a.md", "b.md", "c.md"]);
 }
 
-/// **AC-TAG-03 的 display 子句与现状不一致**（已上报待裁定）：
-/// 验收原文要求「display 为**首次出现**的形式」，而索引写入是 ON CONFLICT DO UPDATE 的
-/// **最后一次写入者胜**（见 index_sql.rs 的 TAG_UPSERT_SQL），文件按 rel_path 升序处理 ⇒ 现状是**最后**一次。
-/// 本用例**如实钉住现状**（而不是把期望写成验收要求 —— 那会让测试恒红）：
-/// a.md 的 Work、b.md 的 work、c.md 的 WORK ⇒ 现状 display = "WORK"。
+/// **AC-TAG-03 / FR-TAG-09：`display` 取「首次出现」的原文形式**（2026-10-16 裁定①选 (a) 修正后）。
+///
+/// 曾经的冲突：索引写入原本是"最后一次写入者胜"（`ON CONFLICT DO UPDATE SET display = excluded.display`），
+/// 三篇 `#Work`/`#work`/`#WORK` 实测得到 `WORK`，与验收原文相反。
+/// 现改为**冲突时不覆盖 display**（结构字段仍最后一次胜，见 `index_sql.rs` 的 `TAG_UPSERT_SQL`）
+/// ⇒ 首次出现的 `Work` 胜出。语义钉子见 `index_engine_tests::tag_write_semantics_display_first_wins_structure_last_wins`。
 #[test]
-fn ac_tag_03_display_is_currently_last_writer_not_first() {
+fn ac_tag_03_display_is_the_first_occurrence() {
     let (_v, state) = fixture(&[
         ("a.md", "#Work 甲\n"),
         ("b.md", "#work 乙\n"),
@@ -148,8 +149,8 @@ fn ac_tag_03_display_is_currently_last_writer_not_first() {
     let tree = tag_tree_impl(&state).expect("标签树");
     let work = root_node(&tree, "work");
     assert_eq!(
-        work.display, "WORK",
-        "现状 = 最后一次索引的写法（c.md）。AC-TAG-03 要求『首次出现的形式』= Work ⇒ 冲突待裁定"
+        work.display, "Work",
+        "AC-TAG-03 / FR-TAG-09：首次出现的形式（a.md 的 #Work）"
     );
 }
 

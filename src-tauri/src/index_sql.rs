@@ -31,10 +31,17 @@ pub const BLOCK_ID_INSERT_SQL: &str =
 pub const LINK_INSERT_SQL: &str =
     "INSERT INTO link (src_file_id, dst_file_id, target_ref, anchor, alias, link_kind, status, line, col) \
      VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'dangling', ?6, ?7)";
-/// 写 tag 行（upsert：最后一次写入者胜，语义见 `tag_write_semantics_*` 用例）。
+/// 写 tag 行（upsert：**display 首次写入者胜、结构字段最后一次写入者胜**）。
+///
+/// **为什么要分开**（2026-10-16 裁定，见 PRD 勘误 D-40①）：
+/// - `display`（显示名）由 **AC-TAG-03 / FR-TAG-09** 定死为「**首次**出现的原文形式」⇒ 冲突时**不动它**；
+/// - `depth` / `is_leaf` 等**结构字段**必须反映**最终**层级（AC-TAG-01 的 `is_leaf` 仅最末级为真）
+///   ⇒ 冲突时照旧最后一次写入者胜。
+///
+/// 语义钉子见 `tag_write_semantics_display_first_wins_structure_last_wins` 用例。
 pub const TAG_UPSERT_SQL: &str =
     "INSERT INTO tag (norm, display, depth, is_leaf, ref_count) VALUES (?1, ?2, ?3, ?4, 0) \
-     ON CONFLICT(norm) DO UPDATE SET display = excluded.display, depth = excluded.depth, is_leaf = excluded.is_leaf";
+     ON CONFLICT(norm) DO UPDATE SET depth = excluded.depth, is_leaf = excluded.is_leaf";
 /// 取 tag id。
 pub const TAG_SELECT_ID_SQL: &str = "SELECT id FROM tag WHERE norm = ?1";
 /// 写 file_tag 行。
