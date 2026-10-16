@@ -25,6 +25,9 @@ use crate::state::AppState;
 use crate::storage::tag_query;
 use kp_domain::error::AppError;
 use kp_domain::link_rewrite_apply::{self, FileChange, RewritePlan};
+
+/// 备份目录前缀：标签改名用自己的，避免用户在回滚列表里看到 @@link-rewrite-*@@（2026-10-16 放行）。
+const BACKUP_PREFIX: &str = "tag-rename";
 use kp_domain::tag_rewrite;
 
 /// `tag_rename_preview` 的入参（PRD §5.3.6.2 的 `TagRenamePreviewArgs`）。
@@ -141,10 +144,11 @@ pub(crate) fn tag_rename_apply_impl(
     ensure_fresh(&stored.vault_root, &stored.plan, &stored.mtimes).map_err(KpError)?;
 
     let operation_id = next_id("op");
-    let report = link_rewrite_apply::apply(
+    let report = link_rewrite_apply::apply_with_prefix(
         &stored.vault_root,
         &stored.plan,
         &backup_root(&stored.vault_root),
+        BACKUP_PREFIX,
     )
     .map_err(|e| {
         log_rollback_failure(&e);

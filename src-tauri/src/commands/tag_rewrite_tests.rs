@@ -282,14 +282,13 @@ fn ac_tag_02_mid_batch_failure_restores_already_written_files() {
     );
 }
 
-/// **AC-TAG-02 的"旧标签从标签表消失"这一句当前不成立**（已上报待裁定，见 PRD 勘误 **D-41**）。
+/// **AC-TAG-02 末句：旧标签若无其他子孙，则从标签表中消失**（D-41 修好后成立）。
 ///
-/// 实测（本用例就是证据）：改写 + 重索引之后，`old/name` 仍然留在 `tag` 表里 ——
-/// 而它已经**没有任何 `file_tag` 行**（引用计数为 0）。也就是说：**索引重建不会清理 tag 行**。
-/// 后果不只是面板上多一个"幽灵标签"：它会被 `tag_tree` 列出来，点进去是一篇也没有的空列表。
-/// 本用例**如实钉住现状**（而不是把期望写成验收要求 —— 那会让测试恒红），作为裁定的依据。
+/// 曾经不成立：索引重建**只写不删**，`old/name` 会作为"幽灵标签"留在 `tag` 表里（`tag_tree` 会列出它，
+/// 点进去却是空列表）。裁定后改为"重建收尾清理无 `file_tag` 引用的 tag 行"（PRD 勘误 **D-41**），
+/// 本用例现在断言验收原文的结论。
 #[test]
-fn ac_tag_02_old_tag_removal_is_currently_blocked_by_an_index_side_gap() {
+fn ac_tag_02_old_tag_disappears_after_rename_and_rebuild() {
     let (_v, state) = fixture(&[("a.md", "#old/name 甲\n"), ("b.md", "#old/name 乙\n")]);
     let p = tag_rename_preview_impl(&state, "old/name".into(), "new/name".into()).expect("预览");
     tag_rename_apply_impl(
@@ -309,17 +308,19 @@ fn ac_tag_02_old_tag_removal_is_currently_blocked_by_an_index_side_gap() {
         })
         .expect("统计")
     };
-    let tag_rows = count("SELECT count(*) FROM tag WHERE norm = 'old/name'");
-    let refs = count(
-        "SELECT count(*) FROM file_tag ft JOIN tag t ON t.id = ft.tag_id WHERE t.norm = 'old/name'",
-    );
-    assert_eq!(refs, 0, "已经没有文件引用它了（改写成功）");
     assert_eq!(
-        tag_rows, 1,
-        "但 tag 行仍在（索引重建不清理）⇒ AC-TAG-02 的『若无其他子孙则从标签表中消失』当前不成立"
+        count("SELECT count(*) FROM tag WHERE norm = 'old/name'"),
+        0,
+        "旧标签行必须消失"
+    );
+    assert_eq!(
+        count("SELECT count(*) FROM tag WHERE norm = 'new/name'"),
+        1,
+        "新标签行在"
     );
     assert!(
-        all_norms(&state).contains(&"old/name".to_string()),
-        "它还会被 tag_tree 列出来（面板上的幽灵标签）"
+        !all_norms(&state).contains(&"old/name".to_string()),
+        "tag_tree 不应再列出旧标签（面板里不该有幽灵条目）：{:?}",
+        all_norms(&state)
     );
 }

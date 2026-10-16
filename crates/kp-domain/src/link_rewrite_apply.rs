@@ -88,7 +88,22 @@ pub fn plan_rename(
 ///
 /// 步骤：建备份目录 → 逐个备份 → 逐个原子写；任一步失败 → 还原所有已写文件并把
 /// 备份留在原处（便于用户查看），返回错误。
+///
+/// 备份目录名用链接域的前缀（**链接改写的既有行为不变**）；标签改名走 @@apply_with_prefix@@，
+/// 传 @@tag-rename@@ —— 免得用户在回滚列表里看到 @@link-rewrite-*@@ 却不知道那是标签改名留下的。
 pub fn apply(root: &Path, plan: &RewritePlan, backup_root: &Path) -> Result<ApplyReport, AppError> {
+    apply_with_prefix(root, plan, backup_root, "link-rewrite")
+}
+
+/// 同 @@apply@@，但备份目录名用调用方给的前缀（@@<prefix>-<stamp>@@）。
+///
+/// 参数化只加参数、**不改语义**（AC-TAG-02 的"全有或全无"与备份行为完全一致）。
+pub fn apply_with_prefix(
+    root: &Path,
+    plan: &RewritePlan,
+    backup_root: &Path,
+    prefix: &str,
+) -> Result<ApplyReport, AppError> {
     if plan.is_empty() {
         return Ok(ApplyReport {
             files: 0,
@@ -100,7 +115,7 @@ pub fn apply(root: &Path, plan: &RewritePlan, backup_root: &Path) -> Result<Appl
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let backup_dir = backup_root.join(format!("link-rewrite-{stamp}"));
+    let backup_dir = backup_root.join(format!("{prefix}-{stamp}"));
     std::fs::create_dir_all(&backup_dir)
         .map_err(|e| AppError::IoFailure(format!("创建备份目录失败：{e}")))?;
 

@@ -391,6 +391,15 @@ pub fn full_index_cancellable<F: FnMut(usize, usize), C: Fn() -> bool>(
         stop(t_all, Phase::Resolve);
         Ok(())
     })?;
+    // 收尾：清理**孤儿标签行**（AC-TAG-02 末句「旧标签若无其他子孙则从标签表消失」；
+    // 重建与一次性索引必须**逐表一致** —— AC-REL-03 口径。见 PRD 勘误 D-41。）
+    // 只在这里做（未取消的全量重建收尾）：中途取消在上面的 should_cancel 分支已提前返回，
+    // 而每批中间不能删 —— 那时某些标签可能还没轮到它的文件。
+    pool.with_writer(|conn| {
+        conn.execute(crate::index_sql::ORPHAN_TAGS_DELETE_SQL, [])
+            .map(|_| ())
+            .map_err(|e| AppError::db_with("清理孤儿标签", &e))
+    })?;
     outcome.duration_ms = started.elapsed().as_millis() as u64;
     Ok(outcome)
 }

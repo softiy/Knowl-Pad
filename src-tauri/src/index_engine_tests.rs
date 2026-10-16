@@ -348,3 +348,39 @@ fn tag_write_semantics_display_first_wins_structure_last_wins() {
         "祖先链展开成独立行：work、work/子、work/子/孙"
     );
 }
+
+/// **D-41：重建收尾清理孤儿 tag 行**（没有任何 `file_tag` 引用的 `tag` 行）。
+///
+/// 依据两条：AC-TAG-02 末句「`#old` 若无其他子孙则从标签表中消失」＋ AC-REL-03 的"重建与一次性索引逐表一致"
+/// （孤儿行会让两者不同 ⇒ 属正确性缺陷）。修法是最小改法：重建收尾一条 DELETE，只在**未取消**的全量重建末尾执行。
+#[test]
+fn rebuild_purges_orphan_tag_rows() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path();
+    write_note(root, "a.md", "#old 甲\n#keep 乙\n");
+    let pool = open(root).expect("建索引库");
+    full_index(&pool, root, |_, _| {}).expect("首次索引");
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM tag WHERE norm = 'old'"),
+        1
+    );
+
+    // 模拟"外部把标签删掉"（用别的工具改文件），然后重建
+    write_note(root, "a.md", "没有标签了\n");
+    full_index(&pool, root, |_, _| {}).expect("重建");
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM tag WHERE norm = 'old'"),
+        0,
+        "孤儿标签行必须被清理（否则 tag_tree 会列出点进去为空的幽灵标签）"
+    );
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM tag WHERE norm = 'keep'"),
+        0,
+        "两个标签都没有引用了"
+    );
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM file_tag"),
+        0,
+        "引用行同样清空"
+    );
+}
