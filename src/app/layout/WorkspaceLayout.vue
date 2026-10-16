@@ -6,6 +6,7 @@ import { EditorView, useEditorStore } from '@features/editor';
 import { FileOpsDialog, FileTree, useFileOpsStore, type MenuAction } from '@features/file-tree';
 import { LinksPanel } from '@features/links';
 import { QuickOpen, SearchPanel, useSearchStore } from '@features/search';
+import { TagPanel, useTagsStore } from '@features/tags';
 import VaultList from '@features/vault/components/VaultList.vue';
 import StatusBar from './StatusBar.vue';
 
@@ -23,8 +24,10 @@ const vaultStore = useVaultStore();
 const ops = useFileOpsStore();
 const editor = useEditorStore();
 const search = useSearchStore();
+const tags = useTagsStore();
 const searchPanel = ref<InstanceType<typeof SearchPanel> | null>(null);
 const quickOpen = ref<InstanceType<typeof QuickOpen> | null>(null);
+const tagPanel = ref<InstanceType<typeof TagPanel> | null>(null);
 let unbind: (() => void) | null = null;
 
 // Vault 状态来自 store（唯一来源）：切换/打开/移除都会响应式传播，
@@ -49,6 +52,17 @@ onMounted(() => {
         search.openQuickOpen();
         void nextTick(() => {
           quickOpen.value?.focusInput();
+        });
+      },
+    },
+    {
+      // 标签面板（FR-TAG-01 的入口）：与搜索同一形态 —— 先开面板，再聚焦过滤框。
+      // 键位选 Mod+Shift+T：Mod+Shift+F 已给搜索、Mod+O 给快速打开，避开二者。
+      spec: 'Mod+Shift+T',
+      handler: () => {
+        tags.openPanel();
+        void nextTick(() => {
+          tagPanel.value?.focusFilter();
         });
       },
     },
@@ -153,6 +167,13 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
           ref="searchPanel"
           @open="onOpenHit"
           @close="search.closePanel()"
+        />
+        <TagPanel
+          v-if="tags.panelOpen"
+          ref="tagPanel"
+          data-testid="workspace-tag-panel"
+          @open="onOpen"
+          @close="tags.closePanel()"
         />
       </template>
       <VaultList v-else />

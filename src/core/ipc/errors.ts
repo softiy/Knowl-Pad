@@ -28,6 +28,33 @@ export function isSearchTooBroadError(err: unknown): boolean {
 }
 
 /**
+ * 改写预览已过期 / 已被消费（PRD §5.2：410 / **提示重新执行预览**）。
+ *
+ * 只对 `*_preview` → `*_apply` 的两步流程有意义（链接域与标签域共用）：
+ * `preview_id` 是一次性消费的，第二次点"确认执行"必然撞上它。
+ * 前端**必须**据此提示"预览已过期，请重新预览"，而不是把失败当成"改写失败、磁盘可能已改坏"。
+ */
+export const E_PREVIEW_EXPIRED = 'E_PREVIEW_EXPIRED';
+
+/**
+ * 名称非法（PRD §5.2：400 / 提示具体原因）。
+ *
+ * 标签域用它承载 FR-TAG-08 的层级冲突：`to_tag` 空、首尾或连续斜杠、含空白、
+ * 新名是自身的子孙（循环）都归这里 —— 后端拒绝，磁盘零改动。
+ */
+export const E_INVALID_FILENAME = 'E_INVALID_FILENAME';
+
+/** 是否预览过期（把错误码收敛到一处，调用点不再手写字符串）。 */
+export function isPreviewExpired(err: unknown): boolean {
+  return asKpError(err).code === E_PREVIEW_EXPIRED;
+}
+
+/** 是否名称非法（标签重命名里的层级冲突见 {@link E_INVALID_FILENAME}）。 */
+export function isInvalidNameError(err: unknown): boolean {
+  return asKpError(err).code === E_INVALID_FILENAME;
+}
+
+/**
  * 该错误是否**真的带了 IPC 错误码**（而不是被 {@link asKpError} 兜底合成出来的 `E_INTERNAL`）。
  *
  * 用途只有一个：让"按 message 子串猜"的旧逻辑退化成**显式兜底**（仅当响应无码时才启用），
