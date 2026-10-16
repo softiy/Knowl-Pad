@@ -78,6 +78,41 @@ vi.mock('@features/search', async () => {
   };
 });
 
+// 标签域（M5 批次 2 的 PR-C）同样是整体替身：本 spec 刻意不装 Pinia，
+// 而 TagPanel 的真身要读 Pinia store —— 这里只保留"布局用到的那几个面"
+// （panelOpen / openPanel / closePanel / 面板的 close 事件）。
+vi.mock('@features/tags', async () => {
+  const { reactive } = await import('vue');
+  const store = reactive({
+    panelOpen: false,
+    openPanel: vi.fn(() => {
+      store.panelOpen = true;
+    }),
+    closePanel: vi.fn(() => {
+      store.panelOpen = false;
+    }),
+  });
+  const { defineComponent } = await import('vue');
+  // 替身必须复刻真身的**对外 API**（`defineExpose` 的 focusFilter）：
+  // 少了它，布局的"打开面板后聚焦过滤框"会在运行期炸出 unhandled rejection
+  // —— 那是替身不忠实，而不是被测代码有问题。
+  // 可见性判据用**布局给的** `workspace-tag-panel`：替身根元素上的同名属性会被透传属性覆盖，
+  // 拿替身自己的 testid 去找是找不到的（实测踩过）。
+  const TagPanel = defineComponent({
+    name: 'TagPanel',
+    emits: ['open', 'close'],
+    setup: (_props, { expose, emit }) => {
+      expose({ focusFilter: vi.fn() });
+      return { emit };
+    },
+    template:
+      '<div>' +
+      '<button type="button" data-testid="tag-panel-close" @click="emit(\'close\')">关闭</button>' +
+      '</div>',
+  });
+  return { TagPanel, useTagsStore: () => store };
+});
+
 vi.mock('@features/file-tree', () => ({
   FileTree: { template: '<div />' },
   FileOpsDialog: { template: '<div />' },
@@ -86,6 +121,45 @@ vi.mock('@features/file-tree', () => ({
 vi.mock('@features/vault/components/VaultList.vue', () => ({ default: { template: '<div data-testid="vault-list" />' } }));
 vi.mock('@core/ipc/commands', () => ({ indexStatus: vi.fn(async () => ({ ready: true })), fileTree: vi.fn(async () => []), preferenceGet: vi.fn(async () => ({ values: {} })), preferenceSet: vi.fn() }));
 vi.mock('@core/ipc/events', () => ({ onIndexProgress: vi.fn(async () => () => {}), onIndexCompleted: vi.fn(async () => () => {}), onIndexFailed: vi.fn(async () => () => {}) }));
+
+
+/**
+ * `@core/shortcut` 替身：**只做监听注册表**（记录当前还挂着几条窗口 keydown）。
+ *
+ * 为什么必须替身而不是用真的：本 spec 刻意不装 Pinia、各 feature 一律替身，于是"挂载了却没卸载"
+ * 的实例不会污染任何真实 store —— 但它的 window 监听**会**继续响应后面用例派发的键盘事件
+ * （实测：单独跑绿、整套跑红）。有了注册表，"有没有悬挂监听"就成了可直接断言的事实。
+ */
+const shortcutRegistry = vi.hoisted(() => ({ live: 0, bindings: 0 }));
+interface KeydownBinding {
+  spec: string;
+  handler: (event: KeyboardEvent) => void;
+}
+vi.mock('@core/shortcut', () => ({
+  bindShortcuts: (
+    target: Window | HTMLElement,
+    bindings: KeydownBinding[],
+    options: { preventDefault?: boolean } = {},
+  ): (() => void) => {
+    shortcutRegistry.live += 1;
+    shortcutRegistry.bindings = bindings.length;
+    const listener = (event: Event): void => {
+      const keyEvent = event as KeyboardEvent;
+      for (const binding of bindings) {
+        if (`${binding.spec}` === 'Mod+Shift+T' && keyEvent.ctrlKey && keyEvent.shiftKey && keyEvent.key.toLowerCase() === 't') {
+          if (options.preventDefault !== false) keyEvent.preventDefault();
+          binding.handler(keyEvent);
+          return;
+        }
+      }
+    };
+    target.addEventListener('keydown', listener);
+    return () => {
+      shortcutRegistry.live -= 1;
+      target.removeEventListener('keydown', listener);
+    };
+  },
+}));
 
 import WorkspaceLayout from '@/app/layout/WorkspaceLayout.vue';
 
@@ -105,6 +179,7 @@ describe('工作区：切换知识库入口（FR-VAULT-04/05、AC-VAULT-03 的�
     await flushPromises();
     expect(w.find('[data-testid="workspace-switch-vault"]').exists()).toBe(true);
     expect(w.find('[data-testid="workspace-vault-name"]').text()).toContain('我的知识库');
+    w.unmount();
   });
 
   it('点击切换：先刷盘再关闭，随后回到欢迎页列表', async () => {
@@ -114,6 +189,7 @@ describe('工作区：切换知识库入口（FR-VAULT-04/05、AC-VAULT-03 的�
     await flushPromises();
     expect(saveAll).toHaveBeenCalledTimes(1);
     expect(w.find('[data-testid="vault-list"]').exists()).toBe(true);
+    w.unmount();
   });
 
   it('仍有未保存内容时不切换，并给出可见提示（R-07：不静默丢内容）', async () => {
@@ -126,5 +202,51 @@ describe('工作区：切换知识库入口（FR-VAULT-04/05、AC-VAULT-03 的�
     expect(w.find('[data-testid="workspace-switch-error"]').text()).toContain('已取消切换');
     expect(w.find('[data-testid="vault-list"]').exists()).toBe(false);
     dirtyFlag.value = false;
+    w.unmount();
+  });
+});
+
+describe('工作区：标签面板入口（FR-TAG-01 的 Mod+Shift+T）', () => {
+  it('快捷键打开标签面板，面板自己的关闭事件把它收起', async () => {
+    const { useVaultStore } = await import('@features/vault');
+    const { useTagsStore } = await import('@features/tags');
+    // 上层 describe 的"点击切换"会把 current 置空，而标签面板挂在 `v-if="vaultStore.current"` 之内：
+    // 不恢复就会得到"快捷键没反应"的假红（实测踩过）。mock 是**共享**的 reactive store，必须显式复原。
+    useVaultStore().current = { ...VAULT };
+    useTagsStore().panelOpen = false;
+    expect(shortcutRegistry.live).toBe(0); // 前面的用例都解绑了：本用例看到的只有自己挂的监听
+    const w = mount(WorkspaceLayout);
+    await flushPromises();
+    expect(shortcutRegistry.live).toBe(1);
+    expect(shortcutRegistry.bindings).toBe(3); // 布局一次绑三条：Mod+Shift+F / Mod+O / Mod+Shift+T
+    expect(w.find('[data-testid="workspace-tag-panel"]').exists()).toBe(false);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', ctrlKey: true, shiftKey: true }));
+    await flushPromises();
+
+    expect(w.find('[data-testid="workspace-tag-panel"]').exists()).toBe(true);
+
+    await w.find('[data-testid="tag-panel-close"]').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-testid="workspace-tag-panel"]').exists()).toBe(false);
+    // 显式卸载：布局一次性绑了 3 条 window 快捷键，留着监听会把下一个用例的键盘事件也吃掉
+    w.unmount();
+  });
+
+  it('卸载时注销快捷键（ED-01：不留悬挂监听）', async () => {
+    const { useVaultStore } = await import('@features/vault');
+    const { useTagsStore } = await import('@features/tags');
+    useVaultStore().current = { ...VAULT };
+    useTagsStore().panelOpen = false;
+    const w = mount(WorkspaceLayout);
+    await flushPromises();
+    expect(shortcutRegistry.live).toBe(1);
+    w.unmount();
+    // ED-01 的直接证据：卸载**真的**把监听摘掉了（不是"看起来没反应"）
+    expect(shortcutRegistry.live).toBe(0);
+    // 卸载后同一条键盘事件不再打开面板。
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', ctrlKey: true, shiftKey: true }));
+    await flushPromises();
+    expect(useTagsStore().panelOpen).toBe(false);
   });
 });
