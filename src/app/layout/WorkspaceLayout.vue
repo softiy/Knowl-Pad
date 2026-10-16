@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { bindShortcuts } from '@core/shortcut';
 import { useVaultStore } from '@features/vault';
 import { EditorView, useEditorStore } from '@features/editor';
 import { FileOpsDialog, FileTree, useFileOpsStore, type MenuAction } from '@features/file-tree';
 import { LinksPanel } from '@features/links';
+import { QuickOpen, SearchPanel, useSearchStore } from '@features/search';
 import VaultList from '@features/vault/components/VaultList.vue';
 import StatusBar from './StatusBar.vue';
 
@@ -20,11 +22,42 @@ import StatusBar from './StatusBar.vue';
 const vaultStore = useVaultStore();
 const ops = useFileOpsStore();
 const editor = useEditorStore();
+const search = useSearchStore();
+const searchPanel = ref<InstanceType<typeof SearchPanel> | null>(null);
+const quickOpen = ref<InstanceType<typeof QuickOpen> | null>(null);
+let unbind: (() => void) | null = null;
 
 // Vault 状态来自 store（唯一来源）：切换/打开/移除都会响应式传播，
 // 状态栏的 watch 因此真正生效（M1/M2 复核：此前只在挂载时取一次）。
+// 顺带绑定搜索入口（FR-SEARCH-01 的 Mod+Shift+F 与 FR-SEARCH-40 的 Mod+O）——
+// 快捷键统一走 core/shortcut（ED-04：组件不自行绑 keydown），卸载时必须注销（ED-01）。
 onMounted(() => {
   void vaultStore.init();
+  unbind = bindShortcuts(window, [
+    {
+      spec: 'Mod+Shift+F',
+      handler: () => {
+        search.openPanel();
+        void nextTick(() => {
+          searchPanel.value?.focusInput();
+        });
+      },
+    },
+    {
+      spec: 'Mod+O',
+      handler: () => {
+        search.openQuickOpen();
+        void nextTick(() => {
+          quickOpen.value?.focusInput();
+        });
+      },
+    },
+  ]);
+});
+
+onUnmounted(() => {
+  unbind?.();
+  unbind = null;
 });
 
 /** 切换失败时的可见提示（R-07：不静默丢内容，也不假装成功）。 */
@@ -56,6 +89,17 @@ function onOpen(relPath: string): void {
 /** 点击反链/孤立项：打开来源笔记（FR-LINK-13 的第一半；滚动定位与高亮见遗留项）。 */
 function onOpenLink(payload: { relPath: string; line: number }): void {
   void editor.reveal(payload.relPath, payload.line);
+}
+
+/** 点击搜索结果：同一条既有通路（FR-SEARCH-07 的"跳转并定位到命中位置"）。 */
+function onOpenHit(relPath: string, line: number): void {
+  void editor.reveal(relPath, line);
+}
+
+/** 快速打开只负责"打开文件"，不请求行定位（它不是命中跳转）。 */
+function onOpenQuick(relPath: string): void {
+  search.closeQuickOpen();
+  void editor.openNote(relPath);
 }
 
 function parentOf(relPath: string, isDir: boolean): string {
@@ -101,9 +145,21 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
           <EditorView />
         </section>
         <LinksPanel :active-rel-path="editor.activeRelPath ?? null" @open="onOpenLink" />
+        <SearchPanel
+          v-if="search.panelOpen"
+          ref="searchPanel"
+          @open="onOpenHit"
+          @close="search.closePanel()"
+        />
       </template>
       <VaultList v-else />
     </div>
+    <QuickOpen
+      v-if="search.quickOpenVisible"
+      ref="quickOpen"
+      @open="onOpenQuick"
+      @close="search.closeQuickOpen()"
+    />
     <FileOpsDialog />
     <p v-if="ops.notice" class="kp-workspace__notice" data-testid="workspace-notice">
       {{ ops.notice }}
