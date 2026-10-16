@@ -52,56 +52,34 @@ export const useFileOpsStore = defineStore('fileOps', () => {
   /** 删除前需要确认（该路径下仍有打开的标签；含未保存的必须先问，R-07） */
   const pendingDelete = ref<{ target: string; open: string[]; dirty: string[] } | null>(null);
 
+  /** 建立一个"新建/重命名/删除"对话框的初始状态（四种模式共用同一形状，避免四处抄字段）。 */
+  function makeDialog(mode: FileOpMode, target: string, parentDir: string, value: string): FileOpDialog {
+    return { mode, target, parentDir, value, validation: null, conflict: false, error: null, busy: false };
+  }
+
   function openNewNote(parentDir: string): void {
-    dialog.value = {
-      mode: 'newNote',
-      target: '',
-      parentDir,
-      value: '',
-      validation: null,
-      conflict: false,
-      error: null,
-      busy: false,
-    };
+    dialog.value = makeDialog('newNote', '', parentDir, '');
   }
 
   function openNewFolder(parentDir: string): void {
-    dialog.value = {
-      mode: 'newFolder',
-      target: '',
-      parentDir,
-      value: '',
-      validation: null,
-      conflict: false,
-      error: null,
-      busy: false,
-    };
+    dialog.value = makeDialog('newFolder', '', parentDir, '');
+  }
+
+  /**
+   * **由别处发起的创建**（FR-EDITOR-27：点悬空链接 ⇒ 触发创建）：把建议名**预填**进同一个"新建笔记"流程。
+   *
+   * 只做预填：用户仍可改名，名称校验与冲突三选项（AC-FILE-03/04）照旧 —— **不新增写入路径**。
+   */
+  function createFromLink(name: string): void {
+    dialog.value = makeDialog('newNote', '', '', name.trim());
   }
 
   function openRename(relPath: string): void {
-    dialog.value = {
-      mode: 'rename',
-      target: relPath,
-      parentDir: dirOf(relPath),
-      value: relPath.split('/').pop() ?? relPath,
-      validation: null,
-      conflict: false,
-      error: null,
-      busy: false,
-    };
+    dialog.value = makeDialog('rename', relPath, dirOf(relPath), relPath.split('/').pop() ?? relPath);
   }
 
   function openDelete(relPath: string): void {
-    dialog.value = {
-      mode: 'delete',
-      target: relPath,
-      parentDir: dirOf(relPath),
-      value: '',
-      validation: null,
-      conflict: false,
-      error: null,
-      busy: false,
-    };
+    dialog.value = makeDialog('delete', relPath, dirOf(relPath), '');
   }
 
   function close(): void {
@@ -230,6 +208,7 @@ export const useFileOpsStore = defineStore('fileOps', () => {
     dialog,
     notice,
     openNewNote,
+    createFromLink,
     openNewFolder,
     openRename,
     openDelete,

@@ -33,7 +33,7 @@ vi.mock('@core/ipc/events', () => {
   };
 });
 
-import { useTagsStore } from '@features/tags/stores/tags';
+import { normalizeTagName, useTagsStore } from '@features/tags/stores/tags';
 import type { TaggedNote, TagNode } from '@core/ipc/tagCommands';
 
 /** 一棵含「未分类」的小树（计数是**祖先登记后的行数**口径）。 */
@@ -217,6 +217,22 @@ describe('标签面板 store', () => {
     await s.reloadActive();
     expect(hoisted.tree).toHaveBeenCalledTimes(2);
     expect(hoisted.notes).toHaveBeenLastCalledWith('项目', false);
+  });
+
+  it('FR-TAG-05：正文点标签 ⇒ selectTag 归一化后选中并打开面板', async () => {
+    const s = useTagsStore();
+    await s.refresh();
+    s.selectTag('项目/Alpha');
+    expect(s.panelOpen).toBe(true);
+    // 规范键：小写 + 折叠空段（与 `tag.norm` 同口径），否则会点进一个查不到的标签
+    expect(s.selectedNorm).toBe('项目/alpha');
+    expect(s.selectedNode?.norm).toBe('项目/alpha');
+  });
+
+  it('normalizeTagName 与索引口径一致（小写 + 折叠空段；不做别的猜测）', () => {
+    expect(normalizeTagName(' Work ')).toBe('work');
+    expect(normalizeTagName('/a//b/')).toBe('a/b');
+    expect(normalizeTagName('项目/Alpha/前端')).toBe('项目/alpha/前端');
   });
 
   it('面板开关是 store 状态（快捷键与关闭按钮共用同一个真相）', () => {
