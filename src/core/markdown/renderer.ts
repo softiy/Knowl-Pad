@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it';
+import { registerKpInline } from './kpInline';
 import { sanitizeHtml } from './sanitize';
 
 /**
@@ -30,12 +31,15 @@ export const DEFAULT_CACHE_CAPACITY = 20;
 /**
  * 全项目唯一的 markdown-it 实例（html 打开、linkify/typographer 关闭 —— 见文件头）。
  *
- * **注意（2026-10-11 更正）**：此前这里写着"M3/M4 的 wikilink / tag / block-id 插件挂载于此"，
- * 与实现不符 —— 全文没有任何 `md.use(...)`，阅读态因此**不渲染** `[[x]]`、`#tag`、`^block`，
- * 而是原样当正文显示。受影响的 P0 见技术方案 §13.2 的 **DEBT-34**
- * （FR-EDITOR-02/25/27、FR-TAG-05，接收方 M5）。改这条注释不是把问题"注释掉"，
- * 而是让下一个人一眼看到真实状态、不被误导。 */
+ * **2026-10-16（M5 批次 2 的 PR-D）关闭 DEBT-34 的渲染半边**：扩展语法（`[[x]]` / `[[x|别名]]` /
+ * `![[x]]` / `#标签`）由**自研 inline 规则**渲染成带 `data-kp-link` / `data-kp-tag` 的中转节点
+ * （`kpInline.ts`，零新依赖）。此前这里只有一句"插件挂载于此"的注释而没有 `md.use`，
+ * 阅读态把扩展语法原样当正文显示 —— 该缺陷见技术方案 §13.2 的 **DEBT-34**。
+ *
+ * **仍然不做**：Block ID（`^block`，只有嵌入语法用到）与嵌入渲染（`![[图片]]`/`![[笔记#标题]]`，
+ * FR-EDITOR-29 是 **P1**，本轮只标 `data-kp-kind="embed"`）。 */
 const md = new MarkdownIt({ html: true, linkify: false, typographer: false });
+registerKpInline(md);
 
 /** 插入序即 LRU 序：命中后重新 set 使其变为最新。 */
 const cache = new Map<string, string>();

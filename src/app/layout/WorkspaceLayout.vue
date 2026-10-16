@@ -113,6 +113,30 @@ function onOpenHit(relPath: string, line: number, range?: { start: number; end: 
   void editor.reveal(relPath, line, range);
 }
 
+/**
+ * 阅读态 wikilink 的跳转出口（FR-EDITOR-25）—— **跨 feature 的编排只在这一层**（FE-02）。
+ *
+ * 已裁决的链接：与反链/搜索**同一条既有通路** `editor.reveal`；
+ * **悬空链接的创建**：交给 file-tree 域的既有"新建笔记"流程（带建议名，新增能力见 `fileOps.createFromLink`）；
+ * **标签**：打开标签面板并选中它（对接 PR-C 的 tags store）。
+ */
+function onOpenWikiLink(target: string): void {
+  void editor.reveal(target, 1);
+}
+
+function onCreateFromLink(name: string): void {
+  // 复用既有的"新建笔记"对话框并**预填**建议名（FR-EDITOR-27 的创建流程）：
+  // 不新增写入路径 —— 名称校验、冲突三选项、创建后进入编辑态全部照旧（AC-FILE-03/04）。
+  ops.createFromLink(name);
+}
+
+function onOpenTag(tag: string): void {
+  tags.selectTag(tag);
+  void nextTick(() => {
+    tagPanel.value?.focusFilter();
+  });
+}
+
 /** 快速打开只负责"打开文件"，不请求行定位（它不是命中跳转）。 */
 function onOpenQuick(relPath: string): void {
   search.closeQuickOpen();
@@ -159,7 +183,11 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
           <FileTree @open="onOpen" @action="onAction" />
         </aside>
         <section class="kp-workspace__main">
-          <EditorView />
+          <EditorView
+            :open-link="onOpenWikiLink"
+            :open-tag="onOpenTag"
+            :create-note="onCreateFromLink"
+          />
         </section>
         <LinksPanel :active-rel-path="editor.activeRelPath ?? null" @open="onOpenLink" />
         <SearchPanel

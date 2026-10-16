@@ -18,6 +18,20 @@ import {
 const REFRESH_DEBOUNCE_MS = 250;
 
 /**
+ * 正文标签名 → 索引里的规范键（`tag.norm`）：小写 + **折叠空段**（`/a//b/` → `a/b`）。
+ *
+ * 与 Rust 的 `md_parse::tag::clean` + `norm` 同口径 —— 口径不一致会点出一个查不到的标签（点进去空列表）。
+ */
+export function normalizeTagName(raw: string): string {
+  return raw
+    .trim()
+    .split('/')
+    .filter((seg) => seg !== '')
+    .join('/')
+    .toLowerCase();
+}
+
+/**
  * 标签面板的数据源（FR-TAG-01~04 / 13）。
  *
  * 三条口径（都不是随手定的）：
@@ -120,6 +134,17 @@ export const useTagsStore = defineStore('tags', () => {
     if (selectedNorm.value !== null) await loadNotes(selectedNorm.value);
   }
 
+  /**
+   * 面板入口 + 选中一个标签（FR-TAG-05：正文里点标签跳到"该标签的笔记列表视图"）。
+   *
+   * 入参是**正文里写的原文**（可能大写、可能带尾部斜杠）：这里只做"与索引同口径"的规范化，
+   * **不去猜**层级或前缀（猜错就等于点进一个空列表）。
+   */
+  function selectTag(rawName: string): void {
+    panelOpen.value = true;
+    select(normalizeTagName(rawName));
+  }
+
   function openPanel(): void {
     panelOpen.value = true;
   }
@@ -164,7 +189,7 @@ export const useTagsStore = defineStore('tags', () => {
     tree, sortMode, filter, selectedNorm, notes, notesLoading, includeChildren,
     loading, error, panelOpen,
     visibleTree, rows, totalTags, selectedNode, hasFilter,
-    refresh, reloadActive, loadNotes, select, setSortMode, setFilter, setIncludeChildren,
+    refresh, reloadActive, loadNotes, select, selectTag, setSortMode, setFilter, setIncludeChildren,
     openPanel, closePanel, scheduleRefresh, subscribe, dispose,
   };
 });

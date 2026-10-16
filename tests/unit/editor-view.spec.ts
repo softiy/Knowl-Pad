@@ -13,6 +13,8 @@ const hoisted = vi.hoisted(() => {
     insertLink: vi.fn(),
     triggerSuggest: vi.fn(),
     find: vi.fn((): { from: number; to: number; text: string }[] => []),
+    // 阅读态跳转走 `editor.reveal` → consumeReveal 会问适配器要 `revealLine`（缺了会 unhandled rejection）
+    revealLine: vi.fn(() => true),
     replace: vi.fn(() => ({ replaced: 0 })),
     destroy: vi.fn(),
   };
@@ -25,6 +27,8 @@ vi.mock('@features/editor/adapter', () => ({
 }));
 
 vi.mock('@core/ipc/commands', () => ({ noteRead: vi.fn(), noteWrite: vi.fn() }));
+// 阅读态的链接状态来自 `link_outgoing`（索引裁决）：这里替身，好让"悬空/已裁决"两种情形都可控
+vi.mock('@core/ipc/linkCommands', () => ({ linkOutgoing: vi.fn(async () => []) }));
 
 import { noteRead, noteWrite } from '@core/ipc/commands';
 import { EditorView, useEditorStore } from '@features/editor';
@@ -276,5 +280,80 @@ describe('EditorView', () => {
     const { wrapper, store } = await mountView();
     await wrapper.find('[data-testid="autosave-delay"]').setValue('3000');
     expect(store.autosaveDelayMs).toBe(3000);
+  });
+});
+
+describe('EditorView：阅读态的点击路由（FR-EDITOR-25/27、FR-TAG-05）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mWrite.mockResolvedValue({ relPath: 'a.md', newMtime: 200 });
+  });
+
+  async function mountWithContent(content: string) {
+    const { wrapper, store } = await mountView();
+    mRead.mockResolvedValue(note('a.md', content));
+    await store.openNote('a.md');
+    await flushPromises();
+    await wrapper.find('[data-testid="mode-read"]').trigger('click');
+    await flushPromises();
+    return { wrapper, store };
+  }
+
+  it('点击正文标签 ⇒ 发出 tag（上层据此打开标签面板并选中）', async () => {
+    const { wrapper } = await mountWithContent('这是 #项目/alpha');
+    await wrapper.find('[data-kp-tag]').trigger('click');
+    expect(wrapper.emitted('tag')?.[0]).toEqual(['项目/alpha']);
+  });
+
+  it('注入 openTag 时直接调用它（布局用的就是这条通路）', async () => {
+    const openTag = vi.fn();
+    const { wrapper } = await mountWithContent('这是 #标签');
+    await wrapper.setProps({ openTag });
+    await wrapper.find('[data-kp-tag]').trigger('click');
+    expect(openTag).toHaveBeenCalledWith('标签');
+  });
+
+  it('Ctrl+点击内部链接 ⇒ 走 openLink（缺省回落 editor.reveal）', async () => {
+    const openLink = vi.fn();
+    const { wrapper } = await mountWithContent('见 [[笔记A]]');
+    await wrapper.setProps({ openLink });
+    await wrapper.find('[data-kp-link]').trigger('click', { ctrlKey: true });
+    expect(openLink).toHaveBeenCalledWith('笔记A');
+  });
+
+  it('普通点击**已裁决**链接 ⇒ 不动作（不误跳，也不当成创建）', async () => {
+    const openLink = vi.fn();
+    const { wrapper } = await mountWithContent('见 [[笔记A]]');
+    await wrapper.setProps({ openLink });
+    await wrapper.find('[data-kp-link]').trigger('click');
+    expect(openLink).not.toHaveBeenCalled();
+    expect(wrapper.emitted('create')).toBeUndefined();
+  });
+
+  it('普通点击**悬空**链接 ⇒ 发出 create（带 .md 的建议名，FR-EDITOR-27）', async () => {
+    const { linkOutgoing } = await import('@core/ipc/linkCommands');
+    vi.mocked(linkOutgoing).mockResolvedValue([
+      { targetRef: '缺笔记', status: 'dangling', linkKind: 'wikilink', line: 1, col: 1, dstRelPath: null },
+    ]);
+    const createNote = vi.fn();
+    const { wrapper } = await mountWithContent('见 [[缺笔记]]');
+    await wrapper.setProps({ createNote });
+    const expected = wrapper.find('[data-kp-link]');
+    await flushPromises();
+    await expected.trigger('click');
+    expect(createNote).toHaveBeenCalledWith('缺笔记.md');
+  });
+
+  it('悬空链接带目录时只取文件名作为建议名（`notes/缺笔记` ⇒ `缺笔记.md`）', async () => {
+    const { linkOutgoing } = await import('@core/ipc/linkCommands');
+    vi.mocked(linkOutgoing).mockResolvedValue([
+      { targetRef: 'notes/缺笔记', status: 'dangling', linkKind: 'wikilink', line: 1, col: 1, dstRelPath: null },
+    ]);
+    const createNote = vi.fn();
+    const { wrapper } = await mountWithContent('见 [[notes/缺笔记]]');
+    await wrapper.setProps({ createNote });
+    await flushPromises();
+    await wrapper.find('[data-kp-link]').trigger('click');
+    expect(createNote).toHaveBeenCalledWith('缺笔记.md');
   });
 });

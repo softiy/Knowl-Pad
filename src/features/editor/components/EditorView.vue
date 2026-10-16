@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { asKpError } from '@core/ipc/errors';
 import { bindShortcuts } from '@core/shortcut';
 import { createEditorAdapter, type KpEditorAdapter } from '../adapter';
 import { consumeReveal } from '../adapter/consumeReveal';
+import { createClickRouting } from '../composables/useClickRouting';
 import { AUTOSAVE_DEFAULT_MS, useEditorStore, type ConflictChoice, type EditorMode } from '../stores/editor';
 import ConflictDialog from './ConflictDialog.vue';
+import FindReplacePanel from './FindReplacePanel.vue';
 import EditorTabs from './EditorTabs.vue';
 import MarkdownView from './MarkdownView.vue';
 
@@ -16,6 +17,13 @@ import MarkdownView from './MarkdownView.vue';
  * - 快捷键统一走 `core/shortcut`（ED-04），不在这里裸绑 keydown 语义；
  * - `destroy()`/注销函数在卸载时全部调用（ED-01）。
  */
+/** 阅读态的跳转出口（可选注入；缺省只做编辑器自己会做的事，见 composables/useClickRouting.ts）。 */
+const props = defineProps<{
+  openLink?: ((target: string) => void) | undefined;
+  openTag?: ((tag: string) => void) | undefined;
+  createNote?: ((name: string) => void) | undefined;
+}>();
+
 const store = useEditorStore();
 const hostRef = ref<HTMLElement | null>(null);
 let adapter: KpEditorAdapter | null = null;
@@ -29,53 +37,10 @@ const modes: { value: EditorMode; label: string }[] = [
 ];
 const autosaveOptions = [500, AUTOSAVE_DEFAULT_MS, 2000, 3000, 5000];
 
-/** 文件内查找替换（FR-EDITOR-09）：查找/替换都通过适配器，换内核（M8）不外溢。 */
 const findOpen = ref(false);
-const query = ref('');
-const replacement = ref('');
-const caseSensitive = ref(false);
-const wholeWord = ref(false);
-const useRegex = ref(false);
-const matchCount = ref<number | null>(null);
-const findError = ref<string | null>(null);
-
-function currentFindOptions(): { caseSensitive: boolean; wholeWord: boolean; regex: boolean } {
-  return { caseSensitive: caseSensitive.value, wholeWord: wholeWord.value, regex: useRegex.value };
-}
-
-/** 执行查找并更新命中数（空查询不视为错误，只清空计数）。 */
-function runFind(): void {
-  if (!adapter) return;
-  if (!query.value) {
-    matchCount.value = null;
-    findError.value = null;
-    return;
-  }
-  try {
-    matchCount.value = adapter.find(query.value, currentFindOptions()).length;
-    findError.value = null;
-  } catch (err) {
-    // 无效正则等输入错误：给出可见提示，绝不让面板静默失效
-    matchCount.value = null;
-    findError.value = asKpError(err).message;
-  }
-}
-
-/** 全部替换（FR-EDITOR-09 允许「逐条确认或全部替换」，此处实现全部替换并回显剩余命中数）。 */
-function replaceAll(): void {
-  if (!adapter || !query.value) return;
-  const matches = adapter.find(query.value, currentFindOptions());
-  if (matches.length === 0) {
-    matchCount.value = 0;
-    return;
-  }
-  adapter.replace(matches, replacement.value);
-  matchCount.value = adapter.find(query.value, currentFindOptions()).length;
-}
 
 function toggleFind(): void {
   findOpen.value = !findOpen.value;
-  if (findOpen.value) runFind();
 }
 
 consumeReveal({ current: () => store.pendingReveal, active: () => store.activeRelPath, clear: () => store.clearReveal(), adapter: () => adapter });
@@ -127,6 +92,23 @@ onBeforeUnmount(() => {
 function resolveConflict(choice: ConflictChoice): void {
   if (store.activeRelPath) void store.resolveConflict(store.activeRelPath, choice);
 }
+
+const emit = defineEmits<{
+  /** 已判定悬空的链接被"普通点击" ⇒ 交给上层走创建流程（FR-EDITOR-27） */
+  create: [name: string];
+  /** 标签被点击 ⇒ 交给上层打开标签面板并选中（FR-TAG-05） */
+  tag: [tag: string];
+}>();
+
+// 阅读态点击的**分派**：判定在 logic/linkRouting.ts，接线在 composables/useClickRouting.ts
+const routing = createClickRouting({
+  fallbackOpen: () => (target: string) => void store.reveal(target, 1),
+  openLink: () => props.openLink,
+  createNote: () => props.createNote,
+  openTag: () => props.openTag,
+  emitCreate: (name) => emit('create', name),
+  emitTag: (tag) => emit('tag', tag),
+});
 </script>
 
 <template>
@@ -161,17 +143,7 @@ function resolveConflict(choice: ConflictChoice): void {
 
     <EditorTabs />
 
-    <div v-if="findOpen" class="kp-editor__find" data-testid="find-panel">
-      <input v-model="query" data-testid="find-query" placeholder="查找" @input="runFind">
-      <input v-model="replacement" data-testid="find-replacement" placeholder="替换为">
-      <label><input v-model="caseSensitive" type="checkbox" @change="runFind">区分大小写</label>
-      <label><input v-model="wholeWord" type="checkbox" @change="runFind">全字匹配</label>
-      <label><input v-model="useRegex" type="checkbox" @change="runFind">正则</label>
-      <button type="button" data-testid="find-run" @click="runFind">查找</button>
-      <button type="button" data-testid="replace-all" :disabled="!query" @click="replaceAll">全部替换</button>
-      <span class="kp-editor__hint" data-testid="find-count">{{ matchCount === null ? '—' : matchCount }} 处</span>
-      <span v-if="findError" class="kp-editor__error" data-testid="find-error">{{ findError }}</span>
-    </div>
+    <FindReplacePanel v-if="findOpen" :adapter="adapter" />
 
     <ConflictDialog
       v-if="active?.conflict"
@@ -195,7 +167,10 @@ function resolveConflict(choice: ConflictChoice): void {
         <MarkdownView
           v-if="active"
           :source="active.content ?? ''"
+          :rel-path="active.relPath"
           :cache-scope="active.relPath"
+          @link="routing.onLink"
+          @tag="routing.onTag"
         />
       </div>
     </div>
@@ -210,8 +185,6 @@ function resolveConflict(choice: ConflictChoice): void {
 .kp-editor__hint { color: #b26a00; }
 .kp-editor__error { margin: 0; padding: 6px 8px; color: #b00020; font-size: 12px; }
 .kp-editor__empty { margin: 0; padding: 12px; color: #666; }
-.kp-editor__find { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--kp-border, #ddd); font-size: 12px; }
-.kp-editor__find input[type='text'], .kp-editor__find input:not([type]) { min-width: 120px; }
 .kp-editor__body { flex: 1; display: flex; min-height: 0; }
 .kp-editor__host { flex: 1; min-width: 0; overflow: auto; }
 .kp-editor__preview { flex: 1; min-width: 0; overflow: auto; padding: 8px 12px; border-left: 1px solid var(--kp-border, #ddd); }
