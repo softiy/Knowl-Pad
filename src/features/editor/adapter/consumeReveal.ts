@@ -4,13 +4,15 @@ import { watch } from 'vue';
 export interface RevealRequest {
   relPath: string;
   line: number;
+  /** 行内区间（相对该行文本）；给了就精确选中命中处，不给就是整行（FR-SEARCH-07 / FR-LINK-13）。 */
+  range?: { start: number; end: number };
 }
 
 export interface ConsumeRevealOptions {
   current: () => RevealRequest | null;
   active: () => string | null;
   clear: () => void;
-  adapter: () => { revealLine(line: number): boolean } | null;
+  adapter: () => { revealLine(line: number, range?: { start: number; end: number }): boolean } | null;
   /** 适配器不具备定位能力时回调（调用方**如实降级**，不假装定位过）。 */
   onDegrade?: () => void;
 }
@@ -32,7 +34,7 @@ export function consumeReveal(opts: ConsumeRevealOptions): WatchStopHandle {
       const adapter = opts.adapter();
       if (!adapter) return;
       if (opts.active() !== req.relPath) return;
-      if (!adapter.revealLine(req.line)) {
+      if (!adapter.revealLine(req.line, req.range)) {
         // 默认降级：只提示，不假装定位过
         (opts.onDegrade ?? (() => console.warn('编辑器未提供行定位能力，已降级为仅打开笔记')))();
       }

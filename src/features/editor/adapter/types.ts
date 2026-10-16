@@ -46,10 +46,13 @@ export interface KpEditorAdapter {
   find(query: string, opts: FindOptions): InFileMatch[];
   replace(matches: InFileMatch[], replacement: string): ReplaceResult;
   /**
-   * 滚动到第 line 行（**1-based**，与索引口径一致）并选中该行文本（FR-LINK-13）。
+   * 滚动到第 line 行（**1-based**，与索引口径一致）并选中文本（FR-LINK-13）。
+   *
+   * `range`（可选，相对该行文本的字符偏移、左闭右开）给出时**精确选中该列区间**，
+   * 用于"跳到命中处"（FR-SEARCH-07）；不给或区间非法时退回**整行选中**（反链的既有行为）。
    * 返回是否真的定位成功：引擎能力不足时返回 false，由调用方**如实降级**，绝不假装定位过。
    */
-  revealLine(line: number): boolean;
+  revealLine(line: number, range?: { start: number; end: number }): boolean;
   /** 释放全部资源（DOM 监听器、定时器、编辑器实例）——ED-01。 */
   destroy(): void;
 }

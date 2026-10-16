@@ -12,7 +12,10 @@ import SearchResultItem from './SearchResultItem.vue';
  * `editor.reveal`（与反链面板同一条既有通路）。
  */
 const store = useSearchStore();
-const emit = defineEmits<{ open: [relPath: string, line: number]; close: [] }>();
+const emit = defineEmits<{
+  open: [relPath: string, line: number, range?: { start: number; end: number }];
+  close: [];
+}>();
 const input = ref<HTMLInputElement | null>(null);
 
 const errorKind = computed(() => store.error?.kind ?? null);
@@ -34,7 +37,7 @@ function onKeydown(event: KeyboardEvent): void {
   else if (event.key === 'ArrowUp') store.moveSelection(-1);
   else if (event.key === 'Enter') {
     const item = store.selectedItem();
-    if (item) emit('open', item.relPath, store.hitLineFor(item));
+    if (item) emit('open', item.relPath, store.hitLineFor(item), store.hitRangeFor(item));
   } else if (event.key === 'Escape') emit('close');
   else return;
   event.preventDefault();
@@ -94,7 +97,7 @@ defineExpose({ focusInput });
         :item="item"
         :expanded="store.expanded.includes(item.relPath)"
         :selected="i === store.selected"
-        @open="(relPath, line) => emit('open', relPath, line)"
+        @open="(relPath, line, range) => emit('open', relPath, line, range)"
         @toggle="(relPath) => store.toggleExpand(relPath)"
       />
     </ul>

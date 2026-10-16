@@ -138,8 +138,8 @@ export class MdEditorV3Adapter implements KpEditorAdapter {
     return { replaced: matches.length };
   }
 
-  revealLine(line: number): boolean {
-    return revealLineIn(this.host, this.value, line);
+  revealLine(line: number, range?: { start: number; end: number }): boolean {
+    return revealLineIn(this.host, this.value, line, range);
   }
 
   destroy(): void {
