@@ -54,12 +54,9 @@ impl DbPool {
     where
         B: FnOnce(&mut Connection) -> Result<(), AppError> + Send + 'static,
     {
-        let manager = SqliteConnectionManager::file(path).with_init(|conn| {
-            // 池中每条连接创建时应用一次 PRAGMA（幂等）
-            pragma::apply(conn).map_err(|err| {
-                rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(err.to_string()))
-            })
-        });
+        // DEBT-40：WAL 转换必须先由**单条**连接完成，再让池的并发连接建连（详见 prepare_wal）。
+        prepare_wal(path)?;
+        let manager = SqliteConnectionManager::file(path).with_init(init_connection);
         let readers = r2d2::Pool::builder()
             .max_size(READER_POOL_SIZE)
             .build(manager)
@@ -177,6 +174,40 @@ impl DbPool {
         })?;
         f(&conn)
     }
+}
+
+/// 池内每条连接创建时调用的初始化钩子：应用一次 PRAGMA（幂等）。
+///
+/// 抽成具名函数有两个理由：① 让 pool_tests 的 DEBT-40 回归用例能用**与生产逐字相同**的钩子建连，
+/// 而不是把 PRAGMA 序列与错误映射在测试里抄一份（副本会随生产漂移而静默失守）；
+/// ② 把「错误怎么映射给 r2d2」这件事收在一处。
+fn init_connection(conn: &mut Connection) -> Result<(), rusqlite::Error> {
+    pragma::apply(conn).map_err(|err| {
+        // r2d2 只认 rusqlite 错误类型：把 AppError 的文案塞进 SqliteFailure，
+        // 这样它落到日志里仍是 SQLite 原文（ERR-04），而不是被压成一句中文丢在池里。
+        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(err.to_string()))
+    })
+}
+
+/// 建池前的 WAL 准备：由**单条**连接完成 journal_mode 转换（DEBT-40）。
+///
+/// 为什么必须先做（2026-10-16 真机日志实证 + 探针复现）：journal_mode = WAL 在库还不是 WAL 时
+/// 要**排他锁**完成转换，且该语句**不咨询 busy handler** —— busy_timeout = 5000 对它无效
+/// （锁被占时实测约 1.7 ms 就返回 SQLITE_BUSY，而不是等 5 s）。而
+/// r2d2::Pool::builder().build() 会阻塞到 min_idle（默认 = max_size = 4）条连接建立，
+/// 建连任务由 r2d2 的 3 线程池并发派发 ⇒ **首次建库**时 3 条连接会同时抢这把锁：1 条赢、2 条失败。
+/// r2d2 的默认错误处理器把失败打成 ERROR r2d2: database is locked（经 tracing-log 桥接后与项目
+/// 日志同流），并以 400 ms 起步退避重试 ⇒ 首次启动白等约 400 ms（真机实测「启动 → 全局库已就绪」423 ms）。
+/// 先由单连接转换后，池的并发连接看到的是**已是 WAL** 的库，该 PRAGMA 退化为读头部（实测约 7.7 µs）。
+fn prepare_wal(path: &Path) -> Result<(), AppError> {
+    let conn = Connection::open(path).map_err(|err| {
+        tracing::warn!(error = %err, "读连接池建池前打开数据库失败");
+        AppError::db("初始化数据库连接")
+    })?;
+    pragma::apply(&conn).map_err(|err| {
+        tracing::warn!(error = %err, "读连接池建池前的 WAL 准备失败");
+        AppError::db("初始化数据库连接")
+    })
 }
 
 impl Drop for DbPool {
