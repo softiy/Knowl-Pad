@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use crate::index_engine::{full_index_cancellable, index_file_mode, IndexMode, ScanEntry};
+use crate::index_engine::{
+    full_index_cancellable, index_file_mode, FileOutcome, IndexMode, ScanEntry,
+};
 use crate::storage::index::open;
 use crate::storage::index_query::list_children;
 use crate::storage::pool::DbPool;
@@ -320,7 +322,11 @@ fn d25_nfr_perf_10_single_file_incremental() {
             .with_writer(move |conn| index_file_mode(conn, &root_in, &entry_in, IndexMode::Force))
             .expect("单文件增量");
         let wall = t0.elapsed().as_millis();
-        assert!(ok, "增量必须真的写入（返回 false 表示被跳过）");
+        assert_eq!(
+            ok,
+            FileOutcome::Indexed,
+            "增量必须真的写入（其余取值表示跳过或超时）"
+        );
         wall
     };
     let ms_in_batch = {

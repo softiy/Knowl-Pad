@@ -99,14 +99,26 @@ pub fn apply_changes<F: Fn(&[Change])>(
                         .map_err(|e| AppError::db_with("增量删除旧路径", &e))?;
                     if is_markdown(to) {
                         if let Some(entry) = scan_entry(&root_owned, to) {
-                            index_engine::index_file_mode(conn, &root_owned, &entry, IndexMode::Force)?;
+                            // 增量路径只关心"写没写成"：超时（FileOutcome::TimedOut）已在校验侧记日志，
+                            // 这里不额外处理 —— 该文件的索引行保持上一次的状态，等下次变更/重建再收。
+                            let _ = index_engine::index_file_mode(
+                                conn,
+                                &root_owned,
+                                &entry,
+                                IndexMode::Force,
+                            )?;
                         }
                     }
                 }
                 Change::Created(rel) | Change::Modified(rel) => {
                     if is_markdown(rel) {
                         if let Some(entry) = scan_entry(&root_owned, rel) {
-                            index_engine::index_file_mode(conn, &root_owned, &entry, IndexMode::Force)?;
+                            let _ = index_engine::index_file_mode(
+                                conn,
+                                &root_owned,
+                                &entry,
+                                IndexMode::Force,
+                            )?;
                         }
                     }
                 }

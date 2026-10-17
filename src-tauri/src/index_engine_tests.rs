@@ -2,8 +2,9 @@
 
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
-use crate::index_engine::{full_index, scan_vault};
+use crate::index_engine::{full_index, full_index_with_timeout, scan_vault, IndexMode};
 use crate::index_scan::MAX_NOTE_BYTES;
 use crate::storage::index::open;
 use crate::storage::pool::DbPool;
@@ -105,6 +106,81 @@ fn oversize_note_is_skipped_with_warning() {
     assert!(
         warnings.iter().any(|w| w.contains("skip-oversize")),
         "应记警告"
+    );
+}
+
+/// **DEBT-32 / SEC-03 的端到端判据**：单文件解析超时 ⇒ **跳过该文件 + 记 `skip-timeout:` 警告**，
+/// 且**一行都不写**（"不留半成品"）。
+///
+/// 用零超时打中这条分支是确定的：超时的**后果**（跳过 / 警告 / 零写入）与"等了多久"无关；
+/// 真的等 10 秒的用例不会有人跑。注入点见 `full_index_with_timeout`。
+#[test]
+fn timed_out_file_is_skipped_without_partial_rows() {
+    let dir = setup_vault();
+    let pool = open(dir.path()).expect("建索引库");
+
+    // ① 生产默认超时（10s）⇒ 照旧全部写入，且没有超时警告
+    let ok = full_index(&pool, dir.path(), |_, _| {}).expect("首次索引");
+    assert_eq!(ok.indexed, 5, "正常路径行为不得改变");
+    assert!(
+        ok.warnings.is_empty(),
+        "正常路径不该有警告：{:?}",
+        ok.warnings
+    );
+    let before = counts(&pool);
+    assert_eq!(before[0], 5, "file 行数（四篇笔记 + 一个附件）");
+
+    // ② 同一批文件零超时重跑（Force）：四篇笔记全部超时 ⇒ 不计入 indexed、也**没有任何行被改动**
+    let timed = full_index_with_timeout(
+        &pool,
+        dir.path(),
+        |_, _| {},
+        IndexMode::Force,
+        || false,
+        Duration::ZERO,
+    )
+    .expect("零超时索引");
+    assert_eq!(
+        timed.indexed, 1,
+        "只有不解析的附件会写入；四篇笔记必须被跳过"
+    );
+    assert_eq!(
+        timed.warnings.len(),
+        4,
+        "四篇笔记各一条警告：{:?}",
+        timed.warnings
+    );
+    assert!(
+        timed
+            .warnings
+            .iter()
+            .all(|w| w.starts_with("skip-timeout:")),
+        "警告必须带可诊断前缀（与 skip-oversize: 同口径）：{:?}",
+        timed.warnings
+    );
+    assert_eq!(
+        counts(&pool),
+        before,
+        "超时不得改动任何一行：旧行必须保留（而不是先删后失败）"
+    );
+
+    // ③ 空库 + 零超时：除了附件那条 file 行，不该有任何派生行（半成品的定义）
+    let dir2 = setup_vault();
+    let pool2 = open(dir2.path()).expect("建索引库");
+    let fresh = full_index_with_timeout(
+        &pool2,
+        dir2.path(),
+        |_, _| {},
+        IndexMode::Force,
+        || false,
+        Duration::ZERO,
+    )
+    .expect("零超时索引");
+    assert_eq!(fresh.indexed, 1, "只有附件（不解析）会写入");
+    assert_eq!(
+        counts(&pool2),
+        vec![1, 0, 0, 0, 0, 0, 0],
+        "超时后不得留下任何派生行（file / note_fts / heading / block_id / link / tag / file_tag）"
     );
 }
 
