@@ -77,8 +77,10 @@ const ABORT_CHECK_STRIDE: usize = 64 * 1024;
 /// ③ 协作式检查是确定性的，可以被用例钉住（见 `guard_aborts_without_partial_result`）。
 ///
 /// 检查点：进入扫描前、每个扫描阶段之间、纯文本清洗每 [`ABORT_CHECK_STRIDE`] 字节。
-/// 因此**超出预算的量级是「一个扫描阶段的最坏耗时」**，而不是整篇解析：所有扫描器都是线性时间
-/// （无回溯、无正则），输入另有 5MB 上限（SEC-11）。
+/// 检查点分两层：**阶段之间**（本函数）＋ **热循环内部**（`wikilink::extract_skipping_guarded` 每 64 次迭代、
+/// `plain_text` 每 64 KiB）。**为什么要两层**：2026-10-17 的真机 P0 回归证明"只查阶段之间"不够 —— 那时
+/// `line_col` 的 O(n²) 爆炸发生在阶段内部，0.75 MB / 5 万条 wikilink 会先烧掉数分钟才轮到检查点（DEBT-42）。
+/// 现在线性扫描器（frontmatter/code/heading/block_id/tag，实测 100 KB 下 0–2 ms）仍由阶段边界兜住。
 pub fn parse_with_guard(
     bytes: &[u8],
     abort: &dyn Fn() -> bool,
@@ -160,7 +162,7 @@ fn parse_inner(bytes: &[u8], abort: &dyn Fn() -> bool) -> Result<ParsedNote, Par
     check(abort)?;
     let code = CodeRanges::scan(&text);
     check(abort)?;
-    let links = wikilink::extract_skipping(&text, &code, skip.clone());
+    let links = wikilink::extract_skipping_guarded(&text, &code, skip.clone(), abort)?;
     check(abort)?;
     let headings = heading::extract(&text, &code, skip.clone());
     check(abort)?;
@@ -388,6 +390,144 @@ mod tests {
             ok.plain_text.len() >= 50_000,
             "大输入应被完整解析：{}",
             ok.plain_text.len()
+        );
+    }
+
+    /// **DEBT-42 的验收（规模）**：≈1.25 MB / 5 万条 wikilink 的解析必须 **< 1 s**。
+    ///
+    /// 修复前的实测（同一台机器）：100 KB / 4000 条 = 2.8 s，按平方外推 0.75 MB / 5 万条 ≈ 7 分钟。
+    #[test]
+    fn pathological_wikilink_input_parses_under_one_second() {
+        let text = "[[目标/链接]] 正文\n".repeat(50_000);
+        assert!(
+            text.len() >= 1_000_000,
+            "构造要求：≥1 MB，实际 {}",
+            text.len()
+        );
+        let t = std::time::Instant::now();
+        let note = parse(text.as_bytes());
+        let elapsed = t.elapsed();
+        assert_eq!(note.links.len(), 50_000, "链接一条都不能少");
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "DEBT-42：1 MB / 5 万链接必须 < 1 s，实测 {elapsed:?}"
+        );
+    }
+
+    /// **P0 回归的判据**：中止检查必须落在**热循环内部**，否则病态输入会先跑完整个阶段。
+    ///
+    /// 用"第 1000 次询问时中止"的闭包（**确定性**，不依赖时钟）：纯阶段级检查在整篇解析里只有约 26 次询问
+    /// （阶段边界 7 次 + `plain_text` 每 64 KiB 约 19 次），**永远到不了 1000**；只有主循环每 64 次迭代问一次，
+    /// 才可能在中止前被问到 1000 次。⇒ 这条用例在"阶段级检查"的旧实现上必然失败（旧实现还会先卡数分钟）。
+    #[test]
+    fn guard_aborts_inside_the_wikilink_hot_loop() {
+        let text = "[[目标/链接]] 正文\n".repeat(50_000);
+        let calls = std::cell::Cell::new(0u32);
+        let abort = || {
+            calls.set(calls.get() + 1);
+            calls.get() >= 1_000
+        };
+        let t = std::time::Instant::now();
+        let outcome = parse_with_guard(text.as_bytes(), &abort);
+        assert!(outcome.is_err(), "第 1000 次询问之后必须中止");
+        assert!(
+            calls.get() >= 1_000,
+            "热循环必须真的在问预算（实际只问了 {} 次 ⇒ 检查点不在循环里）",
+            calls.get()
+        );
+        assert!(
+            t.elapsed() < std::time::Duration::from_millis(500),
+            "中止必须快（实测 {:?}）",
+            t.elapsed()
+        );
+    }
+
+    /// **DEBT-42 的第二个放大器**：未闭合的 `[[` 不再是平方级。
+    ///
+    /// 旧实现里每个 `[[` 都调 `find_close` 扫到文件末尾（5 万条 = 25 亿次比较）；
+    /// 现在一旦 `find_close` 返回 None 就收工 —— 后面每个 `[[` 的搜索区间都是它的后缀，必然同样失败，
+    /// 所以"直接结束"与"继续扫"**语义相同**，只是代价从 O(n²) 变成 O(1)。
+    #[test]
+    fn unclosed_wikilinks_do_not_scan_quadratically() {
+        let text = "[[未闭合 ".repeat(50_000);
+        let t = std::time::Instant::now();
+        let note = parse(text.as_bytes());
+        assert!(note.links.is_empty(), "未闭合的 [[ 不产生链接");
+        assert!(
+            t.elapsed() < std::time::Duration::from_millis(500),
+            "实测 {:?}",
+            t.elapsed()
+        );
+    }
+
+    /// **等价性（逐字节）**：解析结果与**修复前逐字段相同**。
+    ///
+    /// 基线 `4ad225ed1dad0570` 是修复前在**同一份语料**上采样的（语料内联在本用例里，不依赖仓库文件，
+    /// 所以文档改动不会让它漂移）。它同时兜住"增量行列号"与"find_close 早退"两处改动。
+    #[test]
+    fn parse_corpus_fingerprint_matches_pre_refactor_baseline() {
+        fn fnv1a64(bytes: &[u8]) -> u64 {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in bytes {
+                h ^= *b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            h
+        }
+        let corpus: [&[u8]; 10] = [
+            b"[[A]] [[B|\xe5\x88\xab\xe5\x90\x8d]] ![[\xe5\x9b\xbe.png]]\n",
+            b"---\ntags: [\xe7\x94\xb2/\xe4\xb9\x99]\naliases: [\"[[NotALink]]\"]\n---\n\xe6\xad\xa3\xe6\x96\x87 [[Real]] #\xe4\xb8\x99 ^bid\n",
+            b"# \xe6\xa0\x87\xe9\xa2\x98\r\n[[A#\xe9\x94\x9a\xe7\x82\xb9]]\r\n",
+            b"---\ntags: [a]\n[[InBody]]\n",
+            b"```\n[[Code]] #tag\n```\n\xe6\x96\x87\xe5\xad\x97 ^b2 [[Real]]\n",
+            b"\\[[Esc]] [[Ok]]\n",
+            b"\xe4\xb8\xad\xe6\x96\x87`[[Inline]]` [[After]]\n",
+            b"[[a[[b]]]] [[a|b|c]] [[\xe7\xa9\xba]] [[#\xe9\x94\x9a\xe7\x82\xb9]]\n",
+            b"#\xe9\xa1\xb9\xe7\x9b\xae/alpha/\xe5\x89\x8d\xe7\xab\xaf #Work #work\n\xe6\xae\xb5\xe8\x90\xbd ^blk-1\n",
+            b"\xef\xbb\xbf[[BomLink]]\n\xe6\xa0\x87\xe9\xa2\x98\n====\n",
+        ];
+        let mut bytes = Vec::new();
+        for item in corpus {
+            let note = parse(item);
+            bytes.extend_from_slice(format!("{note:?}").as_bytes());
+            bytes.push(0);
+        }
+        assert_eq!(
+            fnv1a64(&bytes),
+            0x4ad2_25ed_1dad_0570,
+            "解析结果与修复前不再逐字节相同：要么行列号变了，要么 find_close 早退改变了链接集合"
+        );
+    }
+
+    /// **行列号等价（逐字段）**：修复前采样的基准 —— 增量维护不许改动一个数字。
+    #[test]
+    fn wikilink_positions_match_pre_refactor_baseline() {
+        // clippy::type_complexity：把比对形状单独命名，别在行内堆一坨类型
+        type LinkRow<'a> = (&'a str, Option<&'a str>, Option<&'a str>, u32, u32);
+        let tricky = "第一行 [[甲]]\n第二行 中文[[乙|别名]] 与 ![[图.png]]\r\n第三行 [[丙#锚]]\n";
+        let note = parse(tricky.as_bytes());
+        let got: Vec<LinkRow> = note
+            .links
+            .iter()
+            .map(|l| {
+                (
+                    l.target.as_str(),
+                    l.alias.as_deref(),
+                    l.anchor.as_deref(),
+                    l.line,
+                    l.col,
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("甲", None, None, 1, 5),
+                ("乙", Some("别名"), None, 2, 7),
+                ("图.png", None, None, 2, 18),
+                ("丙", None, Some("锚"), 3, 5),
+            ],
+            "行列号必须与修复前逐字段相同（含多字节字符、CRLF、嵌入与锚点）"
         );
     }
 
