@@ -26,7 +26,12 @@ vi.mock('@features/editor/adapter', () => ({
   currentEngine: () => 'md-editor-v3',
 }));
 
-vi.mock('@core/ipc/commands', () => ({ noteRead: vi.fn(), noteWrite: vi.fn() }));
+vi.mock('@core/ipc/commands', () => ({
+  noteRead: vi.fn(),
+  noteWrite: vi.fn(),
+  // DEBT-30：编辑器启动时读一次持久化的防抖时长（替身给空值 ⇒ 用默认）
+  preferenceGet: vi.fn(async () => ({ values: {} })),
+}));
 // 阅读态的链接状态来自 `link_outgoing`（索引裁决）：这里替身，好让"悬空/已裁决"两种情形都可控
 vi.mock('@core/ipc/linkCommands', () => ({ linkOutgoing: vi.fn(async () => []) }));
 

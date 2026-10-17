@@ -1,18 +1,27 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@core/ipc/commands', () => ({ noteRead: vi.fn(), noteWrite: vi.fn() }));
+vi.mock('@core/ipc/commands', () => ({
+  noteRead: vi.fn(),
+  noteWrite: vi.fn(),
+  preferenceGet: vi.fn(async () => ({ values: {} })),
+  preferenceSet: vi.fn(async () => undefined),
+}));
 
-import { noteRead, noteWrite } from '@core/ipc/commands';
+import { noteRead, noteWrite, preferenceGet, preferenceSet } from '@core/ipc/commands';
+import { flushPreferences, pendingPreferenceCount } from '@core/ipc/preferences';
 import {
   AUTOSAVE_DEFAULT_MS,
   AUTOSAVE_MAX_MS,
   AUTOSAVE_MIN_MS,
+  PREF_AUTOSAVE_DELAY_MS,
   useEditorStore,
 } from '@features/editor';
 
 const mRead = vi.mocked(noteRead);
 const mWrite = vi.mocked(noteWrite);
+const mPrefGet = vi.mocked(preferenceGet);
+const mPrefSet = vi.mocked(preferenceSet);
 
 function note(content: string, mtimeMs = 100) {
   return { relPath: 'a.md', content, mtimeMs, sizeBytes: content.length };
@@ -145,7 +154,7 @@ describe('useEditorStore', () => {
     expect(store.buffers.map((x) => x.relPath)).toEqual(['b.md']);
     expect(store.activeRelPath).toBe('b.md');
   });
-  it('防抖时长夹取在 0.5–5 秒（FR-EDITOR-30）', () => {
+  it('防抖时长夹取在 0.5–5 秒（FR-EDITOR-30），并持久化到全局偏好（DEBT-30）', async () => {
     const store = useEditorStore();
     store.setAutosaveDelay(100);
     expect(store.autosaveDelayMs).toBe(AUTOSAVE_MIN_MS);
@@ -153,6 +162,30 @@ describe('useEditorStore', () => {
     expect(store.autosaveDelayMs).toBe(AUTOSAVE_MAX_MS);
     store.setAutosaveDelay(2000);
     expect(store.autosaveDelayMs).toBe(2000);
+
+    // 三次修改在同一个防抖窗口里 ⇒ 只提交一次，且值是**最后一次夹取后**的结果
+    expect(pendingPreferenceCount()).toBe(1);
+    await flushPreferences();
+    expect(mPrefSet).toHaveBeenCalledTimes(1);
+    expect(mPrefSet).toHaveBeenCalledWith({ [PREF_AUTOSAVE_DELAY_MS]: 2000 });
+    expect(mPrefGet).not.toHaveBeenCalled(); // 写入不经过读取路径
+  });
+
+  it('loadAutosaveDelay 从偏好恢复时长，非法值退回默认（DEBT-30）', async () => {
+    const store = useEditorStore();
+    mPrefGet.mockResolvedValue({ values: { [PREF_AUTOSAVE_DELAY_MS]: 2000 } });
+    await store.loadAutosaveDelay();
+    expect(store.autosaveDelayMs).toBe(2000);
+
+    // 越界值按 FR-EDITOR-30 夹取（库里可能存着旧版本/手改的值）
+    mPrefGet.mockResolvedValue({ values: { [PREF_AUTOSAVE_DELAY_MS]: 99 } });
+    await store.loadAutosaveDelay();
+    expect(store.autosaveDelayMs).toBe(AUTOSAVE_MIN_MS);
+
+    // 非数字 ⇒ 保持默认，不抛异常（非关键设置，不打断编辑器启动）
+    mPrefGet.mockResolvedValue({ values: { [PREF_AUTOSAVE_DELAY_MS]: 'abc' } });
+    await store.loadAutosaveDelay();
+    expect(store.autosaveDelayMs).toBe(AUTOSAVE_DEFAULT_MS);
   });
 
   it('关闭标签会取消待执行的自动保存', async () => {

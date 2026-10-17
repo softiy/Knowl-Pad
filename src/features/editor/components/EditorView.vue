@@ -46,6 +46,8 @@ function toggleFind(): void {
 consumeReveal({ current: () => store.pendingReveal, active: () => store.activeRelPath, clear: () => store.clearReveal(), adapter: () => adapter });
 
 onMounted(() => {
+  // 恢复持久化的自动保存防抖时长（DEBT-30）：此前只在内存里，重启会回到默认值。
+  void store.loadAutosaveDelay();
   adapter = createEditorAdapter();
   if (hostRef.value) {
     adapter.mount(hostRef.value, { initialValue: active.value?.content ?? '' });
