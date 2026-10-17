@@ -24,8 +24,15 @@ export type MenuAction =
 
 /** 每 Vault 的界面状态键（PRD §3.3 的 `vault_state` 键名约定）。 */
 export const STATE_KEY_TREE_EXPANDED = 'tree.expanded';
-/** 全局偏好键（PRD §3.3 的 `preference` 键名约定）。 */
-export const PREF_SHOW_HIDDEN = 'ui.showHiddenFiles';
+/**
+ * 每 Vault 的界面状态键：「显示隐藏文件」是否开启。
+ *
+ * **作用域按 PRD 收敛为 Vault**（§4.11.3 第 18 行「显示隐藏文件 / 关 / **Vault**」+ FR-SET-04）：
+ * 存在**全局库的 `vault_state`**（按 `vault_id` 隔离），而不是全局 `preference` ——
+ * 后者会让切换 Vault 时串设置（技术方案 §13.2 的 **DEBT-15**，2026-10-17 批次 3 修正）。
+ * 键字符串沿用旧名，便于一次性兼容旧版写下的全局值（见 `fileTree.ts::restoreState`）。
+ */
+export const STATE_KEY_SHOW_HIDDEN = 'ui.showHiddenFiles';
 
 /** 行高：技术方案 §7.3 规定文件树固定 28px（虚拟滚动要求等高）。 */
 export const TREE_ROW_HEIGHT = 28;
