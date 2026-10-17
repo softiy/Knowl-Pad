@@ -9,7 +9,7 @@
 // 本切片的引擎尚未接线（遍历命令与事件在 PR-4 下一切片）；接线后删除本行。
 
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rusqlite::{params, Connection};
 
@@ -18,6 +18,7 @@ use kp_domain::md_parse;
 use kp_domain::tokenize;
 
 use crate::index_sql;
+use crate::index_write::insert_note_derived;
 use crate::storage::pool::DbPool;
 
 // ── 扫描侧已拆到 index_scan.rs（CODE-11 硬上限）；这里重新导出，既有调用路径不变 ──
@@ -28,6 +29,23 @@ use crate::index_scan::{kind_of, mtime_ms, split_name};
 
 /// 每批提交的文件数（PERF-05：禁止逐条事务）。
 pub const BATCH_SIZE: usize = 200;
+
+/// 单文件解析超时（SEC-03「单文件解析设置大小上限（默认 5MB）与超时保护（默认 10s），超限跳过并记录警告」）。
+///
+/// 为什么是**跳过该文件**而不是中断整次索引：一个特制 Markdown 不该让整个 Vault 索引不出来
+/// （与扫描侧 `MAX_NOTE_BYTES` 的 `skip-oversize:` 同口径）。实现在 `parse_with_timeout`。
+pub const PARSE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 单个文件的索引结果（`index_file_mode` 的返回）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileOutcome {
+    /// 已写入（重建时含先删旧行再写新行）
+    Indexed,
+    /// 按 `IndexMode::SkipUnchanged` 跳过（mtime / 大小 / 内容指纹都未变）
+    Skipped,
+    /// 解析超时（SEC-03）：**一行都没写**，调用方记一条警告
+    TimedOut,
+}
 
 /// 全量索引的结果。
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -55,13 +73,26 @@ pub fn index_file(conn: &Connection, root: &Path, entry: &ScanEntry) -> Result<(
     index_file_mode(conn, root, entry, IndexMode::Force).map(|_| ())
 }
 
-/// 同上，但可按 IndexMode 跳过未变更文件（返回 false 表示跳过）。
+/// 同上，但可按 IndexMode 跳过未变更文件、并在解析超时时跳过该文件（见 [`FileOutcome`]）。
 pub fn index_file_mode(
     conn: &Connection,
     root: &Path,
     entry: &ScanEntry,
     mode: IndexMode,
-) -> Result<bool, AppError> {
+) -> Result<FileOutcome, AppError> {
+    index_file_mode_with_timeout(conn, root, entry, mode, PARSE_TIMEOUT)
+}
+
+/// 同上，但把单文件解析超时**作为参数**：生产路径固定走 [`PARSE_TIMEOUT`]，用例注入
+/// `Duration::ZERO` 来确定性地打中"超时 ⇒ 跳过且不留半成品"这条分支（真的等 10 秒的用例
+/// 不会有人跑，而超时的**后果**与"等了多久"无关）。
+pub(crate) fn index_file_mode_with_timeout(
+    conn: &Connection,
+    root: &Path,
+    entry: &ScanEntry,
+    mode: IndexMode,
+    parse_timeout: Duration,
+) -> Result<FileOutcome, AppError> {
     if mode == IndexMode::SkipUnchanged {
         let unchanged: Option<i64> = conn
             .query_row(
@@ -71,7 +102,7 @@ pub fn index_file_mode(
             )
             .ok();
         if unchanged.is_some() {
-            return Ok(false);
+            return Ok(FileOutcome::Skipped);
         }
     }
     use crate::index_profile::{start, stop, Phase};
@@ -84,7 +115,20 @@ pub fn index_file_mode(
     stop(t, Phase::Read);
     let note = if is_note {
         let t = start();
-        let parsed = md_parse::parse(&bytes);
+        let parsed = match parse_with_timeout(&bytes, parse_timeout) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                stop(t, Phase::Parse);
+                // SEC-03：超时 ⇒ 跳过该文件并记警告。此处**还没有写过任何行**（删旧行在解析之后），
+                // 所以不会留下"半成品" —— `timed_out_file_is_skipped_without_partial_rows` 钉住它。
+                tracing::warn!(
+                    rel_path = %entry.rel_path,
+                    timeout_secs = parse_timeout.as_secs(),
+                    "单文件解析超时，已跳过（SEC-03 / DEBT-32）"
+                );
+                return Ok(FileOutcome::TimedOut);
+            }
+        };
         stop(t, Phase::Parse);
         Some(parsed)
     } else {
@@ -103,13 +147,40 @@ pub fn index_file_mode(
     stop(t, Phase::Fingerprint);
     let now = mtime_ms(&abs).max(1);
 
-    // 旧 rowid（note_fts 的 rowid 与 file.id 对齐）必须在删 file 之前取
+    delete_old_rows(conn, &entry.rel_path)?;
+    let file_id = insert_file_row(conn, entry, kind, &fingerprint, now)?;
+
+    if is_note {
+        let t = start();
+        let mut stmt = conn
+            .prepare_cached(index_sql::FTS_INSERT_SQL)
+            .map_err(|e| AppError::db_with("准备写入全文索引", &e))?;
+        stmt.execute(params![file_id, indexed_text])
+            .map_err(|e| AppError::db_with("写入全文索引", &e))?;
+        stop(t, Phase::Fts);
+    }
+
+    let Some(note) = note.as_ref() else {
+        return Ok(FileOutcome::Indexed);
+    };
+    let t = start();
+    insert_note_derived(conn, file_id, note)?;
+    stop(t, Phase::Derived);
+    Ok(FileOutcome::Indexed)
+}
+
+/// 删掉该路径的旧行（先 `note_fts` 再 `file`）。
+///
+/// 顺序不可颠倒：`note_fts` 的 rowid 与 `file.id` 对齐，**必须先取到 id 再删 file 行**。
+/// 抽成函数只是为压 CODE-11 的函数级行数上限（clippy::too_many_lines），语义未变。
+fn delete_old_rows(conn: &Connection, rel_path: &str) -> Result<(), AppError> {
+    use crate::index_profile::{start, stop, Phase};
     let t = start();
     let old_id: Option<i64> = {
         let mut stmt = conn
             .prepare_cached(index_sql::OLD_FILE_ID_SQL)
             .map_err(|e| AppError::db_with("准备读取旧文件行", &e))?;
-        stmt.query_row(params![entry.rel_path], |r| r.get(0)).ok()
+        stmt.query_row(params![rel_path], |r| r.get(0)).ok()
     };
     if let Some(id) = old_id {
         let mut stmt = conn
@@ -124,7 +195,18 @@ pub fn index_file_mode(
             .map_err(|e| AppError::db_with("清理旧文件行", &e))?;
     }
     stop(t, Phase::DeleteOld);
+    Ok(())
+}
 
+/// 写 `file` 行并返回新 id（同事务内后续的派生行都挂在它下面）。
+fn insert_file_row(
+    conn: &Connection,
+    entry: &ScanEntry,
+    kind: &str,
+    fingerprint: &str,
+    now: i64,
+) -> Result<i64, AppError> {
+    use crate::index_profile::{start, stop, Phase};
     let (name, stem, ext) = split_name(&entry.rel_path);
     let t = start();
     {
@@ -146,171 +228,19 @@ pub fn index_file_mode(
     }
     let file_id = conn.last_insert_rowid();
     stop(t, Phase::FileRow);
-
-    if is_note {
-        let t = start();
-        let mut stmt = conn
-            .prepare_cached(index_sql::FTS_INSERT_SQL)
-            .map_err(|e| AppError::db_with("准备写入全文索引", &e))?;
-        stmt.execute(params![file_id, indexed_text])
-            .map_err(|e| AppError::db_with("写入全文索引", &e))?;
-        stop(t, Phase::Fts);
-    }
-
-    let Some(note) = note.as_ref() else {
-        return Ok(true);
-    };
-    let t = start();
-    insert_note_derived(conn, file_id, note)?;
-    stop(t, Phase::Derived);
-    Ok(true)
+    Ok(file_id)
 }
 
-/// 把解析结果写入派生表（标题 / 块 ID / 链接 / 标签 / 别名）。
+/// 带超时的解析（SEC-03）：把"是否该停"做成**截止时间判据**交给解析器（协作式中止）。
 ///
-/// 抽取自 `index_file_mode`：CODE-11 的函数级上限是 100 SLOC，原函数已到 113。
-/// 边界取"事务内、依赖 file_id 的派生写入"这一整体 —— 拆在别处会把事务语义切碎。
-fn insert_note_derived(
-    conn: &Connection,
-    file_id: i64,
-    note: &md_parse::ParsedNote,
-) -> Result<(), AppError> {
-    use crate::index_profile::{start, stop, Phase};
-    let t = start();
-    for (i, h) in note.headings.iter().enumerate() {
-        let mut stmt = conn
-            .prepare_cached(index_sql::HEADING_INSERT_SQL)
-            .map_err(|e| AppError::db_with("准备写入标题", &e))?;
-        stmt.execute(params![
-            file_id,
-            h.level as i64,
-            h.text,
-            h.text,
-            h.line as i64,
-            i as i64
-        ])
-        .map_err(|e| AppError::db_with("写入标题", &e))?;
-    }
-    stop(t, Phase::Heading);
-    let t = start();
-    for b in &note.block_ids {
-        let mut stmt = conn
-            .prepare_cached(index_sql::BLOCK_ID_INSERT_SQL)
-            .map_err(|e| AppError::db_with("准备写入块 ID", &e))?;
-        stmt.execute(params![
-            file_id,
-            b.id,
-            b.start_line as i64,
-            b.end_line as i64
-        ])
-        .map_err(|e| AppError::db_with("写入块 ID", &e))?;
-    }
-    stop(t, Phase::BlockId);
-    insert_links(conn, file_id, note)?;
-    insert_tags(conn, file_id, note)?;
-    let t = start();
-    if let Some(fm) = note.frontmatter.as_ref() {
-        for alias in &fm.aliases {
-            let mut stmt = conn
-                .prepare_cached(index_sql::ALIAS_INSERT_SQL)
-                .map_err(|e| AppError::db_with("准备写入别名", &e))?;
-            stmt.execute(params![file_id, alias])
-                .map_err(|e| AppError::db_with("写入别名", &e))?;
-        }
-    }
-    stop(t, Phase::Alias);
-    Ok(())
-}
-
-/// `link` 表：每条链接一行。SQL 与语义未变，只是走预编译语句缓存（见 `index_sql`）。
-fn insert_links(
-    conn: &Connection,
-    file_id: i64,
-    note: &md_parse::ParsedNote,
-) -> Result<(), AppError> {
-    use crate::index_profile::{start, stop, Phase};
-    let t = start();
-    for l in &note.links {
-        let kind = match l.kind {
-            md_parse::LinkKind::Embed => "embed",
-            md_parse::LinkKind::Link => "link",
-        };
-        let mut stmt = conn
-            .prepare_cached(index_sql::LINK_INSERT_SQL)
-            .map_err(|e| AppError::db_with("准备写入链接", &e))?;
-        stmt.execute(params![
-            file_id,
-            l.target,
-            l.anchor,
-            l.alias,
-            kind,
-            l.line as i64,
-            l.col as i64
-        ])
-        .map_err(|e| AppError::db_with("写入链接", &e))?;
-    }
-    stop(t, Phase::Link);
-    Ok(())
-}
-
-/// `tag` + `file_tag`：每条标签一行。决策留痕（RETURNING 被实测否掉、改用缓存）见下方注释。
-fn insert_tags(
-    conn: &Connection,
-    file_id: i64,
-    note: &md_parse::ParsedNote,
-) -> Result<(), AppError> {
-    use crate::index_profile::{start, stop, Phase};
-    // 注意：下面的循环变量历史上就叫 t —— 计时 token 改名以免与它混淆
-    let t_tags = start();
-    for t in &note.tags {
-        let depth = t.name.split('/').count() as i64;
-        // 两段式：先 upsert 标签行，再取回它的 id。
-        //
-        // **RETURNING 变体实测更慢，已回退**（2026-10-15，标准档 3000 篇、两轮对照）：
-        // 把两条语句合成「INSERT … ON CONFLICT … DO UPDATE … RETURNING id」后，
-        // tag 阶段 4541 / 4647 ms ⟶ **5787 / 5792 ms（+25%）**，而同一实验里 parse / link /
-        // resolve 三个阶段逐轮几乎不变（对照组）⇒ 退化可归因于 RETURNING 本身，不是机器变慢。
-        // 于是恢复两段式，并加细分计时（upsert / select / file_tag）定位真正的开销。
-        // **预编译语句缓存**（rusqlite 的 prepare_cached）：SQL 文本与结果语义**完全不变**，
-        // 只是不再每次调用都重新 parse/codegen。依据见细分计时：单条"按唯一索引取 id"的 SELECT
-        // 实测 63 µs/条（946 ms ÷ 15000 条），远超已编译语句应有的量级 ⇒ 开销在 prepare 上。
-        // prepare_cached 在同一连接上按 SQL 文本复用语句（SQLITE_PREPARE_PERSISTENT），
-        // 作用域结束后自动归还（见 rusqlite/src/cache.rs 的 cache_stmt）。
-        let t_upsert = start();
-        {
-            let mut stmt = conn
-                .prepare_cached(index_sql::TAG_UPSERT_SQL)
-                .map_err(|e| AppError::db_with("准备标签写入", &e))?;
-            stmt.execute(params![
-                t.norm,
-                t.name,
-                depth,
-                if t.is_leaf { 1 } else { 0 }
-            ])
-            .map_err(|e| AppError::db_with("写入标签", &e))?;
-        }
-        stop(t_upsert, Phase::TagUpsert);
-        let t_select = start();
-        let tag_id: i64 = {
-            let mut stmt = conn
-                .prepare_cached(index_sql::TAG_SELECT_ID_SQL)
-                .map_err(|e| AppError::db_with("准备读取标签 id", &e))?;
-            stmt.query_row(params![t.norm], |r| r.get(0))
-                .map_err(|e| AppError::db_with("读取标签 id", &e))?
-        };
-        stop(t_select, Phase::TagSelect);
-        let t_filetag = start();
-        {
-            let mut stmt = conn
-                .prepare_cached(index_sql::FILE_TAG_INSERT_SQL)
-                .map_err(|e| AppError::db_with("准备文件标签关联", &e))?;
-            stmt.execute(params![file_id, tag_id, t.line, t.col as i64])
-                .map_err(|e| AppError::db_with("写入文件标签关联", &e))?;
-        }
-        stop(t_filetag, Phase::TagFileTag);
-    }
-    stop(t_tags, Phase::Tag);
-    Ok(())
+/// 抽成函数有两个理由：① 生产路径与用例走同一条代码；② 用例可以传 `Duration::ZERO`
+/// 确定性地打中"已超时"分支（否则只能真的等 10 秒 —— 那种用例不会有人跑）。
+fn parse_with_timeout(
+    bytes: &[u8],
+    timeout: Duration,
+) -> Result<md_parse::ParsedNote, md_parse::ParseAborted> {
+    let deadline = Instant::now() + timeout;
+    md_parse::parse_with_guard(bytes, &|| Instant::now() >= deadline)
 }
 
 /// 全量索引（默认 Force；不检查取消）。生产走 `full_index_cancellable`，这里是测试用包装。
@@ -327,9 +257,24 @@ pub fn full_index<F: FnMut(usize, usize)>(
 pub fn full_index_cancellable<F: FnMut(usize, usize), C: Fn() -> bool>(
     pool: &DbPool,
     root: &Path,
+    progress: F,
+    mode: IndexMode,
+    should_cancel: C,
+) -> Result<IndexOutcome, AppError> {
+    full_index_with_timeout(pool, root, progress, mode, should_cancel, PARSE_TIMEOUT)
+}
+
+/// 同上，但单文件解析超时**可注入**（SEC-03 的默认值是 [`PARSE_TIMEOUT`]）。
+///
+/// 用例注入零超时来钉住"超时 ⇒ 跳过该文件 + `skip-timeout:` 警告 + 一行都不写"这条完整通路；
+/// 生产路径只经 [`full_index_cancellable`]，因此超时值仍然只有一处（[`PARSE_TIMEOUT`]）。
+pub fn full_index_with_timeout<F: FnMut(usize, usize), C: Fn() -> bool>(
+    pool: &DbPool,
+    root: &Path,
     mut progress: F,
     mode: IndexMode,
     should_cancel: C,
+    parse_timeout: Duration,
 ) -> Result<IndexOutcome, AppError> {
     let started = Instant::now();
     let (entries, warnings) = scan_vault(root)?;
@@ -348,25 +293,34 @@ pub fn full_index_cancellable<F: FnMut(usize, usize), C: Fn() -> bool>(
         let chunk: Vec<ScanEntry> = chunk.to_vec();
         let chunk_len = chunk.len();
         let root_owned = root.to_path_buf();
-        let indexed = pool.with_writer(move |conn| {
+        // 闭包返回 (写入数, 超时文件清单)：超时清单必须带出事务边界之外再进 outcome.warnings。
+        let (indexed, timed_out) = pool.with_writer(move |conn| {
             use crate::index_profile::{start, stop, Phase};
             let t = start();
             conn.execute_batch("BEGIN IMMEDIATE")
                 .map_err(|e| AppError::db_with("开启索引事务", &e))?;
             stop(t, Phase::TxnBegin);
             let mut n = 0usize;
+            let mut timed_out: Vec<String> = Vec::new();
             for entry in &chunk {
-                if index_file_mode(conn, &root_owned, entry, mode)? {
-                    n += 1;
+                match index_file_mode_with_timeout(conn, &root_owned, entry, mode, parse_timeout)? {
+                    FileOutcome::Indexed => n += 1,
+                    FileOutcome::TimedOut => {
+                        timed_out.push(format!("skip-timeout:{}", entry.rel_path));
+                    }
+                    FileOutcome::Skipped => {}
                 }
             }
             let t = start();
             conn.execute_batch("COMMIT")
                 .map_err(|e| AppError::db_with("提交索引事务", &e))?;
             stop(t, Phase::TxnCommit);
-            Ok(n)
+            Ok((n, timed_out))
         })?;
         outcome.indexed += indexed;
+        // 超时文件既不计入 indexed 也不计入 skipped：它只留一条可诊断的警告
+        // （命名与扫描侧的 skip-oversize: 对齐，前端状态栏与日志都按同一套前缀识别）。
+        outcome.warnings.extend(timed_out);
         done += chunk_len;
         progress(done, total);
     }

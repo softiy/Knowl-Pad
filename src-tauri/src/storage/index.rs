@@ -28,8 +28,11 @@ pub const PARSER_VERSION: u32 = 0;
 ///   · 改了任一解析规则的语义 → **两个都要改**：先 +1 `PARSER_VERSION`，再更新 `PARSER_SOURCE_HASH`。
 // 只在 parser_source_guard 用例里消费（生产路径不需要读它；它是"变更检测"的基准）。
 // 不用 #[allow] 就只能靠"假装用一下"，那会让代码说谎 —— 这里按 CODE-10 明确写出理由。
+// 2026-10-17（M5 批次 4）：解析器新增**协作式中止**（`parse_with_guard` + 检查点，SEC-03 / DEBT-32）。
+// 它**不改解析规则语义** —— 无预算路径 `parse()` 逐字段与改动前相同（用例 `parse_without_guard_is_unchanged` 钉住），
+// 因此按上面的纪律**只更新指纹**（`PARSER_VERSION` 不动）。
 #[allow(dead_code)]
-pub const PARSER_SOURCE_HASH: &str = "613d564979650491";
+pub const PARSER_SOURCE_HASH: &str = "cf6b45f7c820e93b";
 /// 与 `PARSER_SOURCE_HASH` **配对冻结**的版本号。
 ///
 /// 必须是**字面量**、不能写 `= PARSER_VERSION` —— 那样"版本是否变过"的条件会恒假，

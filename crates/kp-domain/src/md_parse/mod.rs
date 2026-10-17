@@ -8,7 +8,10 @@
 //! - [`wikilink`]：MD-WL-01/02/03/04（仅提取，不裁决）/05/07/08/09。
 //!
 //! 后续切片：frontmatter（MD-FM-01~06）、标签（MD-TAG-01~06）、标题（MD-H-01~03）、
-//! 块 ID（MD-BID-01~03）、plain_text 的完整清洗、10s 超时与 >5MB 跳过（由调用方负责）。
+//! 块 ID（MD-BID-01~03）、plain_text 的完整清洗。
+//!
+//! **超时保护（SEC-03 / DEBT-32）**：本模块提供 [`parse_with_guard`]（协作式中止，检查点见其文档），
+//! 由调用方给出"是否该停"的判据（索引路径是 10s 截止时间）；**>5MB 跳过**由调用方负责（扫描侧）。
 
 pub mod block_id;
 pub mod code_fence;
@@ -53,8 +56,79 @@ pub struct ParsedNote {
     pub line_ending: LineEnding,
 }
 
+/// 解析被预算中止（SEC-03 的单文件超时；DEBT-32）。
+///
+/// **语义：中止不返回半成品。** 调用方拿到 `Err` 后必须跳过该文件并记警告
+/// （PRD SEC-03：「超限跳过并记录警告」），绝不允许拿一个"解析到一半"的结果去建索引 ——
+/// 那会把"超时保护"变成"静默的内容丢失"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseAborted;
+
+/// 纯文本清洗的中止检查步长（字节）。
+///
+/// 取 64 KiB：5MB 上限下最多约 80 次检查（每次读一次时钟，纳秒级），换来"清洗大文件时也能及时停下"。
+const ABORT_CHECK_STRIDE: usize = 64 * 1024;
+
+/// 解析一篇笔记，并在 `abort()` 返回 true 时**立刻中止**（SEC-03 / DEBT-32）。
+///
+/// 为什么是协作式中止、而不是"另起线程 + join 超时"：
+/// ① 零新依赖，也不需要 unsafe 去强杀线程；② 线程无法被安全中断 —— 超时后那条线程仍会继续
+/// 吃掉 CPU，而我们已经在写"该文件跳过"的结论，等于"看着有超时、其实没有"；
+/// ③ 协作式检查是确定性的，可以被用例钉住（见 `guard_aborts_without_partial_result`）。
+///
+/// 检查点：进入扫描前、每个扫描阶段之间、纯文本清洗每 [`ABORT_CHECK_STRIDE`] 字节。
+/// 因此**超出预算的量级是「一个扫描阶段的最坏耗时」**，而不是整篇解析：所有扫描器都是线性时间
+/// （无回溯、无正则），输入另有 5MB 上限（SEC-11）。
+pub fn parse_with_guard(
+    bytes: &[u8],
+    abort: &dyn Fn() -> bool,
+) -> Result<ParsedNote, ParseAborted> {
+    parse_inner(bytes, abort)
+}
+
 /// 解析一篇笔记。**永不失败**：非 UTF-8 输入按有损转换继续并记警告。
+///
+/// 无预算版本：`abort` 恒 false，行为与加超时保护之前**逐字节一致**
+/// （用例 `parse_without_guard_is_unchanged` 钉住）。生产索引路径用 [`parse_with_guard`]。
 pub fn parse(bytes: &[u8]) -> ParsedNote {
+    // never_abort 恒 false ⇒ 这里不可能是 Err。仍写 match 而不 unwrap：解析在索引批事务里被调用，
+    // 留一个 panic 点等于把"理论上不可达"变成一次失败的写任务。
+    match parse_inner(bytes, &never_abort) {
+        Ok(note) => note,
+        Err(_) => unreachable_note(),
+    }
+}
+
+fn never_abort() -> bool {
+    false
+}
+
+/// `parse` 的"不可达"回退：给出**空结果 + 一条警告**，而不是 panic（见 `parse` 的注释）。
+fn unreachable_note() -> ParsedNote {
+    ParsedNote {
+        frontmatter: None,
+        tags: Vec::new(),
+        headings: Vec::new(),
+        block_ids: Vec::new(),
+        links: Vec::new(),
+        warnings: vec!["PARSE_ABORTED：解析被中止（这是不应到达的路径，请上报）".to_string()],
+        plain_text: String::new(),
+        has_bom: false,
+        line_ending: LineEnding::Lf,
+    }
+}
+
+/// 中止检查点（位置与理由见 [`parse_with_guard`]）。
+fn check(abort: &dyn Fn() -> bool) -> Result<(), ParseAborted> {
+    if abort() {
+        Err(ParseAborted)
+    } else {
+        Ok(())
+    }
+}
+
+/// 解析实现：`abort` 为真时立刻返回 `Err`，**不产出任何部分结果**。
+fn parse_inner(bytes: &[u8], abort: &dyn Fn() -> bool) -> Result<ParsedNote, ParseAborted> {
     let has_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
     let body = if has_bom { &bytes[3..] } else { bytes };
     let mut warnings = Vec::new();
@@ -70,6 +144,7 @@ pub fn parse(bytes: &[u8]) -> ParsedNote {
     } else {
         LineEnding::Lf
     };
+    check(abort)?;
     // MD-FM-01~06：先扫 frontmatter；其区间既不进链接扫描（MD-WL-06）也不进全文索引（MD-FM-06）
     let fm = frontmatter::scan(&text);
     if fm.unclosed {
@@ -82,15 +157,21 @@ pub fn parse(bytes: &[u8]) -> ParsedNote {
         );
     }
     let skip = fm.range.clone();
+    check(abort)?;
     let code = CodeRanges::scan(&text);
+    check(abort)?;
     let links = wikilink::extract_skipping(&text, &code, skip.clone());
+    check(abort)?;
     let headings = heading::extract(&text, &code, skip.clone());
+    check(abort)?;
     let block_ids = block_id::extract(&text, &code, skip.clone());
+    check(abort)?;
     let mut tags =
         tag::from_frontmatter(fm.data.as_ref().map(|f| f.tags.as_slice()).unwrap_or(&[]));
     tags.extend(tag::extract(&text, &code, skip.clone()));
-    let plain_text = plain_text(&text, &code, skip);
-    ParsedNote {
+    check(abort)?;
+    let plain_text = plain_text(&text, &code, skip, abort)?;
+    Ok(ParsedNote {
         frontmatter: fm.data,
         tags,
         headings,
@@ -100,19 +181,29 @@ pub fn parse(bytes: &[u8]) -> ParsedNote {
         plain_text,
         has_bom,
         line_ending,
-    }
+    })
 }
 
 /// 去掉代码区间与 frontmatter 区间后的正文（MD-FM-06；完整清洗随后续切片完善）。
-fn plain_text(text: &str, code: &CodeRanges, skip: Option<std::ops::Range<usize>>) -> String {
+///
+/// 这是全文件最长的一条循环，因此按 [`ABORT_CHECK_STRIDE`] 分块检查中止（见 `parse_with_guard`）。
+fn plain_text(
+    text: &str,
+    code: &CodeRanges,
+    skip: Option<std::ops::Range<usize>>,
+    abort: &dyn Fn() -> bool,
+) -> Result<String, ParseAborted> {
     let mut raw = String::with_capacity(text.len());
     for (i, ch) in text.char_indices() {
+        if i % ABORT_CHECK_STRIDE == 0 {
+            check(abort)?;
+        }
         let skipped = skip.as_ref().is_some_and(|r| r.contains(&i));
         if !skipped && !code.contains(i) {
             raw.push(ch);
         }
     }
-    clean_markdown(&raw)
+    Ok(clean_markdown(&raw))
 }
 
 /// 全文索引用的清洗：`[[目标|别名]]` → `别名`、`[[目标]]` → `目标`，再剥离行内标记。
@@ -241,6 +332,63 @@ mod tests {
         assert!(note.plain_text.contains("粗体"));
         assert!(!note.plain_text.contains("**"), "行内标记应被剥离");
         assert!(!note.plain_text.contains("[[") && !note.plain_text.contains("]]"));
+    }
+
+    /// **DEBT-32 / SEC-03 的判据**：判据说停时必须中止，且**不返回半成品**（类型上就是 `Err`）。
+    ///
+    /// 用"第 3 次检查时中止"的闭包而不是墙钟：真实超时是时间事件，用它写用例必然 flaky；
+    /// 而协作式中止的契约本身是"每到一个检查点问一次判据，判据说停就停" —— 这正是本用例钉的东西。
+    #[test]
+    fn guard_aborts_without_partial_result() {
+        let text = "---\ntags: [a/b]\n---\n# 标题\n正文 [[链接]] 与 #标签\n";
+        let calls = std::cell::Cell::new(0u32);
+        let abort = || {
+            calls.set(calls.get() + 1);
+            calls.get() >= 3
+        };
+        let outcome = parse_with_guard(text.as_bytes(), &abort);
+        assert!(outcome.is_err(), "判据说停时必须中止");
+        assert!(
+            calls.get() >= 3,
+            "中止判据必须真的被问到（实际 {} 次）",
+            calls.get()
+        );
+    }
+
+    /// 无预算路径（`parse`）与"永不中止的预算"必须给出**完全相同**的结果 —— 正常路径行为不变。
+    #[test]
+    fn parse_without_guard_is_unchanged() {
+        let text = "---\ntags: [甲/乙]\n---\n# 标题\n正文 [[目标|别名]] #丙 ^bid\n```\ncode\n```\n";
+        let plain = parse(text.as_bytes());
+        let guarded = parse_with_guard(text.as_bytes(), &never_abort).expect("永不中止");
+        assert_eq!(plain, guarded, "无预算解析的结果必须逐字段相同");
+    }
+
+    /// 超大输入 + 已耗尽的预算 ⇒ 立刻中止（可复现，不依赖真的等 10s）。
+    ///
+    /// 同一份输入在"永不中止"下必须能正常解析完 —— 否则上一条断言可能只是因为输入非法而"通过"。
+    #[test]
+    fn oversized_input_aborts_when_budget_is_already_spent() {
+        // ≈0.6MB、5 万行：远超常规笔记，足以代表"超大输入"。
+        //
+        // **刻意不放 wikilink**：`wikilink::line_col` 是"每个链接都从文件头扫一遍"的 O(位置) 实现，
+        // "每行一个 [[链接]]"会退化成 O(n²)（实测 1MB / 5 万链接要烧掉数百秒 CPU）—— 那是另一个
+        // 已登记的独立缺陷（技术方案 §13.2 的 DEBT-42），不该让本用例替它背锅。
+        let big = "正文内容行，用于构造超大输入。\n".repeat(50_000);
+        assert!(
+            parse_with_guard(big.as_bytes(), &|| true).is_err(),
+            "预算已耗尽时必须立刻中止"
+        );
+        let ok = parse_with_guard(big.as_bytes(), &never_abort).expect("无预算应能解析");
+        assert!(
+            ok.links.is_empty() && ok.tags.is_empty(),
+            "本输入不含链接与标签"
+        );
+        assert!(
+            ok.plain_text.len() >= 50_000,
+            "大输入应被完整解析：{}",
+            ok.plain_text.len()
+        );
     }
 
     #[test]
