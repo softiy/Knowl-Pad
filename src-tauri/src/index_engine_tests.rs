@@ -251,6 +251,51 @@ fn content_change_with_same_mtime_and_size_is_reindexed() {
     assert_eq!(tag_rows(&pool, "旧标签"), 0, "旧内容的行必须被替换掉");
 }
 
+/// **P0 回归的端到端判据（真机口径：真实临时 Vault + 生产入口）**。
+///
+/// 现场症状：打开含"病态 wikilink 笔记"的 Vault 时索引**一直停在「索引中」**。
+/// 这里用**生产入口** `full_index_cancellable`（超时固定 10 s）索引一份真实夹具（`tempfile` ⇒ %TEMP%），
+/// 断言：① 在预算内结束；② 病态那篇**被正常索引**（修复后它已经解析得完，不是"跳过"）；
+/// ③ 没有 `skip-timeout:` 警告；④ 5 万条链接真的落库了。
+#[test]
+fn pathological_note_is_indexed_within_budget() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path();
+    write_note(root, "normal.md", "# 正常\n[[a]]\n");
+    // 与所有者夹具同量级：≈1.25 MB、5 万条 wikilink（修复前这一篇要烧约 7 分钟 CPU）
+    let big = "[[目标/链接]] 正文\n".repeat(50_000);
+    assert!(big.len() >= 1_000_000, "构造要求：≥1 MB");
+    write_note(root, "pathological.md", &big);
+    let pool = open(root).expect("建索引库");
+
+    let t = std::time::Instant::now();
+    let outcome = full_index_cancellable(&pool, root, |_, _| {}, IndexMode::Force, || false)
+        .expect("全量索引");
+    let elapsed = t.elapsed();
+    assert_eq!(
+        outcome.indexed, 2,
+        "两篇都必须被索引（病态那篇不该再被跳过）；警告：{:?}",
+        outcome.warnings
+    );
+    assert!(
+        outcome.warnings.is_empty(),
+        "不该有 skip-timeout：{:?}",
+        outcome.warnings
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "索引必须在 10 s 预算内结束（现场症状是永远不结束），实测 {elapsed:?}"
+    );
+    let links: i64 = pool
+        .with_reader(|conn| {
+            conn.query_row("SELECT count(*) FROM link", [], |r| r.get(0))
+                .map_err(|e| kp_domain::error::AppError::db_with("统计链接", &e))
+        })
+        .expect("统计链接");
+    assert_eq!(links, 50_001, "5 万条病态链接 + normal.md 的 1 条");
+    println!("P0 pathological index elapsed_ms={}", elapsed.as_millis());
+}
+
 /// **DEBT-35 的回归（正例）**：三者都没变 ⇒ 仍然跳过（别把优化改没了）。
 #[test]
 fn second_pass_skips_everything_unchanged() {
