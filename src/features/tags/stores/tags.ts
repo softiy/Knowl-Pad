@@ -50,7 +50,10 @@ export const useTagsStore = defineStore('tags', () => {
   const selectedNorm = ref<string | null>(null);
   const notes = ref<TaggedNote[]>([]);
   const notesLoading = ref(false);
-  /** FR-TAG-03 的"是否含子级"。⚠️ 当前是 **no-op**，见 `includeChildrenNoOp`。 */
+  /**
+   * FR-TAG-03 的「是否含子级」。**自 2026-10-17（批次 4）起真正生效**（勘误 D-40②）：
+   * `false` ⇒ 只列**显式写了该标签**的笔记（`file_tag.explicit = 1`）；`true` ⇒ 含**全部子孙**。
+   */
   const includeChildren = ref(false);
   const loading = ref(false);
   const error = ref<string | null>(null);
@@ -120,8 +123,8 @@ export const useTagsStore = defineStore('tags', () => {
 
   /** 切换"含子级"：**参数由调用方解析**（模板的 change 事件给的是 Event，TS 看不见）。
    *
-   * ⚠️ 该开关**当前是 no-op**（勘误 D-40②）：MD-TAG-03 的祖先登记让"只含自身"与"含全部子孙"
-   * 返回同一批笔记。这里仍然如实透传并重查 —— UI 不假装它生效，但也不假装它不存在。
+   * 语义（PRD §5.3.6.2）：`false` = 只列显式写了该标签的笔记；`true` = 该标签 + 全部子孙。
+   * 切换后立即重查当前选中的标签（与筛选/排序不同：这个参数在**后端**生效，必须重新发请求）。
    */
   function setIncludeChildren(flag: boolean): void {
     includeChildren.value = flag;

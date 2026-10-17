@@ -14,6 +14,11 @@ pub struct TaggedNoteRow {
     pub rel_path: String,
     pub name: String,
     pub mtime_ms: i64,
+    /// 这一篇在**哪些来源**写了该标签（FR-TAG-10 的「来源可区分」）。
+    ///
+    /// 固定顺序 `["body"]` / `["frontmatter"]` / `["body", "frontmatter"]`，空 = 没有直接关联的行
+    /// （仅「未分类」查询会给出空：那批笔记本来就没有 file_tag 行）。
+    pub sources: Vec<String>,
 }
 
 /// 取全部标签行（建树用；`norm` 升序 —— 树里同级的顺序就来自这里）。
@@ -73,7 +78,7 @@ pub fn notes_of_tag(
         return pool.with_reader(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT f.rel_path, f.name, f.mtime_ms FROM file f \
+                    "SELECT f.rel_path, f.name, f.mtime_ms, 0 AS has_body, 0 AS has_fm FROM file f \
                      WHERE f.deleted = 0 AND f.kind = 'note' \
                      AND NOT EXISTS (SELECT 1 FROM file_tag ft WHERE ft.file_id = f.id) \
                      ORDER BY f.rel_path",
@@ -83,12 +88,14 @@ pub fn notes_of_tag(
         });
     }
     let sql = if include_children {
-        "SELECT f.rel_path, f.name, f.mtime_ms FROM file_tag ft \
+        "SELECT f.rel_path, f.name, f.mtime_ms, MAX(ft.source = 'body') AS has_body, \
+         MAX(ft.source = 'frontmatter') AS has_fm FROM file_tag ft \
          JOIN file f ON f.id = ft.file_id JOIN tag t ON t.id = ft.tag_id \
          WHERE f.deleted = 0 AND f.kind = 'note' AND (t.norm = ?1 OR t.norm LIKE ?1 || '/%') \
          GROUP BY f.id ORDER BY f.rel_path"
     } else {
-        "SELECT f.rel_path, f.name, f.mtime_ms FROM file_tag ft \
+        "SELECT f.rel_path, f.name, f.mtime_ms, MAX(ft.source = 'body') AS has_body, \
+         MAX(ft.source = 'frontmatter') AS has_fm FROM file_tag ft \
          JOIN file f ON f.id = ft.file_id JOIN tag t ON t.id = ft.tag_id \
          WHERE f.deleted = 0 AND f.kind = 'note' AND t.norm = ?1 AND ft.explicit = 1 \
          GROUP BY f.id ORDER BY f.rel_path"
@@ -108,10 +115,22 @@ fn collect_notes<P: rusqlite::Params>(
 ) -> Result<Vec<TaggedNoteRow>, AppError> {
     let rows = stmt
         .query_map(params, |r| {
+            // 两个来源各自 MAX(...) 聚合成 0/1：顺序在 Rust 侧固定为 body → frontmatter，
+            // 不依赖 SQL 的 group_concat 顺序（那个顺序没有定义，会让用例随机红）。
+            let has_body: i64 = r.get(3)?;
+            let has_fm: i64 = r.get(4)?;
+            let mut sources = Vec::new();
+            if has_body != 0 {
+                sources.push("body".to_string());
+            }
+            if has_fm != 0 {
+                sources.push("frontmatter".to_string());
+            }
             Ok(TaggedNoteRow {
                 rel_path: r.get(0)?,
                 name: r.get(1)?,
                 mtime_ms: r.get(2)?,
+                sources,
             })
         })
         .map_err(|e| AppError::db_with("读取标签笔记", &e))?

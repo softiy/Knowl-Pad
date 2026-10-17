@@ -154,6 +154,39 @@ fn ac_tag_03_display_is_the_first_occurrence() {
     );
 }
 
+/// **FR-TAG-10 的来源可区分（2026-10-17 批次 4 落地）**：`tag_notes` 的每一行都带 `sources`，
+/// 取值固定顺序 `body` → `frontmatter`；两种来源都写了同一标签时**两个都在**（去重后的并集）。
+#[test]
+fn fr_tag_10_note_list_reports_sources_per_note() {
+    let (_v, state) = fixture(&[
+        ("body.md", "#共享 正文\n"),
+        ("fm.md", "---\ntags: [共享]\n---\n正文无标签\n"),
+        ("both.md", "---\ntags: [共享]\n---\n#共享 又一次\n"),
+    ]);
+    let rows = tag_notes_impl(
+        &state,
+        TagNotesArgs {
+            tag_norm: "共享".to_string(),
+            include_children: false,
+        },
+    )
+    .expect("查询标签笔记");
+    let got: Vec<(String, Vec<String>)> =
+        rows.into_iter().map(|n| (n.rel_path, n.sources)).collect();
+    assert_eq!(
+        got,
+        vec![
+            ("body.md".to_string(), vec!["body".to_string()]),
+            (
+                "both.md".to_string(),
+                vec!["body".to_string(), "frontmatter".to_string()],
+            ),
+            ("fm.md".to_string(), vec!["frontmatter".to_string()]),
+        ],
+        "来源必须逐篇给出，顺序固定 body → frontmatter（前端据此渲染两个徽标）"
+    );
+}
+
 /// **AC-TAG-04**：对**全部**标签断言 SELECT COUNT(*) FROM file_tag WHERE tag_id = ? 与 tag.ref_count 完全一致。
 #[test]
 fn ac_tag_04_ref_count_matches_file_tag_for_every_tag() {

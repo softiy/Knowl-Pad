@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { formatNoteTime } from '../logic';
-import type { TaggedNote, TagNode } from '@core/ipc/tagCommands';
+import type { TaggedNote, TagNode, TagSource } from '@core/ipc/tagCommands';
 
 /**
  * 选中标签下的笔记列表（FR-TAG-03；AC-TAG-03 末句"点击该标签列出全部 3 篇笔记"）。
@@ -24,6 +24,15 @@ const emit = defineEmits<{ open: [relPath: string] }>();
 const selected = computed(() => props.activeNorm !== null);
 /** 标题：优先用索引库里的 display（首次出现的原文形式，FR-TAG-09），查不到才退化用规范键。 */
 const title = computed(() => props.activeNode?.display ?? props.activeNorm ?? '');
+
+/**
+ * 来源标识（FR-TAG-10）：把后端的取值翻成用户看得懂的词。
+ *
+ * 用**不同的字面**而不是图标/颜色：色觉障碍用户也要能区分（这条信息是"标签从哪来"，不是装饰）。
+ */
+function sourceLabel(src: TagSource): string {
+  return src === 'frontmatter' ? 'frontmatter' : '正文';
+}
 </script>
 
 <template>
@@ -43,6 +52,13 @@ const title = computed(() => props.activeNode?.display ?? props.activeNorm ?? ''
             {{ note.name }}
           </button>
           <span class="kp-tags__note-path">{{ note.relPath }}</span>
+          <span
+            v-for="src in note.sources"
+            :key="src"
+            class="kp-tags__note-source"
+            data-testid="tag-note-source"
+            :data-source="src"
+          >{{ sourceLabel(src) }}</span>
           <span class="kp-tags__note-time">{{ formatNoteTime(note.mtimeMs) }}</span>
         </li>
       </ul>
@@ -56,6 +72,13 @@ const title = computed(() => props.activeNode?.display ?? props.activeNorm ?? ''
 .kp-tags__notes-list { list-style: none; margin: 0; padding: 0; }
 .kp-tags__notes-list li { display: flex; gap: 6px; align-items: baseline; font-size: 12px; }
 .kp-tags__note-path { color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kp-tags__note-source {
+  border: 1px solid var(--kp-border, #e5e5e5);
+  border-radius: 3px;
+  padding: 0 3px;
+  color: #666;
+  font-size: 10px;
+}
 .kp-tags__note-time { margin-left: auto; color: #aaa; font-size: 11px; }
 .kp-tags__hint { color: #888; font-size: 12px; }
 </style>

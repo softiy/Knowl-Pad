@@ -64,7 +64,7 @@ describe('标签面板 store', () => {
     hoisted.handlers.length = 0;
     hoisted.tree.mockReset().mockResolvedValue(treeFixture());
     hoisted.notes.mockReset().mockResolvedValue([
-      { relPath: 'a.md', name: 'a.md', mtimeMs: 1 },
+      { relPath: 'a.md', name: 'a.md', mtimeMs: 1, sources: ['body'] },
     ]);
   });
 
@@ -159,11 +159,13 @@ describe('标签面板 store', () => {
     hoisted.notes.mockImplementationOnce(
       () => new Promise<TaggedNote[]>((resolve) => { releaseFirst = resolve; }),
     );
-    hoisted.notes.mockResolvedValueOnce([{ relPath: 'new.md', name: 'new.md', mtimeMs: 2 }]);
+    hoisted.notes.mockResolvedValueOnce([
+      { relPath: 'new.md', name: 'new.md', mtimeMs: 2, sources: ['body'] },
+    ]);
     const slow = s.loadNotes('项目');
     const fast = s.loadNotes('随笔');
     await fast;
-    releaseFirst?.([{ relPath: 'stale.md', name: 'stale.md', mtimeMs: 1 }]);
+    releaseFirst?.([{ relPath: 'stale.md', name: 'stale.md', mtimeMs: 1, sources: [] }]);
     await slow;
     expect(s.notes.map((n) => n.relPath)).toEqual(['new.md']);
   });
