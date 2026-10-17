@@ -168,7 +168,7 @@ pnpm test:perf -- --baseline .perf-baseline.json           # 性能基准比对
 ## 7. 工具链硬约束
 
 > 按 §13.4 约定，本节**不复制版本号清单**（权威矩阵在技术方案 §3.2 / §3.5 与 PRD §2.2）。
-> 以下两条是会**直接导致构建失败**的环境门禁，必须知晓：
+> 以下若干条是会**直接导致构建失败或误判**的环境陷阱，必须知晓：
 
 1. **Rust MSRV = 1.90**
    由 `tauri 2.12.0` 家族（含 `tauri-utils 2.10.0`、`muda 0.20.0`）的 `rust-version` 决定；
@@ -200,6 +200,27 @@ pnpm test:perf -- --baseline .perf-baseline.json           # 性能基准比对
    `scripts/lib/spawn-tool.mjs` 已内建「优先原生 .exe + pipe 捕获回显 + 崩溃码重试一次」；
    ② `pnpm test` / `pnpm test:coverage` 走 `scripts/run-with-retry.mjs`，**只对该崩溃码**重试（会打印重试次数）；
    ③ 看到非零退出码，先判断**是不是崩溃码**再下结论；④ **禁止**为了让本地"变绿"而放宽门禁或覆盖率阈值。
+
+5. **环境地雷：`cargo llvm-cov` 会沿用陈旧的仪表化产物 ⇒ 本地门禁 15 可能给出偏低的"假红"（本机已取证，2026-10-17 M5 批次 4）**
+   症状：本地 `cargo llvm-cov -p kp-domain --locked --fail-under-lines 85`（门禁 15）报**总行覆盖低于 85%**
+   （实测 **80.80%**，退出码 1），而同一条命令在 **CI 上是绿的**；本地在**清掉 llvm-cov 构建产物**后同一条命令为 **93.48%**。
+   为什么与项目代码无关：三轮实测里**代码几乎没动**（批次 4 的域层改动只有两个文件），变的是"被测行数"本身 ——
+
+   | 轮次 | 树状态 | 是否清过 llvm-cov 产物 | TOTAL 行覆盖 | 退出码 |
+   | --- | --- | --- | --- | --- |
+   | A | 基线 `114dd0c8` | 否（沿用既有 `target/llvm-cov-target`） | 4126 行 / 792 未覆盖 = **80.80%** | 1 |
+   | B | 批次 4 HEAD | 否 | 3797 行 / 398 = **89.52%** | 0 |
+   | C | 批次 4 HEAD | `cargo llvm-cov clean --workspace` 后 | 3636 行 / 237 = **93.48%** | 0 |
+
+   逐文件位移的例子（这些文件那一批**一行都没改**）：`error.rs` 被测行 134 → 77、`file_ops.rs` 274 → 199、
+   `tokenize.rs` / `note_io.rs` 同样变化 ⇒ 变动的是**计量**（仪表化构建与合并），不是覆盖率本身。
+   C 档与历史记录吻合（`docs/history/M1-M3复核台账-2026-10-07.md` 记 **92.32%**，两份 `CI证据-*.md` 记门禁 15 ✅ 通过），
+   **CI 仍是权威**（`ci.yml` 跑 `node scripts/run-gates.mjs`、runner 是干净的 `ubuntu-22.04`）。
+   处置：① 本地跑门禁 15 前先执行 **`cargo llvm-cov clean --workspace`**（只清 `target/llvm-cov-target`，不碰源码与仓库文件）；
+   ② 看到本地覆盖率红，先确认不是"陈旧产物"再下结论；③ **禁止**用改阈值 / 加 `--ignore-filename-regex` / 登记 DEBT 来"解决"它
+   —— 它不是产品缺陷，而是本地环境陷阱；④ 报告本地覆盖率时必须写明"是否清过产物"，否则数字不可比。
+   注：CI 侧的具体百分比拿不到（GitHub 的 `actions/jobs/{id}/logs` 对未认证请求返回 **403**）；判定依据是
+   "CI 全绿 + 本地清过产物后的数字与历史吻合"。
 
 ---
 
