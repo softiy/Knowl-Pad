@@ -140,6 +140,17 @@ pub fn apply_changes<F: Fn(&[Change])>(
         // ④ 只重算受影响的链接（增量裁决）+ 标签计数，与写库同一事务
         crate::index_resolve::resolve_links_matching(conn, &changed_ids, &target_keys)?;
         crate::index_resolve::recount_tags(conn)?;
+        // ⑤ 收尾：清理**孤儿标签行**（PRD 勘误 **D-42 候选 (a)** 的落地）。
+        //
+        // **为什么在这里删是安全的，而在全量重建中途不安全**：
+        // · 增量是**单文件级**的 —— 这一批文件已经全部写完并 `recount_tags` 过，此刻 `ref_count = 0`
+        //   且没有 `file_tag` 引用的标签，**确实**没有任何笔记再用它（不是"还没轮到"），删掉不会误伤；
+        // · 全量重建中途某标签可能**暂时**为 0（它的文件还没轮到），早删会把后面还要用的标签删掉 ——
+        //   所以那边只在收尾（全部文件写完之后、未取消时）删，见 `index_engine.rs` 的同一行调用。
+        //
+        // 触发时机：每次增量事务**提交前**，与写入 / 裁决 / 计数在**同一事务**里 —— 要么全成、要么全不成。
+        conn.execute(crate::index_sql::ORPHAN_TAGS_DELETE_SQL, [])
+            .map_err(|e| AppError::db_with("清理孤儿标签", &e))?;
         tx.commit()
             .map_err(|e| AppError::db_with("提交增量事务", &e))?;
         Ok(())

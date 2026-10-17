@@ -82,7 +82,11 @@ pub const ALL_CACHED_SQL: [&str; 12] = [
 /// - 重建结果必须与一次性索引**逐表一致**（AC-REL-03 的口径）—— 孤儿行会让两者不同，
 ///   属**正确性缺陷**而不是面板美观问题（它还会被 `tag_tree` 列出来，点进去是空列表）。
 ///
-/// **只在全量重建收尾调用**：重建中途某标签可能暂时为 0（它的文件还没轮到），早删会把后面还要用的标签删掉。
+/// **两个调用点，都只在"收尾"**：
+/// - 全量重建收尾（`index_engine.rs`，全部文件写完后、未取消时）—— 中途某标签可能**暂时**为 0，
+///   它的文件还没轮到，早删会把后面还要用的标签删掉；
+/// - 增量事务收尾（`index_watch.rs`，提交前、与写入/裁决/计数同一事务）—— 增量是**单文件级**，
+///   这一批写完后 `ref_count = 0` 的标签确实没有任何笔记再用（PRD 勘误 **D-42 候选 (a)**），删它安全。
 pub const ORPHAN_TAGS_DELETE_SQL: &str = "DELETE FROM tag WHERE ref_count = 0 AND NOT EXISTS \
      (SELECT 1 FROM file_tag ft WHERE ft.tag_id = tag.id)";
 

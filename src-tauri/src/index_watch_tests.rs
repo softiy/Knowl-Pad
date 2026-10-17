@@ -493,3 +493,109 @@ fn failed_batch_does_not_leave_the_connection_stuck_in_a_transaction() {
         second.err().map(|e| e.to_string())
     );
 }
+
+// ── PRD 勘误 D-42 候选 (a)：增量收尾清理孤儿标签 ───────────────────────
+
+/// 某标签的 `ref_count`；`None` = 该 `tag` 行**不存在**。
+fn tag_ref_count(pool: &crate::storage::pool::DbPool, norm: &str) -> Option<i64> {
+    pool.with_reader(|conn| {
+        conn.query_row(
+            "SELECT ref_count FROM tag WHERE norm = ?1",
+            rusqlite::params![norm],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(AppError::db(&format!("读标签行：{other}"))),
+        })
+    })
+    .expect("读标签行")
+}
+
+/// `tag_tree`（标签面板的数据源）是否会列出某个标签 —— 与命令**同一条链路**：
+/// `tag_query::load_tag_rows` + `kp_domain::tag_tree::build_tree`。
+fn tag_tree_lists(pool: &crate::storage::pool::DbPool, norm: &str) -> bool {
+    fn hit(nodes: &[kp_domain::tag_tree::TagNode], norm: &str) -> bool {
+        nodes
+            .iter()
+            .any(|n| n.norm == norm || hit(&n.children, norm))
+    }
+    let rows = crate::storage::tag_query::load_tag_rows(pool).expect("读标签行");
+    hit(&kp_domain::tag_tree::build_tree(&rows), norm)
+}
+
+/// **D-42 候选 (a) 的判据：外部把某个标签从笔记里删掉 ⇒ 增量重索引后该标签行消失。**
+///
+/// 现场症状（PRD 勘误 D-42）：用别的编辑器删掉 `#旧标签` 后，`ref_count` 变成 0 但 `tag` 行仍在，
+/// 面板会长期列出这个"幽灵标签"，点进去是空列表，直到下一次全量重建。
+#[test]
+fn incremental_cleanup_removes_tag_no_longer_referenced() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲 #要删的标签\n").expect("写笔记");
+    fs::write(root.join("b.md"), "# 乙 #留下的标签\n").expect("写笔记");
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    assert_eq!(
+        tag_ref_count(&pool, "要删的标签"),
+        Some(1),
+        "前置：标签应在"
+    );
+    assert!(tag_tree_lists(&pool, "要删的标签"), "前置：面板应列出它");
+
+    // 模拟"编辑器外的改动"：直接改盘去掉那个标签，然后走**增量路径**（不是重建）
+    fs::write(root.join("a.md"), "# 甲 正文（标签已被外部删掉）\n").expect("外部改写");
+    crate::index_watch::apply_changes(
+        &pool,
+        &root,
+        &[Change::Modified("a.md".to_string())],
+        |_| {},
+    )
+    .expect("增量索引");
+
+    assert_eq!(
+        tag_ref_count(&pool, "要删的标签"),
+        None,
+        "无引用的标签行必须被增量收尾清掉（否则就是幽灵标签）"
+    );
+    assert!(
+        !tag_tree_lists(&pool, "要删的标签"),
+        "tag_tree 不能再列出它（点进去是空列表就是这个症状）"
+    );
+    assert_eq!(
+        tag_ref_count(&pool, "留下的标签"),
+        Some(1),
+        "与本次变更无关的标签不许被波及"
+    );
+}
+
+/// **反向判据：仍有其它笔记引用该标签 ⇒ 不许删。**
+///
+/// 删掉"还有人用"的标签会让活着的标签从面板消失（比幽灵标签更糟），所以这条必须钉住。
+#[test]
+fn incremental_cleanup_keeps_tag_still_referenced() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲 #共用\n").expect("写笔记");
+    fs::write(root.join("b.md"), "# 乙 #共用\n").expect("写笔记");
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    assert_eq!(tag_ref_count(&pool, "共用"), Some(2), "前置：两篇都引用");
+
+    fs::write(root.join("a.md"), "# 甲 只留正文\n").expect("外部改写");
+    crate::index_watch::apply_changes(
+        &pool,
+        &root,
+        &[Change::Modified("a.md".to_string())],
+        |_| {},
+    )
+    .expect("增量索引");
+
+    assert_eq!(
+        tag_ref_count(&pool, "共用"),
+        Some(1),
+        "b.md 仍在引用 ⇒ 标签行必须保留（计数降到 1）"
+    );
+    assert!(tag_tree_lists(&pool, "共用"), "面板仍应列出它");
+}
