@@ -5,7 +5,7 @@ import { createPinia, setActivePinia } from 'pinia';
 
 /**
  * 标签面板（FR-TAG-01~04 / 13）：树形与计数、点击看笔记、排序切换、面板内过滤、
- * 「未分类」条目、以及 FR-TAG-03 的"含子级"开关**如实标注 no-op**（勘误 D-40②）。
+ * 「未分类」条目、FR-TAG-03 的"含子级"开关（2026-10-17 批次 4 起**生效**）与 FR-TAG-10 的来源标识。
  *
  * 依赖整体替身（照 `tests/unit/links-panel.spec.ts` 的风格）：本 spec 只关心面板行为，
  * 不碰真 IPC、不碰真事件总线。
@@ -122,8 +122,8 @@ describe('标签面板：点击看笔记（FR-TAG-03、AC-TAG-03）', () => {
     setActivePinia(createPinia());
     hoisted.tree.mockReset().mockResolvedValue(treeFixture());
     hoisted.notes.mockReset().mockResolvedValue([
-      { relPath: 'a.md', name: 'a.md', mtimeMs: 1 },
-      { relPath: 'b.md', name: 'b.md', mtimeMs: 2 },
+      { relPath: 'a.md', name: 'a.md', mtimeMs: 1, sources: ['body'] },
+      { relPath: 'b.md', name: 'b.md', mtimeMs: 2, sources: ['frontmatter'] },
     ]);
   });
 
@@ -134,6 +134,43 @@ describe('标签面板：点击看笔记（FR-TAG-03、AC-TAG-03）', () => {
     await flushPromises();
     expect(hoisted.notes).toHaveBeenCalledWith('随笔', false);
     expect(w.get('[data-testid="tag-notes-title"]').text()).toContain('共 2 篇');
+  });
+
+  it('笔记列表带**来源标识**：正文与 frontmatter 各自一个徽标（FR-TAG-10）', async () => {
+    const w = mount(TagPanel);
+    await flushPromises();
+    await findRow(w, '随笔').get('[data-testid="tag-node"]').trigger('click');
+    await flushPromises();
+    const items = w.findAll('[data-testid="tag-note-item"]');
+    expect(items).toHaveLength(2);
+    const first = w.findAll('[data-testid="tag-note-source"]');
+    // 固定顺序 body → frontmatter，且**都渲染成可读文字**（不靠颜色/图标区分）
+    expect(first.map((n) => n.attributes('data-source'))).toEqual(['body', 'frontmatter']);
+    expect(first[0]!.text()).toBe('正文');
+    expect(first[1]!.text()).toBe('frontmatter');
+  });
+
+  it('两种来源都写了同一个标签时，两个徽标都出现（去重后的并集）', async () => {
+    hoisted.notes.mockResolvedValue([
+      { relPath: 'both.md', name: 'both.md', mtimeMs: 3, sources: ['body', 'frontmatter'] },
+    ]);
+    const w = mount(TagPanel);
+    await flushPromises();
+    await findRow(w, '随笔').get('[data-testid="tag-node"]').trigger('click');
+    await flushPromises();
+    const badges = w.findAll('[data-testid="tag-note-source"]');
+    expect(badges).toHaveLength(2);
+    expect(badges.map((n) => n.attributes('data-source'))).toEqual(['body', 'frontmatter']);
+  });
+
+  it('「未分类」的笔记没有来源徽标（它本来就没有标签行）', async () => {
+    hoisted.notes.mockResolvedValue([{ relPath: 'plain.md', name: 'plain.md', mtimeMs: 4, sources: [] }]);
+    const w = mount(TagPanel);
+    await flushPromises();
+    await findRow(w, '').get('[data-testid="tag-node"]').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-testid="tag-note-item"]').exists()).toBe(true);
+    expect(w.findAll('[data-testid="tag-note-source"]')).toHaveLength(0);
   });
 
   it('点「未分类」用**空串**查询（它是合法选中，不是"没选"）', async () => {
@@ -201,26 +238,25 @@ describe('标签面板：排序与过滤（FR-TAG-04）', () => {
   });
 });
 
-describe('标签面板：include_children 开关必须**如实标注**当前是 no-op（勘误 D-40②）', () => {
+describe('标签面板：include_children 开关（2026-10-17 批次 4 起**真正生效**，勘误 D-40②）', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     hoisted.tree.mockReset().mockResolvedValue(treeFixture());
     hoisted.notes.mockReset().mockResolvedValue([]);
   });
 
-  it('开关保留，并常驻一行说明"祖先登记使该开关无差别（见 D-40②）"', async () => {
+  it('开关在，且说明写的是**生效后的语义**（不再出现 no-op/无差别）', async () => {
     const w = mount(TagPanel);
     await flushPromises();
-    // ① 开关本身在（FR-TAG-03 要求"可切换是否含子级"）
     expect(w.find('[data-testid="tag-include-children"]').exists()).toBe(true);
-    // ② 钩子旁边必须有说明，且写明它是 no-op 及原因（不许假装它生效）
     const hint = w.get('[data-testid="tag-include-children-hint"]').text();
-    expect(hint).toContain('无差别');
-    expect(hint).toContain('祖先');
+    expect(hint).toContain('显式');
+    expect(hint).toContain('子孙');
     expect(hint).toContain('D-40②');
+    expect(hint).not.toContain('无差别');
   });
 
-  it('勾选后**如实**把 true 交给后端（no-op 是后端祖先登记造成的，不是 UI 不传）', async () => {
+  it('勾选后把 true 交给后端并**重查**（该参数在后端生效，必须重新发请求）', async () => {
     const w = mount(TagPanel);
     await flushPromises();
     await findRow(w, '项目').get('[data-testid="tag-node"]').trigger('click');

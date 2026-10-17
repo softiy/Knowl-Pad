@@ -124,8 +124,8 @@ defineExpose({ focusFilter });
       含子级
     </label>
     <p class="kp-tags__hint" data-testid="tag-include-children-hint">
-      ⚠️ 当前祖先登记使该开关**无差别**：层级标签同时登记了自身与全部祖先（MD-TAG-03），
-      于是"只含自身"与"含全部子孙"返回同一批笔记（勘误 D-40②，批次 4 加 source 标记后才生效）。
+      含子级：勾选后连同**全部子孙标签**的笔记一起列出；不勾选则只列**显式写了该标签**的笔记
+      （层级标签的祖先登记不算"写过"—— FR-TAG-03 / 勘误 D-40②，2026-10-17 批次 4 起生效）。
     </p>
 
     <TagNotesList

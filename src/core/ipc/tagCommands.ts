@@ -30,11 +30,21 @@ export interface TagNode {
   children: TagNode[];
 }
 
+/** 标签来源（FR-TAG-10 的「来源可区分」）：`body` = 正文里的 `#标签`，`frontmatter` = frontmatter 的 `tags:`。 */
+export type TagSource = 'body' | 'frontmatter';
+
 /** 某标签下的一篇笔记（FR-TAG-03）。 */
 export interface TaggedNote {
   relPath: string;
   name: string;
   mtimeMs: number;
+  /**
+   * 这一篇在**哪些来源**写了该标签（FR-TAG-10；2026-10-17 批次 4 落地）。
+   *
+   * 固定顺序 `["body"]` / `["frontmatter"]` / `["body", "frontmatter"]`；
+   * 空数组只出现在「未分类」查询（那批笔记本来就没有标签行）。
+   */
+  sources: TagSource[];
 }
 
 /** 标签树（FR-TAG-01/02/13）；含末尾的「未分类」合成节点。 */

@@ -1806,7 +1806,7 @@ interface KpError {
 >    PR-A 实测发现它与 ref_count **重复**，故**删除该字段**（形状随之更新 —— 走"先实现后回写、但必须一致"的流程）。
 > ③ 推论：**"引用数" ≠ "笔记篇数"**。同一篇里写两次算两行；面板若要显示"篇数"应使用 `tag_notes` 的**列表长度**。
 > ④ 「未分类」条目是**例外**：它没有 file_tag 行，`refCount` 是**笔记篇数**（单位不同，由 `unclassified` 标志区分）。
-| `TaggedNote` | `relPath`、`name`、`mtimeMs` | 某标签下的一篇笔记（FR-TAG-03；AC-TAG-03 末句「点击该标签列出全部 3 篇笔记」）。**不含来源标记**：FR-TAG-10 的「来源可在笔记的标签列表中区分标识」子项本轮不做（`file_tag` 无 source 列，加列属 schema 变更）⇒ 顺延**批次 4**（那时 PARSER_VERSION 升 1 必然全量重建，顺带加列最省），见勘误 **D-39** |
+| `TaggedNote` | `relPath`、`name`、`mtimeMs`、`sources` | 某标签下的一篇笔记（FR-TAG-03；AC-TAG-03 末句「点击该标签列出全部 3 篇笔记」）。`sources` 是**该篇在哪些来源写了这个标签**（FR-TAG-10；2026-10-17 批次 4 落地）：取值 `body`（正文 `#标签`）/ `frontmatter`（frontmatter 的 `tags:`），**固定该顺序、去重**（两种来源都写了就是两项）；只有「未分类」查询给空数组（那批笔记本来就没有标签行）。字段为**增量新增**（2026-10-15 的复用口径即预留了这条路），不破坏既有形状；来源列本身见 §3.2.1 的 `file_tag.source` 与勘误 **D-39②**/**D-40②** |
 | `TagSuggestion` | `norm`、`display`、`refCount` | 标签补全候选（§5.3.6 的 `tag_suggest`；唯一消费者是 FR-TAG-06 的编辑器内补全）。**本轮不实现**（编辑器补全基础设施缺失：`mdEditorV3.triggerSuggest()` 现直接抛 `EditorFeaturePendingError`）⇒ 契约条目保留、实现缺位登记在勘误 **D-38**／**D-39** |
 
 > **「未分类」条目的表达（2026-10-15 决策，理由随行）**：FR-TAG-13 要求「无标签的笔记数量在标签面板中可见（「未分类」条目）」，

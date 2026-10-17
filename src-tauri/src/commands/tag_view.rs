@@ -45,6 +45,10 @@ pub struct TaggedNote {
     pub rel_path: String,
     pub name: String,
     pub mtime_ms: i64,
+    /// 该篇在哪些来源写了这个标签（FR-TAG-10）：取值 `body` / `frontmatter`，固定该顺序、去重。
+    ///
+    /// 只有「未分类」查询会是空数组（那批笔记本来就没有 `file_tag` 行）。
+    pub sources: Vec<String>,
 }
 
 impl From<crate::storage::tag_query::TaggedNoteRow> for TaggedNote {
@@ -53,6 +57,7 @@ impl From<crate::storage::tag_query::TaggedNoteRow> for TaggedNote {
             rel_path: r.rel_path,
             name: r.name,
             mtime_ms: r.mtime_ms,
+            sources: r.sources,
         }
     }
 }
