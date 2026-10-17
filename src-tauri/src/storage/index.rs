@@ -10,7 +10,13 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 
 /// 索引库 schema 版本：**任何 DDL 变更都必须递增**（技术方案 §4.6 版本维护纪律）。
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// **2026-10-17（M5 批次 4）：1 → 2** —— `file_tag` 新增 `source` / `explicit` 两列
+/// （FR-TAG-10 的来源可区分 + FR-TAG-03 的 `include_children` 真正生效，见勘误 **D-40②**）。
+/// 旧库因此被判为过期并**整体丢弃重建**（§4.4 的文件级原子切换）；**不做也不该做 ALTER TABLE 增量迁移**：
+/// 索引是纯派生数据（PRD MIG-01），重建即恢复。判据见 `index_tests::file_tag_source_and_explicit_columns_exist`
+/// 与 `commands::tag_tests` 的 `include_children` 矩阵。
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// 解析器版本：**PRD §3.1 的任一 MD-* 解析规则（wikilink / tag / heading / frontmatter / block_id）
 /// 语义一变，就必须递增它** —— 它是 `IndexSignature` 的一部分，递增即让既有索引失效并重建
@@ -34,14 +40,18 @@ pub const PARSER_VERSION: u32 = 1;
 ///   · 只改了注释/格式，规则语义没变 → 更新下面的 `PARSER_SOURCE_HASH`（保持 `PARSER_VERSION` 不变）；
 ///   · 改了任一解析规则的语义 → **两个都要改**：先 +1 `PARSER_VERSION`，再更新 `PARSER_SOURCE_HASH`。
 ///
-/// 当前基准（`cf6b45f7c820e93b`）对应 `PARSER_VERSION = 1`（2026-10-17 升版时的解析器源码）。
+/// 当前基准（`2f53907f33ac6abe`）对应 `PARSER_VERSION = 1`。
+///
+/// 2026-10-17（批次 4）第二次更新指纹的原因是 `Tag` 结构新增 `explicit` / `source` 两个字段
+/// （FR-TAG-03 的 `include_children` 生效 + FR-TAG-10 的来源可区分）：**解析规则（MD-TAG-*）本身没变**，
+/// 变的是"解析结果多了两个标注" ⇒ 解析版本不动，索引失效由同批的 `SCHEMA_VERSION` 1 → 2 承担。
 // 只在 parser_source_guard 用例里消费（生产路径不需要读它；它是"变更检测"的基准）。
 // 不用 #[allow] 就只能靠"假装用一下"，那会让代码说谎 —— 这里按 CODE-10 明确写出理由。
 // 2026-10-17（M5 批次 4）：解析器新增**协作式中止**（`parse_with_guard` + 检查点，SEC-03 / DEBT-32）。
 // 它**不改解析规则语义**（无预算路径 `parse()` 逐字段与改动前相同，用例 `parse_without_guard_is_unchanged` 钉住）；
 // 同一批次把 `PARSER_VERSION` 由 0 提到 1（盖住审计 M9 的缺口），故本基准与版本号 1 配对。
 #[allow(dead_code)]
-pub const PARSER_SOURCE_HASH: &str = "cf6b45f7c820e93b";
+pub const PARSER_SOURCE_HASH: &str = "2f53907f33ac6abe";
 /// 与 `PARSER_SOURCE_HASH` **配对冻结**的版本号。
 ///
 /// 必须是**字面量**、不能写 `= PARSER_VERSION` —— 那样"版本是否变过"的条件会恒假，

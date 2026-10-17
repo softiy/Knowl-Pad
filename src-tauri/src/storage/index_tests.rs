@@ -197,6 +197,45 @@ fn signature_digest_is_deterministic_and_sensitive() {
     assert!(base.diff_reason(&bumped).contains("schema_version"));
 }
 
+/// **file_tag.source / explicit 两列的 DDL 判据**（2026-10-17 批次 4；SCHEMA_VERSION 1 → 2 的原因）。
+///
+/// 用 PRAGMA table_info 而不是「插一行看看」：前者直接钉住列名与 NOT NULL，后者会随写入路径演进
+/// 悄悄变成「只要写进去就算过」。两列的业务判据在 commands::tag_tests（矩阵与 source 数据面）。
+#[test]
+fn file_tag_source_and_explicit_columns_exist() {
+    let dir = temp_vault();
+    let pool = open(dir.path()).expect("打开应成功");
+    pool.with_reader(|conn| {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(file_tag)")
+            .map_err(map_err)?;
+        let cols: Vec<(String, String, i64)> = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(map_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_err)?;
+        let find = |name: &str| cols.iter().find(|c| c.0 == name).cloned();
+        let source = find("source").expect("file_tag.source 必须存在");
+        assert_eq!(source.1.to_uppercase(), "TEXT", "source 应为 TEXT");
+        assert_eq!(source.2, 1, "source 必须 NOT NULL");
+        let explicit = find("explicit").expect("file_tag.explicit 必须存在");
+        assert_eq!(
+            explicit.1.to_uppercase(),
+            "INTEGER",
+            "explicit 应为 INTEGER"
+        );
+        assert_eq!(explicit.2, 1, "explicit 必须 NOT NULL");
+        Ok(())
+    })
+    .expect("列判据");
+}
+
 #[test]
 fn index_db_and_global_db_schemas_are_independent() {
     // 索引库不得使用全局库的迁移表（两者策略不同：丢弃重建 vs 版本化迁移）
@@ -262,8 +301,11 @@ fn index_built_by_older_parser_version_is_rebuilt() {
         pool.with_writer(move |conn| write_meta(conn, &old))
             .expect("写入旧版签名应成功");
     }
-    assert!(PARSER_VERSION > 0, "本用例的前提是版本已提到 1");
-    let outcome = ensure_index_db(&db, &IndexSignature::current(root)).expect("判定应成功");
+    // 前提断言走**运行期**取到的当前签名：直接写 `assert!(PARSER_VERSION > 0)` 会被 clippy 判为
+    // "常量断言会被优化掉"（assertions_on_constants），而这里要的正是"当前实现确实已升版"。
+    let current = IndexSignature::current(root);
+    assert!(current.parser_version > 0, "本用例的前提是版本已提到 1");
+    let outcome = ensure_index_db(&db, &current).expect("判定应成功");
     match outcome {
         RebuildOutcome::Rebuilt { reason } => assert!(
             reason.contains("parser_version"),

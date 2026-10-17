@@ -148,8 +148,15 @@ fn insert_tags(
             let mut stmt = conn
                 .prepare_cached(index_sql::FILE_TAG_INSERT_SQL)
                 .map_err(|e| AppError::db_with("准备文件标签关联", &e))?;
-            stmt.execute(params![file_id, tag_id, t.line, t.col as i64])
-                .map_err(|e| AppError::db_with("写入文件标签关联", &e))?;
+            stmt.execute(params![
+                file_id,
+                tag_id,
+                t.line,
+                t.col as i64,
+                t.source.as_str(),
+                if t.explicit { 1 } else { 0 }
+            ])
+            .map_err(|e| AppError::db_with("写入文件标签关联", &e))?;
         }
         stop(t_filetag, Phase::TagFileTag);
     }

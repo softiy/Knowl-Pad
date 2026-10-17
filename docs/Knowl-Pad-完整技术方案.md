@@ -1400,6 +1400,11 @@ pub struct IndexSignature {
 > （「解析规则变了索引却不失效」）。升版的机制就是上面这张表：版本号是 `IndexSignature` 的一部分，因此
 > **任何 `parser_version` 与当前值不等的索引库**在打开时就会被 `ensure_index_db` 判为过期（`Inspect::Stale`）
 > 并**整体丢弃重建**（§4.4 的文件级原子切换；索引是派生数据，重建即恢复，不需要也不应该做 ALTER TABLE 增量迁移）。
+> **`SCHEMA_VERSION` 的当前值（2026-10-17，M5 批次 4）：`2`。** 批次 4 给 `file_tag` 增加了 `source` / `explicit` 两列
+> （FR-TAG-10 的来源可区分 + FR-TAG-03 的 `include_children` 生效），属 DDL 变更 ⇒ 按上表递增到 2。
+> 与 `parser_version` 同理：旧库（`schema_version = 1`）在打开时被判为过期并**整体丢弃重建**，不做 ALTER TABLE。
+> 判据：`storage/index_tests.rs` 的 `file_tag_source_and_explicit_columns_exist`。
+
 > 判据：`storage/index_tests.rs` 的 `index_built_by_older_parser_version_is_rebuilt`（构造 `parser_version = 0` 的**真实签名**，
 > 断言被判为 `Rebuilt` 且原因点名 `parser_version`）＋ `parser_source_guard`（源码指纹变了而版本没变 ⇒ 直接红）。
 

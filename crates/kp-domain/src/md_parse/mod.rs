@@ -24,7 +24,7 @@ pub use block_id::BlockId;
 pub use code_fence::CodeRanges;
 pub use frontmatter::Frontmatter;
 pub use heading::Heading;
-pub use tag::Tag;
+pub use tag::{Tag, TagSource};
 pub use wikilink::{Link, LinkKind};
 
 /// 换行风格（NFR-PLAT-05：解析不得改写用户换行）。

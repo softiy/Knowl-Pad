@@ -24,6 +24,33 @@ pub struct Tag {
     pub col: u32,
     /// 是否最末级（MD-TAG-03）
     pub is_leaf: bool,
+    /// 是否是**用户显式写出**的标签：`false` = MD-TAG-03 为层级展开补出来的祖先。
+    ///
+    /// 为什么要它（FR-TAG-03「可切换是否含子级」，2026-10-17 批次 4 落地）：MD-TAG-03 要求层级标签
+    /// **同时登记自身与全部祖先**，于是"写了 `#项目/alpha`"与"写了 `#项目`"在 `file_tag` 里都有一行 `项目` ——
+    /// 没有这个标记就**无法区分**"自身关联"与"祖先登记"，`include_children` 因此曾是 no-op（勘误 D-40②）。
+    pub explicit: bool,
+    /// 来源（FR-TAG-10：正文 / frontmatter 可在笔记的标签列表中区分标识）。
+    pub source: TagSource,
+}
+
+/// 标签来源（FR-TAG-10）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagSource {
+    /// 正文里的 `#标签`（MD-TAG-01~05）
+    Body,
+    /// frontmatter `tags:` 里的标签（MD-TAG-06）
+    Frontmatter,
+}
+
+impl TagSource {
+    /// 落库用的取值（与索引库 `file_tag.source` 一一对应）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TagSource::Body => "body",
+            TagSource::Frontmatter => "frontmatter",
+        }
+    }
 }
 
 /// 标签允许的字符（MD-TAG-01）。
@@ -48,8 +75,11 @@ fn clean(raw: &str) -> String {
         .join("/")
 }
 
-/// 展开层级（MD-TAG-03）：`a/b/c` → [a/b/c(leaf), a/b, a]。
-fn expand(name: &str, line: i64, col: u32, out: &mut Vec<Tag>) {
+/// 展开层级（MD-TAG-03）：`a/b/c` → [a/b/c(最末级), a/b, a]。
+///
+/// `explicit` 只有**最末级**（= 用户真正写出来的那个）为 true，祖先一律 false ——
+/// 这就是 FR-TAG-03 的 `include_children = false` 用来区分"自身写过"与"因祖先登记而出现"的依据。
+fn expand(name: &str, line: i64, col: u32, source: TagSource, out: &mut Vec<Tag>) {
     let parts: Vec<&str> = name.split('/').collect();
     for i in (1..=parts.len()).rev() {
         let joined = parts[..i].join("/");
@@ -59,6 +89,8 @@ fn expand(name: &str, line: i64, col: u32, out: &mut Vec<Tag>) {
             line,
             col,
             is_leaf: i == parts.len(),
+            explicit: i == parts.len(),
+            source,
         });
     }
 }
@@ -124,7 +156,7 @@ pub fn extract(text: &str, code: &CodeRanges, skip: Option<Range<usize>>) -> Vec
                 continue;
             }
             let col = trimmed[..*byte_in_line].chars().count() as u32 + 1;
-            expand(&name, line_idx as i64 + 1, col, &mut out);
+            expand(&name, line_idx as i64 + 1, col, TagSource::Body, &mut out);
         }
     }
     out
@@ -138,7 +170,7 @@ pub fn from_frontmatter(values: &[String]) -> Vec<Tag> {
         if name.is_empty() || name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
             continue;
         }
-        expand(&name, -1, 0, &mut out);
+        expand(&name, -1, 0, TagSource::Frontmatter, &mut out);
     }
     out
 }

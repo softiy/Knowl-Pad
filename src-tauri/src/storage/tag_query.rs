@@ -58,7 +58,11 @@ pub fn unclassified_count(pool: &DbPool) -> Result<i64, AppError> {
 /// 某标签下的笔记（FR-TAG-03）。
 ///
 /// - `tag_norm` 为空串 ⇒ **「未分类」查询**（列出无任何标签的笔记），与 `TagNode.unclassified` 一一对应；
-/// - `include_children = true` ⇒ 含**全部子孙**（前缀匹配 `norm = ?1 OR norm LIKE ?1 || '/%'`）；
+/// - `include_children = false` ⇒ **只含显式写了该标签的笔记**（`file_tag.explicit = 1`）：
+///   MD-TAG-03 的祖先登记会给"写了 `#项目/alpha`"的笔记也写一行 `项目`，但那行 `explicit = 0`，
+///   并不表示用户把这篇归到了 `项目`。**2026-10-17（批次 4）起该开关真正生效**，此前是 no-op（勘误 **D-40②**）；
+/// - `include_children = true` ⇒ 含**全部子孙**（前缀匹配 `norm = ?1 OR norm LIKE ?1 || '/%'`；
+///   祖先登记让子孙行自然落入，语义与生效前一致）；
 /// - 同一篇里同一标签出现多次只算**一篇**（`GROUP BY f.id`；AC-TAG-03「点击该标签列出全部 3 篇笔记」）。
 pub fn notes_of_tag(
     pool: &DbPool,
@@ -86,7 +90,7 @@ pub fn notes_of_tag(
     } else {
         "SELECT f.rel_path, f.name, f.mtime_ms FROM file_tag ft \
          JOIN file f ON f.id = ft.file_id JOIN tag t ON t.id = ft.tag_id \
-         WHERE f.deleted = 0 AND f.kind = 'note' AND t.norm = ?1 \
+         WHERE f.deleted = 0 AND f.kind = 'note' AND t.norm = ?1 AND ft.explicit = 1 \
          GROUP BY f.id ORDER BY f.rel_path"
     };
     pool.with_reader(|conn| {
