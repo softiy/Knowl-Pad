@@ -4,7 +4,9 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::index_engine::{full_index, full_index_with_timeout, scan_vault, IndexMode};
+use crate::index_engine::{
+    full_index, full_index_cancellable, full_index_with_timeout, scan_vault, IndexMode,
+};
 use crate::index_scan::MAX_NOTE_BYTES;
 use crate::storage::index::open;
 use crate::storage::pool::DbPool;
@@ -181,6 +183,124 @@ fn timed_out_file_is_skipped_without_partial_rows() {
         counts(&pool2),
         vec![1, 0, 0, 0, 0, 0, 0],
         "超时后不得留下任何派生行（file / note_fts / heading / block_id / link / tag / file_tag）"
+    );
+}
+
+/// 按 `norm` 统计 `file_tag` 行数（判据用：内容变了 ⇒ 旧标签行必须消失、新标签行必须出现）。
+fn tag_rows(pool: &DbPool, norm: &str) -> i64 {
+    pool.with_reader(|conn| {
+        conn.query_row(
+            "SELECT count(*) FROM file_tag ft JOIN tag t ON t.id = ft.tag_id WHERE t.norm = ?1",
+            [norm],
+            |r| r.get(0),
+        )
+        .map_err(|e| kp_domain::error::AppError::db_with("统计标签行", &e))
+    })
+    .expect("统计标签行")
+}
+
+/// **DEBT-35 的回归（反例）**：内容变了，但 **mtime 与大小都没变** ⇒ 必须重新索引。
+///
+/// 构造方式（让下一个人能复现）：等长的两段文本（用例自己断言 `len` 相等），改写内容后用
+/// `std::fs::File::set_modified` 把 mtime **改回原值**（零新依赖；`set_modified` 自 Rust 1.75 稳定）。
+/// 这正是 DEBT-35 描述的"脚本按固定时间戳批量改写 / 等长替换"场景。
+#[test]
+fn content_change_with_same_mtime_and_size_is_reindexed() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path();
+    let old = "#旧标签 甲\n";
+    let new = "#新标签 乙\n";
+    assert_eq!(
+        old.len(),
+        new.len(),
+        "构造要求：等长替换（否则测的是 size 变化）"
+    );
+    write_note(root, "a.md", old);
+    let pool = open(root).expect("建索引库");
+    full_index(&pool, root, |_, _| {}).expect("首次索引");
+    assert_eq!(tag_rows(&pool, "旧标签"), 1, "旧内容应先被索引");
+
+    let path = root.join("a.md");
+    let stamp = std::fs::metadata(&path)
+        .expect("元信息")
+        .modified()
+        .expect("mtime");
+    std::fs::write(&path, new).expect("改写内容");
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .expect("打开文件")
+        .set_modified(stamp)
+        .expect("回写 mtime");
+    let meta = std::fs::metadata(&path).expect("元信息");
+    assert_eq!(meta.len(), old.len() as u64, "构造前提：大小未变");
+    assert_eq!(
+        meta.modified().expect("mtime"),
+        stamp,
+        "构造前提：mtime 未变"
+    );
+
+    let outcome =
+        full_index_cancellable(&pool, root, |_, _| {}, IndexMode::SkipUnchanged, || false)
+            .expect("增量索引");
+    assert_eq!(
+        outcome.indexed, 1,
+        "内容变了就必须重索引 —— 哪怕 mtime 与大小都没变（DEBT-35 的缺口正是这里）"
+    );
+    assert_eq!(tag_rows(&pool, "新标签"), 1, "新内容必须已进索引");
+    assert_eq!(tag_rows(&pool, "旧标签"), 0, "旧内容的行必须被替换掉");
+}
+
+/// **DEBT-35 的回归（正例）**：三者都没变 ⇒ 仍然跳过（别把优化改没了）。
+#[test]
+fn second_pass_skips_everything_unchanged() {
+    let dir = setup_vault();
+    let pool = open(dir.path()).expect("建索引库");
+    let first = full_index(&pool, dir.path(), |_, _| {}).expect("首次索引");
+    assert_eq!(first.indexed, 5, "四篇笔记 + 一个附件");
+    let second = full_index_cancellable(
+        &pool,
+        dir.path(),
+        |_, _| {},
+        IndexMode::SkipUnchanged,
+        || false,
+    )
+    .expect("增量索引");
+    assert_eq!(
+        second.indexed, 0,
+        "mtime / 大小 / 指纹都没变 ⇒ 一个都不该重写"
+    );
+}
+
+/// **刻意的边界（不是遗漏）**：附件仍只比 `mtime + 大小`。
+///
+/// 依据：只有**笔记的内容**会进索引（附件只登记元信息），而指纹只能读盘才算得出来 ——
+/// 让附件也比指纹，等于每次增量都把整个 Vault 的二进制读一遍，却换不来任何正确性。
+#[test]
+fn attachment_skip_still_uses_mtime_and_size_only() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path();
+    write_note(root, "x.txt", "AAAA");
+    let pool = open(root).expect("建索引库");
+    full_index(&pool, root, |_, _| {}).expect("首次索引");
+    let path = root.join("x.txt");
+    let stamp = std::fs::metadata(&path)
+        .expect("元信息")
+        .modified()
+        .expect("mtime");
+    std::fs::write(&path, "BBBB").expect("等长改写");
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .expect("打开文件")
+        .set_modified(stamp)
+        .expect("回写 mtime");
+    let outcome =
+        full_index_cancellable(&pool, root, |_, _| {}, IndexMode::SkipUnchanged, || false)
+            .expect("增量索引");
+    assert_eq!(
+        outcome.indexed, 0,
+        "附件按 mtime + 大小跳过（它的内容不进索引）"
     );
 }
 

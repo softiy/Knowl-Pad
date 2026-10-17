@@ -58,10 +58,12 @@ pub struct IndexOutcome {
     pub duration_ms: u64,
 }
 
-/// 跳过策略：Force 一律重建；SkipUnchanged 时 mtime 与大小都未变的文件直接跳过。
+/// 跳过策略：Force 一律重建；SkipUnchanged 时"**未变**"的文件跳过。
 ///
-/// 说明：mtime + size 相同但内容被改的情况检测不到；此前注释写"待 PR-5 补"**已过期**（PR-5 只交付了增量索引本身），现登记为 DEBT-35。
-/// 因此 index_rebuild(force = true) 始终提供一条可靠的全量路径。
+/// **「未变」= `mtime` + 大小 + 内容指纹三者都相同**（DEBT-35，2026-10-17 批次 4 起；此前只看前两者，
+/// 于是"内容变了但 mtime 与大小都没变"（脚本按固定时间戳改写、等长替换）会被漏掉，索引静默停在旧解析结果上）。
+/// 代价是**未变的笔记也要读一遍盘**才能算指纹 —— 省下的是解析 / 分词 / 写库，不是读盘；这条边界见 `is_unchanged`。
+/// 此外 index_rebuild(force = true) 始终提供一条不看任何判据的可靠全量路径。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexMode {
     Force,
@@ -93,18 +95,6 @@ pub(crate) fn index_file_mode_with_timeout(
     mode: IndexMode,
     parse_timeout: Duration,
 ) -> Result<FileOutcome, AppError> {
-    if mode == IndexMode::SkipUnchanged {
-        let unchanged: Option<i64> = conn
-            .query_row(
-                "SELECT 1 FROM file WHERE rel_path = ?1 AND deleted = 0 AND mtime_ms = ?2 AND size_bytes = ?3",
-                params![entry.rel_path, entry.mtime_ms, entry.size_bytes as i64],
-                |r| r.get(0),
-            )
-            .ok();
-        if unchanged.is_some() {
-            return Ok(FileOutcome::Skipped);
-        }
-    }
     use crate::index_profile::{start, stop, Phase};
     crate::index_profile::count_file();
     let abs = root.join(&entry.rel_path);
@@ -113,6 +103,14 @@ pub(crate) fn index_file_mode_with_timeout(
     let t = start();
     let bytes = std::fs::read(&abs).map_err(AppError::from)?;
     stop(t, Phase::Read);
+    let t = start();
+    let fingerprint = content_fingerprint(&bytes);
+    stop(t, Phase::Fingerprint);
+    // DEBT-35：判定必须在**读到内容之后**做 —— 指纹只能从内容算出来。
+    // 笔记比指纹（它的内容会进索引）；附件只比 mtime + 大小（内容不进索引，读它纯属浪费）。
+    if mode == IndexMode::SkipUnchanged && is_unchanged(conn, entry, &fingerprint, is_note)? {
+        return Ok(FileOutcome::Skipped);
+    }
     let note = if is_note {
         let t = start();
         let parsed = match parse_with_timeout(&bytes, parse_timeout) {
@@ -142,9 +140,6 @@ pub(crate) fn index_file_mode_with_timeout(
     } else {
         String::new()
     };
-    let t = start();
-    let fingerprint = content_fingerprint(&bytes);
-    stop(t, Phase::Fingerprint);
     let now = mtime_ms(&abs).max(1);
 
     delete_old_rows(conn, &entry.rel_path)?;
@@ -167,6 +162,43 @@ pub(crate) fn index_file_mode_with_timeout(
     insert_note_derived(conn, file_id, note)?;
     stop(t, Phase::Derived);
     Ok(FileOutcome::Indexed)
+}
+
+/// 「未变」判定（**DEBT-35**，2026-10-17 批次 4）：`mtime` + 大小 + **内容指纹**三者都相同才算未变。
+///
+/// 为什么必须比指纹：只看 `mtime + size` 时，"脚本按固定时间戳改写 / 等长替换"这类改动会被判成未变，
+/// 索引于是静默停在旧解析结果上（搜索、反链、标签都指向旧内容，界面上却一切正常）。
+///
+/// **为什么 `check_hash` 是可选的（笔记比、附件不比）**：指纹只能从**内容**算出来，所以比指纹就意味着读盘
+/// —— 而只有笔记的内容会进索引（附件只登记元信息）。让附件也比指纹，等于每次增量都把整个 Vault 的
+/// 二进制读一遍，却换不来任何正确性。这条边界是刻意的，不是遗漏（用例 `attachment_skip_still_uses_mtime_and_size`
+/// 把它钉住）。
+fn is_unchanged(
+    conn: &Connection,
+    entry: &ScanEntry,
+    fingerprint: &str,
+    check_hash: bool,
+) -> Result<bool, AppError> {
+    use rusqlite::OptionalExtension;
+    let stored: Option<(i64, i64, Option<String>)> = conn
+        .query_row(
+            "SELECT mtime_ms, size_bytes, content_hash FROM file WHERE rel_path = ?1 AND deleted = 0",
+            params![entry.rel_path],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| AppError::db_with("读取未变判定", &e))?;
+    let Some((mtime_ms, size_bytes, content_hash)) = stored else {
+        return Ok(false);
+    };
+    if mtime_ms != entry.mtime_ms || size_bytes != entry.size_bytes as i64 {
+        return Ok(false);
+    }
+    if !check_hash {
+        return Ok(true);
+    }
+    // 旧库（本列加入之前写的行）可能是 NULL —— NULL ≠ 指纹，照"未变"处理会让 DEBT-35 的缺口复活。
+    Ok(content_hash.as_deref() == Some(fingerprint))
 }
 
 /// 删掉该路径的旧行（先 `note_fts` 再 `file`）。
