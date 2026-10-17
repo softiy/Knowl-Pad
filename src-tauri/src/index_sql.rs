@@ -45,8 +45,13 @@ pub const TAG_UPSERT_SQL: &str =
 /// 取 tag id。
 pub const TAG_SELECT_ID_SQL: &str = "SELECT id FROM tag WHERE norm = ?1";
 /// 写 file_tag 行。
+///
+/// `source` / `explicit` 是 2026-10-17（M5 批次 4）新增的两列（PRD §5.3.6.1、勘误 **D-40②**）：
+/// - `source` 供 **FR-TAG-10** 的「来源可区分」（`body` = 正文标签，`frontmatter` = frontmatter 的 `tags:`）；
+/// - `explicit` = 1 表示这行是**用户显式写出**的标签，0 表示它是 MD-TAG-03 为层级展开补出来的祖先 ——
+///   FR-TAG-03 的 `include_children = false` 只取 explicit = 1 的行（此前两列不存在，该开关是 no-op）。
 pub const FILE_TAG_INSERT_SQL: &str =
-    "INSERT INTO file_tag (file_id, tag_id, line, col) VALUES (?1, ?2, ?3, ?4)";
+    "INSERT INTO file_tag (file_id, tag_id, line, col, source, explicit) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
 /// 写 file_alias 行。
 pub const ALIAS_INSERT_SQL: &str =
     "INSERT OR IGNORE INTO file_alias (file_id, alias) VALUES (?1, ?2)";

@@ -77,7 +77,12 @@ CREATE TABLE IF NOT EXISTS file_tag (
     file_id      INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE,
     tag_id       INTEGER NOT NULL REFERENCES tag(id)  ON DELETE CASCADE,
     line         INTEGER NOT NULL,
-    col          INTEGER NOT NULL DEFAULT 0
+    col          INTEGER NOT NULL DEFAULT 0,
+    -- 来源（FR-TAG-10）：body = 正文里的 #标签；frontmatter = frontmatter 的 tags:
+    source       TEXT    NOT NULL DEFAULT 'body',
+    -- 是否用户显式写出：0 = MD-TAG-03 为层级展开补的祖先行。
+    -- FR-TAG-03 的 include_children 靠它区分「自身写过」与「因祖先登记而出现」（勘误 D-40②）。
+    explicit     INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_filetag_file ON file_tag(file_id);
 CREATE INDEX IF NOT EXISTS idx_filetag_tag  ON file_tag(tag_id);

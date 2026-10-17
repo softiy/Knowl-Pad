@@ -249,25 +249,101 @@ fn fr_tag_13_unclassified_entry_is_visible_and_last() {
     assert_eq!(notes(&state, "有标签", false), vec!["tagged.md"]);
 }
 
-/// **FR-TAG-03 的"可切换是否含子级"在当前索引设计下是 no-op**（已上报待裁定）：
-/// MD-TAG-03 要求"层级标签**同时**登记自身与全部祖先"，因此写了 `#项目/alpha/前端` 的笔记
-/// 在 file_tag 里**也有** `项目` 一行 ⇒ "只含自身"与"含全部子孙"返回**同一批**笔记。
-/// 本用例**如实钉住这个事实**，作为裁定"要不要加 explicit 列（批次 4 与 source 列一起）"的证据。
+/// **FR-TAG-03 的「可切换是否含子级」自 2026-10-17（批次 4）起真正生效**（勘误 **D-40②** 的落地判据）。
+///
+/// 口径（PRD §5.3.6.2 同步更新）：`file_tag.explicit` 区分两种行 ——
+/// ① **显式行**（`explicit = 1`）：用户真的写了这个标签；② **祖先行**（`explicit = 0`）：MD-TAG-03 为层级展开补的。
+/// - `include_children = false` ⇒ 只要 ①：**显式写了该标签**的笔记；
+/// - `include_children = true`  ⇒ ① + 该标签**全部子孙**的笔记（祖先登记让子孙行自然落入，语义与生效前一致）。
+///
+/// 矩阵刻意覆盖三种笔记：**只写父标签** / **写子标签（父行是祖先登记）** / **父子都写** —— 缺任一种，
+/// 这个开关"看起来生效"与"真的生效"就区分不开。
 #[test]
-fn include_children_switch_is_currently_a_no_op_for_ancestors() {
+fn include_children_switch_distinguishes_explicit_from_ancestors() {
     let (_v, state) = fixture(&[
-        ("a.md", "#项目/alpha/前端 甲\n"),
-        ("b.md", "#项目/beta 乙\n"),
+        ("parent_only.md", "#项目 只写父\n"),
+        ("child_only.md", "#项目/alpha 只写子\n"),
+        ("both.md", "#项目 父子都写\n#项目/alpha 父子都写\n"),
+        ("grandchild.md", "#项目/alpha/前端 写孙\n"),
     ]);
-    let exact = notes(&state, "项目", false);
-    let with_children = notes(&state, "项目", true);
+
+    // 父标签「项目」：只含自身 = 显式写过 #项目 的两篇（父子都写 + 只写父）
     assert_eq!(
-        exact, with_children,
-        "MD-TAG-03 的祖先登记让两者相同（不是实现写错，而是『自身 vs 子孙』在 file_tag 里不可区分）"
+        notes(&state, "项目", false),
+        vec!["both.md", "parent_only.md"],
+        "include_children=false ⇒ 只列【显式写了 #项目】的笔记（child_only 的 项目 行是祖先登记，不算）"
     );
-    assert_eq!(exact, vec!["a.md", "b.md"], "两篇都被『项目』这一行命中");
-    assert_eq!(notes(&state, "项目/alpha/前端", false), vec!["a.md"]);
-    assert_eq!(notes(&state, "项目/alpha/前端", true), vec!["a.md"]);
+    // 含全部子孙 = 四篇都算（child_only / grandchild 通过子孙标签落入）
+    assert_eq!(
+        notes(&state, "项目", true),
+        vec![
+            "both.md",
+            "child_only.md",
+            "grandchild.md",
+            "parent_only.md"
+        ],
+        "include_children=true ⇒ 自身 + 全部子孙（与生效前的语义一致）"
+    );
+
+    // 中间层「项目/alpha」：显式写过它的两篇 vs 再加孙辈那篇
+    assert_eq!(
+        notes(&state, "项目/alpha", false),
+        vec!["both.md", "child_only.md"]
+    );
+    assert_eq!(
+        notes(&state, "项目/alpha", true),
+        vec!["both.md", "child_only.md", "grandchild.md"]
+    );
+
+    // 叶子：两种取值相同（没有子孙可含）
+    assert_eq!(
+        notes(&state, "项目/alpha/前端", false),
+        vec!["grandchild.md"]
+    );
+    assert_eq!(
+        notes(&state, "项目/alpha/前端", true),
+        vec!["grandchild.md"]
+    );
+}
+
+/// **`file_tag.source` / `explicit` 的数据面判据**（批次 4 的 schema 变更）：
+/// 正文标签写 `body`、frontmatter 标签写 `frontmatter`；只有**最末级**那一行 `explicit = 1`。
+#[test]
+fn file_tag_rows_carry_source_and_explicit() {
+    let (_v, state) = fixture(&[
+        ("fm.md", "---\ntags: [项目/甲]\n---\n正文无标签\n"),
+        ("body.md", "#项目/乙 正文\n"),
+    ]);
+    let pool = state.index_db().expect("索引库");
+    // 连标签名一起取出来：只比 (路径, 来源, explicit) 的话，同一篇的两行谁是祖先行要靠顺序去猜。
+    let rows: Vec<(String, String, String, i64)> = pool
+        .with_reader(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT f.rel_path, t.norm, ft.source, ft.explicit FROM file_tag ft \
+                     JOIN file f ON f.id = ft.file_id JOIN tag t ON t.id = ft.tag_id \
+                     WHERE t.norm IN ('项目', '项目/甲', '项目/乙') ORDER BY f.rel_path, t.norm",
+                )
+                .map_err(|e| kp_domain::error::AppError::db_with("准备读 file_tag", &e))?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                .map_err(|e| kp_domain::error::AppError::db_with("读 file_tag", &e))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| kp_domain::error::AppError::db_with("收 file_tag", &e))
+        })
+        .expect("查询 file_tag");
+    let owned =
+        |p: &str, n: &str, s: &str, e: i64| (p.to_string(), n.to_string(), s.to_string(), e);
+    assert_eq!(
+        rows,
+        vec![
+            owned("body.md", "项目", "body", 0),
+            owned("body.md", "项目/乙", "body", 1),
+            owned("fm.md", "项目", "frontmatter", 0),
+            owned("fm.md", "项目/甲", "frontmatter", 1),
+        ],
+        "祖先行的 explicit=0、显式行=1；source 区分 body/frontmatter（`项目` 两行都是祖先登记）"
+    );
 }
 
 /// 边界：不存在的标签 ⇒ 空列表（不是报错）；未分类查询在"每篇都有标签"时 ⇒ 空列表。
