@@ -237,6 +237,48 @@ fn fresh_index_is_built_in_separate_file_then_switched() {
     assert!(!old_path(dir.path()).exists(), "首次建库不应产生 .old");
 }
 
+/// **审计 M9 的判据 + `PARSER_VERSION` 升版的验收（2026-10-17 M5 批次 4）**：
+/// 由**旧解析器版本（0）**建出来的索引库，必须在**打开时**被判为过期并全量重建 —— 这正是升版的目的：
+/// 解析规则变了而索引不失效，会让链接/标签数据与实际文件内容不一致，而界面上一切正常。
+///
+/// 构造方式刻意用**真实签名**（只把 `parser_version` 换成 0），而不是往 meta 里写乱码：
+/// 前者检验"版本比较"这条通路，后者只会走"读到坏数据就重建"的兜底通路（`stale_signature_rebuilds_and_reports_reason` 已覆盖）。
+#[test]
+fn index_built_by_older_parser_version_is_rebuilt() {
+    let dir = temp_vault();
+    let db = dir.path().join(".knowlpad/index.db");
+    let root = dir.path();
+    {
+        let pool = open(root).expect("首次打开应成功");
+        insert_file(&pool, "old.md");
+        // 旧版签名：除 parser_version 外与 current 完全相同（0 = 升版前的值）
+        let old = IndexSignature::from_parts(
+            SCHEMA_VERSION,
+            0,
+            TOKENIZER_VERSION,
+            TOKENIZER_DICT_HASH,
+            &root.to_string_lossy(),
+        );
+        pool.with_writer(move |conn| write_meta(conn, &old))
+            .expect("写入旧版签名应成功");
+    }
+    assert!(PARSER_VERSION > 0, "本用例的前提是版本已提到 1");
+    let outcome = ensure_index_db(&db, &IndexSignature::current(root)).expect("判定应成功");
+    match outcome {
+        RebuildOutcome::Rebuilt { reason } => assert!(
+            reason.contains("parser_version"),
+            "重建原因必须点名 parser_version：{reason}"
+        ),
+        other => panic!("旧解析器版本的索引必须被判为过期并重建，实得 {other:?}"),
+    }
+    let pool = open(root).expect("重建后打开应成功");
+    assert_eq!(
+        count_files(&pool),
+        0,
+        "重建必须丢弃旧索引（索引是派生数据）"
+    );
+}
+
 #[test]
 fn matching_signature_leaves_index_untouched() {
     let dir = temp_vault();
