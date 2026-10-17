@@ -3,10 +3,32 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { asKpError } from '@core/ipc/errors';
 import { noteRead, noteWrite } from '@core/ipc/commands';
+import { clampAutosaveDelay, persistAutosaveDelay, readAutosaveDelay } from './editor_settings';
+
+// 常量与键名在 `editor_settings.ts`（设置 I/O 与编辑状态机分开，见那里的模块注释）；
+// 这里再导出，保证既有引用（`@features/editor` 的 index）不用改。
+export {
+  AUTOSAVE_DEFAULT_MS,
+  AUTOSAVE_MIN_MS,
+  AUTOSAVE_MAX_MS,
+  PREF_AUTOSAVE_DELAY_MS,
+} from './editor_settings';
 import type { DiffLine } from '@core/utils/diff';
 
 export type EditorMode = 'edit' | 'split' | 'read';
 export type ConflictChoice = 'loadExternal' | 'keepMine' | 'viewDiff';
+
+/**
+ * 待定位行（FR-LINK-13）：点击反链/搜索结果后由 store 记下，视图侧消费一次。
+ *
+ * 之所以放在 store（而不是组件里）：**打开笔记是异步的**，组件可能还没挂上，定位请求不能丢。
+ */
+export interface RevealRequest {
+  relPath: string;
+  line: number;
+  /** 行内区间（相对该行文本）；只有"跳到命中处"才带（FR-SEARCH-07）。 */
+  range?: { start: number; end: number };
+}
 
 export interface EditorBuffer {
   relPath: string;
@@ -35,9 +57,7 @@ export interface EditorBuffer {
  */
 export const MTIME_UNKNOWN = -1;
 
-export const AUTOSAVE_DEFAULT_MS = 1000;
-export const AUTOSAVE_MIN_MS = 500;
-export const AUTOSAVE_MAX_MS = 5000;
+import { AUTOSAVE_DEFAULT_MS } from './editor_settings';
 
 function toBuffer(relPath: string, content: string, mtimeMs: number): EditorBuffer {
   return {
@@ -64,16 +84,7 @@ export const useEditorStore = defineStore('editor', () => {
   const activeRelPath = ref<string | null>(null);
 /** 打开笔记失败时的可见原因（审计 F1：此前 rejection 被调用方 void 掉，界面毫无反应）。 */
 const openError = ref<string | null>(null);
-/**
- * 待定位行（FR-LINK-13）：点击反链后由 store 记下，视图侧消费一次。
- * 之所以放在 store：**打开笔记是异步的**，组件可能还没挂上，定位请求不能丢。
- */
-const pendingReveal = ref<{
-  relPath: string;
-  line: number;
-  /** 行内区间（相对该行文本）；只有"跳到命中处"才带（FR-SEARCH-07）。 */
-  range?: { start: number; end: number };
-} | null>(null);
+const pendingReveal = ref<RevealRequest | null>(null);
   const mode = ref<EditorMode>('edit');
   const autosaveDelayMs = ref(AUTOSAVE_DEFAULT_MS);
   /** 每个缓冲区的自动保存定时器（关闭/卸载时必须清掉，ED-01 的同源约束） */
@@ -273,9 +284,23 @@ const pendingReveal = ref<{
     return relPaths.filter((relPath) => isDirty(relPath));
   }
 
-  /** 自动保存防抖时长（FR-EDITOR-30：0.5–5s，越界即夹取）。 */
+  /** 自动保存防抖时长（FR-EDITOR-30：0.5–5s 夹取）；立刻生效并**持久化**（DEBT-30）。 */
   function setAutosaveDelay(ms: number): void {
-    autosaveDelayMs.value = Math.min(AUTOSAVE_MAX_MS, Math.max(AUTOSAVE_MIN_MS, Math.round(ms)));
+    const clamped = clampAutosaveDelay(ms);
+    autosaveDelayMs.value = clamped;
+    persistAutosaveDelay(clamped);
+  }
+
+  /**
+   * 从全局偏好恢复自动保存防抖时长（DEBT-30）。
+   *
+   * 读不到或值非法（非数字 / NaN）⇒ **保持默认**：这是非关键设置，不为它弹错误横幅；
+   * 但也不静默 —— 原因打到控制台（与 adapter 的降级提示同一口径，R-15）。
+   */
+  async function loadAutosaveDelay(): Promise<void> {
+    // 三种情况的分工见 `editor_settings.ts::readAutosaveDelay` 的注释
+    const loaded = await readAutosaveDelay();
+    if (loaded !== null) autosaveDelayMs.value = loaded;
   }
 
   function setMode(next: EditorMode): void {
@@ -336,6 +361,7 @@ const pendingReveal = ref<{
     closeToTheRight,
     dirtyAmong,
     setAutosaveDelay,
+    loadAutosaveDelay,
     setMode,
   };
 });

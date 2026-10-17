@@ -7,5 +7,11 @@ export { MdEditorV3Adapter, CHANGE_THROTTLE_MS } from './adapter/mdEditorV3';
 export { default as EditorView } from './components/EditorView.vue';
 export { default as EditorTabs } from './components/EditorTabs.vue';
 export { default as ConflictDialog } from './components/ConflictDialog.vue';
-export { useEditorStore, AUTOSAVE_DEFAULT_MS, AUTOSAVE_MIN_MS, AUTOSAVE_MAX_MS } from './stores/editor';
+export {
+  useEditorStore,
+  AUTOSAVE_DEFAULT_MS,
+  AUTOSAVE_MIN_MS,
+  AUTOSAVE_MAX_MS,
+  PREF_AUTOSAVE_DELAY_MS,
+} from './stores/editor';
 export type { EditorBuffer, EditorMode, ConflictChoice } from './stores/editor';
