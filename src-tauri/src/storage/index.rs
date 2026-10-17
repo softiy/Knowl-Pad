@@ -19,18 +19,27 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// 为什么不能只靠"记得改"：审计 M9 指出，规则改了而这里没动，索引会**静默停留在旧解析结果**上，
 /// 而界面上一切正常。所以配了 `parser_source_guard`（见 storage/index_tests.rs）：
 /// 它把解析器源码的指纹与本文件记录的基准比对，**源码变了而版本没变就直接红**。
-pub const PARSER_VERSION: u32 = 0;
+///
+/// **2026-10-17（M5 批次 4）：0 → 1。** 升版的**目的**是让"既有索引"与"当前解析器"对齐：
+/// 版本号是 `IndexSignature` 的一部分，因此任何 `parser_version ≠ 1` 的索引库在**打开时**就会被
+/// `ensure_index_db` 判为过期（`Inspect::Stale`）并**全量重建**（丢弃重建，技术方案 §4.4）——
+/// 这正是盖住审计 M9 缺口的那一步：在此之前它恒为 0，解析规则变了索引也不会失效。
+/// 判据：`index_tests::index_built_by_older_parser_version_is_rebuilt`（构造 `parser_version = 0` 的
+/// **真实签名**，断言被判为 `Rebuilt` 且原因里点名 `parser_version`）。
+pub const PARSER_VERSION: u32 = 1;
 
 /// 解析器源码指纹基准 + 与之配对的版本号（由 `parser_source_guard` 用例校验）。
 ///
 /// 维护方式（只有两种合法操作）：
 ///   · 只改了注释/格式，规则语义没变 → 更新下面的 `PARSER_SOURCE_HASH`（保持 `PARSER_VERSION` 不变）；
 ///   · 改了任一解析规则的语义 → **两个都要改**：先 +1 `PARSER_VERSION`，再更新 `PARSER_SOURCE_HASH`。
+///
+/// 当前基准（`cf6b45f7c820e93b`）对应 `PARSER_VERSION = 1`（2026-10-17 升版时的解析器源码）。
 // 只在 parser_source_guard 用例里消费（生产路径不需要读它；它是"变更检测"的基准）。
 // 不用 #[allow] 就只能靠"假装用一下"，那会让代码说谎 —— 这里按 CODE-10 明确写出理由。
 // 2026-10-17（M5 批次 4）：解析器新增**协作式中止**（`parse_with_guard` + 检查点，SEC-03 / DEBT-32）。
-// 它**不改解析规则语义** —— 无预算路径 `parse()` 逐字段与改动前相同（用例 `parse_without_guard_is_unchanged` 钉住），
-// 因此按上面的纪律**只更新指纹**（`PARSER_VERSION` 不动）。
+// 它**不改解析规则语义**（无预算路径 `parse()` 逐字段与改动前相同，用例 `parse_without_guard_is_unchanged` 钉住）；
+// 同一批次把 `PARSER_VERSION` 由 0 提到 1（盖住审计 M9 的缺口），故本基准与版本号 1 配对。
 #[allow(dead_code)]
 pub const PARSER_SOURCE_HASH: &str = "cf6b45f7c820e93b";
 /// 与 `PARSER_SOURCE_HASH` **配对冻结**的版本号。
@@ -38,7 +47,7 @@ pub const PARSER_SOURCE_HASH: &str = "cf6b45f7c820e93b";
 /// 必须是**字面量**、不能写 `= PARSER_VERSION` —— 那样"版本是否变过"的条件会恒假，
 /// 护栏就永远拦住任何改动（我第一版就是这么写的，写完立刻发现）。
 #[allow(dead_code)]
-pub const PARSER_SOURCE_HASH_VERSION: u32 = 0;
+pub const PARSER_SOURCE_HASH_VERSION: u32 = 1;
 
 /// 分词器版本：M3 引入 jieba-rs 后填写其 crate 版本。
 pub const TOKENIZER_VERSION: &str = kp_domain::tokenize::TOKENIZER_VERSION;
