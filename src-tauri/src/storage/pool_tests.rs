@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::storage::migrate;
+use std::sync::{Arc, Barrier};
 
 fn temp_pool() -> (tempfile::TempDir, DbPool) {
     let dir = tempfile::tempdir().expect("临时目录应可创建");
@@ -165,4 +166,45 @@ fn dropping_pool_releases_database_file() {
     } // Drop 在此发生
     assert!(db_path.exists(), "库文件应存在");
     std::fs::remove_file(&db_path).expect("Drop 之后应可删除库文件（句柄已释放）");
+}
+
+/// **DEBT-40 回归（确定性不变量，不依赖「竞争是否显形」）**。
+///
+/// 库已是 WAL 时，journal_mode = WAL 退化为读头部（实测约 7.7 µs，不取排他锁），
+/// 因此 4 条连接**并发**建立也不得有任何一条失败 —— 这条不变量在修复后是确定的：
+/// 它不赌调度，只赌「WAL 库上的该 PRAGMA 不取排他锁」这一 SQLite 语义。
+///
+/// 修复前：建池前无人先把库切成 WAL（缺 prepare_wal），而这 4 条连接正是池会并发建立的那批
+/// （r2d2 用 3 线程池派发建连任务）⇒ 首次建库时 1 条赢、2 条输
+/// （ERROR r2d2: database is locked + 400 ms 退避，真机首启因此多花约 400 ms）。
+/// 这里复用的 init_connection 与生产**逐字相同**，避免测试另抄一份副本后静默漂移。
+#[test]
+fn concurrent_connections_on_prepared_wal_db_all_succeed() {
+    use r2d2::ManageConnection as _;
+
+    let dir = tempfile::tempdir().expect("临时目录应可创建");
+    let path = dir.path().join("global.db");
+    prepare_wal(&path).expect("单连接准备 WAL 应成功");
+
+    let barrier = Arc::new(Barrier::new(4));
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let manager = SqliteConnectionManager::file(&path).with_init(init_connection);
+                // 先对齐再建连：把「并发」从概率性拉成必然（否则慢机器上可能串行化而掩盖竞争）。
+                barrier.wait();
+                manager.connect().map(|_| ()).map_err(|err| err.to_string())
+            })
+        })
+        .collect();
+
+    for (index, handle) in handles.into_iter().enumerate() {
+        let outcome = handle.join().expect("建连线程不应 panic");
+        assert!(
+            outcome.is_ok(),
+            "第 {index} 条并发连接失败：{outcome:?}（DEBT-40 回归：prepare_wal 之后不应再争 WAL 转换锁）"
+        );
+    }
 }
