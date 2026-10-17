@@ -1,5 +1,5 @@
 import { mount, flushPromises } from '@vue/test-utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@core/ipc/commands', () => ({
   indexStatus: vi.fn(),
@@ -15,7 +15,13 @@ vi.mock('@core/ipc/events', () => ({
 }));
 
 import { fileTree, indexStatus, preferenceGet, preferenceSet } from '@core/ipc/commands';
+import { flushPreferences, pendingPreferenceCount } from '@core/ipc/preferences';
 import StatusBar from '@/app/layout/StatusBar.vue';
+
+// 偏好写入走 500ms 防抖队列（FR-SET-03 / PERF-06）：每个用例结束前清空，避免定时器跨用例触发。
+afterEach(async () => {
+  await flushPreferences();
+});
 
 const mIndex = vi.mocked(indexStatus);
 const mTree = vi.mocked(fileTree);
@@ -75,8 +81,9 @@ describe('StatusBar（FR-VAULT-11/12、FR-STORAGE-03）', () => {
     const hint = wrapper.find('[data-testid="git-hint"]');
     expect(hint.exists()).toBe(true);
     expect(hint.text()).toContain('不会自动修改');
-    // 红线：只读检测 + 只读偏好；此时不得有任何写入
+    // 红线：只读检测 + 只读偏好；此时不得有任何写入（含防抖队列里也不能有待写项）
     expect(mPrefSet).not.toHaveBeenCalled();
+    expect(pendingPreferenceCount()).toBe(0);
   });
 
   it('非 Git 仓库不提示', async () => {
@@ -104,6 +111,10 @@ describe('StatusBar（FR-VAULT-11/12、FR-STORAGE-03）', () => {
     const wrapper = mountBar();
     await flushPromises();
     await wrapper.find('[data-testid="git-hint-dismiss"]').trigger('click');
+    // 写入先进防抖队列（500ms 后才提交），由 flush 立刻兑现 —— 语义仍是"点了就记住"
+    expect(pendingPreferenceCount()).toBe(1);
+    expect(mPrefSet).not.toHaveBeenCalled();
+    await flushPreferences();
     expect(mPrefSet).toHaveBeenCalledWith({ 'ui.gitHintDismissed': true });
     expect(wrapper.find('[data-testid="git-hint"]').exists()).toBe(false);
   });

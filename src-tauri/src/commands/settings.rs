@@ -63,6 +63,10 @@ pub async fn preference_get(
 }
 
 /// 批量写入偏好（全局）。
+///
+/// **整批一个事务**（FR-GLOBAL-02 / FR-SET-03）：此前是逐键 `set_preference`，N 个键 = N 次写事务
+/// （勘误 **DEBT-24③**）。前端按 500ms 防抖把同一窗口内的多个键合成一次调用（`core/ipc/preferences.ts`），
+/// 两端合起来才是"防抖批量提交"。
 #[tauri::command]
 pub async fn preference_set(
     state: tauri::State<'_, AppState>,
@@ -71,9 +75,12 @@ pub async fn preference_set(
     let pool = state
         .global_db()
         .ok_or_else(|| KpError(AppError::db("访问偏好存储")))?;
-    for (key, value) in args.entries {
-        global::set_preference(&pool, &key, &value.to_string()).map_err(KpError)?;
-    }
+    let batch: Vec<(String, String)> = args
+        .entries
+        .into_iter()
+        .map(|(key, value)| (key, value.to_string()))
+        .collect();
+    global::set_preferences(&pool, &batch).map_err(KpError)?;
     Ok(())
 }
 
