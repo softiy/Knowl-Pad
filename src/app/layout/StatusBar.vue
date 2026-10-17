@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
-import { fileTree, preferenceGet, preferenceSet, type VaultInfo } from '@core/ipc/commands';
+import { fileTree, preferenceGet, type VaultInfo } from '@core/ipc/commands';
 import { asKpError } from '@core/ipc/errors';
+import { schedulePreferenceSet } from '@core/ipc/preferences';
 import IndexBadge from './IndexBadge.vue';
 
 /**
@@ -83,9 +84,10 @@ async function copyRule(): Promise<void> {
   }
 }
 
-async function dismissHint(): Promise<void> {
+function dismissHint(): void {
   hintDismissed.value = true;
-  await preferenceSet({ [PREF_GIT_HINT_DISMISSED]: true });
+  // 走 500ms 防抖批量提交（FR-SET-03 / PERF-06）：提示条这类"点一下就存"的写不该各开一次事务。
+  schedulePreferenceSet({ [PREF_GIT_HINT_DISMISSED]: true });
 }
 </script>
 

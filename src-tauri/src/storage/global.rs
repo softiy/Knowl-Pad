@@ -250,6 +250,35 @@ pub fn set_preference(pool: &DbPool, key: &str, value: &str) -> Result<(), AppEr
     })
 }
 
+/// 批量写入界面偏好：**一个事务**里写完这一批（FR-GLOBAL-02 / FR-SET-03 的「防抖批量提交」）。
+///
+/// 为什么必须有这条路径：`preference_set` 此前是 `for` 循环里逐键调 [`set_preference`]，
+/// 每个键各开一次写事务（N 次 fsync）—— PRD 勘误 **DEBT-24③** 记的"逐键写"就是它。
+/// 现在命令层把整批交给这里，一次事务写完（要么全成、要么全不成）；空批次直接成功。
+pub fn set_preferences(pool: &DbPool, entries: &[(String, String)]) -> Result<(), AppError> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let owned = entries.to_vec();
+    pool.with_writer(move |conn| {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::db_with("开启偏好批量写入事务", &e))?;
+        {
+            let mut stmt = tx
+                .prepare_cached("INSERT OR REPLACE INTO preference(key, value) VALUES(?1, ?2)")
+                .map_err(map_err)?;
+            for (key, value) in &owned {
+                stmt.execute(rusqlite::params![key, value])
+                    .map_err(map_err)?;
+            }
+        }
+        tx.commit()
+            .map_err(|e| AppError::db_with("提交偏好批量写入", &e))?;
+        Ok(())
+    })
+}
+
 /// 删除一条偏好（「清空搜索历史」这类写操作用；记录不存在时也算成功 —— 幂等）。
 pub fn clear_preference(pool: &DbPool, key: &str) -> Result<(), AppError> {
     let key = key.to_string();

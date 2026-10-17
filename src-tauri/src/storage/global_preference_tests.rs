@@ -56,3 +56,34 @@ fn last_vault_tolerates_removed_or_invalid_record() {
         "非法格式应被忽略"
     );
 }
+
+/// **DEBT-24③ 的判据（批量路径）**：整批一次事务写完，且后写的值覆盖先写的（UPSERT）。
+///
+/// 说明：「要么全成、要么全不成」由构造保证（单个 `unchecked_transaction`）；这里能实测的是
+/// 批量入口本身的语义 —— 多键都落库、重复键后来居上、空批次是成功的空操作。
+#[test]
+fn set_preferences_writes_the_whole_batch() {
+    let (_dir, pool) = pool();
+    let batch = vec![
+        ("editor.autosaveDelayMs".to_string(), "2000".to_string()),
+        ("ui.showHiddenFiles".to_string(), "true".to_string()),
+        ("ui.showHiddenFiles".to_string(), "false".to_string()),
+    ];
+    set_preferences(&pool, &batch).expect("批量写入应成功");
+    assert_eq!(
+        read_preference(&pool, "editor.autosaveDelayMs").expect("读取应成功"),
+        Some("2000".to_string()),
+        "批次里的每个键都要落库"
+    );
+    assert_eq!(
+        read_preference(&pool, "ui.showHiddenFiles").expect("读取应成功"),
+        Some("false".to_string()),
+        "同一批次里的重复键，后写的值生效（INSERT OR REPLACE 的顺序语义）"
+    );
+    set_preferences(&pool, &[]).expect("空批次应当直接成功");
+    assert_eq!(
+        list_preferences(&pool).expect("列出应成功").len(),
+        2,
+        "空批次不得写入任何东西"
+    );
+}
