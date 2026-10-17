@@ -18,7 +18,7 @@ import {
   type FileNode,
 } from '@core/ipc/commands';
 import { useFileTreeStore } from '@features/file-tree';
-import { PREF_SHOW_HIDDEN, STATE_KEY_TREE_EXPANDED } from '@features/file-tree';
+import { STATE_KEY_SHOW_HIDDEN, STATE_KEY_TREE_EXPANDED } from '@features/file-tree';
 
 const mTree = vi.mocked(fileTree);
 const mPrefGet = vi.mocked(preferenceGet);
@@ -95,12 +95,16 @@ describe('useFileTreeStore', () => {
     expect(mStateSet).toHaveBeenCalledWith({ [STATE_KEY_TREE_EXPANDED]: ['dir'] });
   });
 
-  it('restoreState 恢复展开层级与隐藏文件偏好（AC-FILE-08 / FR-FILE-05）', async () => {
-    mPrefGet.mockResolvedValue({ values: { [PREF_SHOW_HIDDEN]: true } });
-    mStateGet.mockResolvedValue({ values: { [STATE_KEY_TREE_EXPANDED]: ['dir/sub'] } });
+  it('restoreState 从**本 Vault 的 vault_state** 恢复隐藏文件开关与展开层级（AC-FILE-08 / FR-FILE-05 / DEBT-15）', async () => {
+    // 值放在 vault_state 里 ⇒ 必须被采纳，且**不再读**全局 preference（作用域已收敛）
+    mStateGet.mockResolvedValue({
+      values: { [STATE_KEY_SHOW_HIDDEN]: true, [STATE_KEY_TREE_EXPANDED]: ['dir/sub'] },
+    });
+    mPrefGet.mockResolvedValue({ values: { [STATE_KEY_SHOW_HIDDEN]: false } });
     const store = useFileTreeStore();
     await store.restoreState();
     expect(store.includeHidden).toBe(true);
+    expect(mPrefGet).not.toHaveBeenCalled();
     expect(mTree).toHaveBeenCalledWith(undefined, true);
     expect(store.rows.map((r) => r.relPath)).toEqual([
       'dir',
@@ -111,12 +115,33 @@ describe('useFileTreeStore', () => {
     ]);
   });
 
-  it('切换显示隐藏文件会重载并写入全局偏好', async () => {
+  it('DEBT-15 一次性兼容：vault_state 没有值时回退旧全局值，并**写回本 Vault**', async () => {
+    mStateGet.mockResolvedValue({ values: {} });
+    mPrefGet.mockResolvedValue({ values: { [STATE_KEY_SHOW_HIDDEN]: true } });
+    const store = useFileTreeStore();
+    await store.restoreState();
+    expect(store.includeHidden).toBe(true);
+    // 写回本 Vault 后，这个值就只属于当前 Vault（不再跟着别的 Vault 串）
+    expect(mStateSet).toHaveBeenCalledWith({ [STATE_KEY_SHOW_HIDDEN]: true });
+  });
+
+  it('DEBT-15 两个来源都没有时保持默认（关）且不写任何东西', async () => {
+    mStateGet.mockResolvedValue({ values: {} });
+    mPrefGet.mockResolvedValue({ values: {} });
+    const store = useFileTreeStore();
+    await store.restoreState();
+    expect(store.includeHidden).toBe(false);
+    expect(mStateSet).not.toHaveBeenCalledWith({ [STATE_KEY_SHOW_HIDDEN]: true });
+    expect(mPrefSet).not.toHaveBeenCalled();
+  });
+
+  it('切换显示隐藏文件会重载并写入**本 Vault**（不是全局偏好）', async () => {
     const store = useFileTreeStore();
     await store.loadRoot();
     await store.toggle('dir');
     await store.setIncludeHidden(true);
-    expect(mPrefSet).toHaveBeenCalledWith({ [PREF_SHOW_HIDDEN]: true });
+    expect(mStateSet).toHaveBeenCalledWith({ [STATE_KEY_SHOW_HIDDEN]: true });
+    expect(mPrefSet).not.toHaveBeenCalled();
     expect(mTree).toHaveBeenLastCalledWith('dir', true);
     // 只恢复了原先展开的那一层（dir），故只断言其直接子行回来了
     expect(store.rows.map((r) => r.relPath)).toContain('dir/a.md');

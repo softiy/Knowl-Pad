@@ -4,12 +4,11 @@ import { asKpError } from '@core/ipc/errors';
 import {
   fileTree,
   preferenceGet,
-  preferenceSet,
   vaultStateGet,
   vaultStateSet,
   type FileNode,
 } from '@core/ipc/commands';
-import { PREF_SHOW_HIDDEN, STATE_KEY_TREE_EXPANDED, type TreeRow } from '../types';
+import { STATE_KEY_SHOW_HIDDEN, STATE_KEY_TREE_EXPANDED, type TreeRow } from '../types';
 
 const ROOT = '';
 
@@ -137,7 +136,12 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     }
   }
 
-  /** 切换「显示隐藏文件」（FR-FILE-05）：清缓存 → 重载 → 尽力恢复原有展开层级。 */
+  /**
+   * 切换「显示隐藏文件」（FR-FILE-05）：清缓存 → 重载 → 尽力恢复原有展开层级。
+   *
+   * 落盘位置是**每 Vault 的 `vault_state`**（PRD §4.11.3 把这一项定为 Vault 设置；FR-SET-04）：
+   * 写全局 `preference` 会让切换 Vault 时串设置 —— 那就是技术方案 §13.2 的 **DEBT-15**。
+   */
   async function setIncludeHidden(value: boolean): Promise<void> {
     includeHidden.value = value;
     const keep = [...expanded.value];
@@ -148,7 +152,7 @@ export const useFileTreeStore = defineStore('fileTree', () => {
         await expandPath(path);
       }
       rows.value = flatten();
-      await preferenceSet({ [PREF_SHOW_HIDDEN]: value });
+      await vaultStateSet({ [STATE_KEY_SHOW_HIDDEN]: value });
     } catch (err) {
       error.value = asKpError(err).message;
     }
@@ -159,8 +163,22 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     loading.value = true;
     error.value = null;
     try {
-      const pref = await preferenceGet([PREF_SHOW_HIDDEN]);
-      includeHidden.value = pref.values[PREF_SHOW_HIDDEN] === true;
+      // 优先级：**本 Vault 的 vault_state** 是唯一权威（DEBT-15）。
+      const hidden = await vaultStateGet([STATE_KEY_SHOW_HIDDEN]);
+      const fromVault = hidden.values[STATE_KEY_SHOW_HIDDEN];
+      if (typeof fromVault === 'boolean') {
+        includeHidden.value = fromVault;
+      } else {
+        // 一次性兼容：旧版本把同一个值写在**全局 preference**里（那正是 DEBT-15 的缺陷）。
+        // 读到就**写回本 Vault**，此后只认 vault_state —— 既不让老用户的选择无声丢失，
+        // 也不再让这个值跟着别的 Vault 串。全局那一行不删（它属于用户数据，删它没有收益）。
+        const legacy = await preferenceGet([STATE_KEY_SHOW_HIDDEN]);
+        const old = legacy.values[STATE_KEY_SHOW_HIDDEN];
+        if (typeof old === 'boolean') {
+          includeHidden.value = old;
+          await vaultStateSet({ [STATE_KEY_SHOW_HIDDEN]: old });
+        }
+      }
       cache.clear();
       await loadChildren(ROOT);
       const stored = await vaultStateGet([STATE_KEY_TREE_EXPANDED]);
