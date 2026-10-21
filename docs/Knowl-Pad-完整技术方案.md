@@ -4336,6 +4336,15 @@ PRD §10.1 已列 10 项产品/技术风险。此处补充**纯实现层面**的
 | M0-14 | **Gitee 对不存在的 tag 返回 `HTTP 200 + body "null"` 而非 404** | 实测 `GET /releases/tags/<不存在的 tag>` → 200、body 长度 4（`null`） | 发布脚本按「尚未创建」处理（`--verify` 退出码 2）；已写入联调手册 |
 | M0-15 | **三平台窗口启动此前只能在 Windows 人工验证** | CI 里跑 GUI 需要窗口服务器：Linux 无 X11、Windows/macOS runner 会话可用性不确定 | 给应用加 `KP_SMOKE=1` 冒烟模式（窗口出现即断言并退出），新增 `platform-smoke.yml` 三平台矩阵（Linux 用 `xvfb-run` + `WEBKIT_DISABLE_COMPOSITING_MODE`）。本机实测：`KP_SMOKE_OK window=main visible=true`，exit 0 |
 
+### D.2.1 测试/验收用的环境变量（与生产行为的关系）
+
+| 变量 | 读取位置 | 生效条件 | 用途 | release 行为 |
+| --- | --- | --- | --- | --- |
+| `KP_SMOKE` | `src-tauri/src/main.rs` | 任意构建 | 窗口冒烟：窗口出现即打印 `KP_SMOKE_OK` 并退出（§11.4 的 platform-smoke 用） | 同样生效（CI 冒烟依赖它） |
+| `KP_CONFIG_DIR` | `src-tauri/src/app_paths.rs`（`resolve_config_dir`） | **仅调试构建**（`cfg!(debug_assertions)`） | 把配置目录（`global.db` / 日志）指到 `%TEMP%` 下的隔离目录，供 `scripts/perf-d25-lifecycle.mjs` 做 NFR-PERF-13/14 的进程级采样（D-25 ④⑤） | **被忽略**：`cfg!(debug_assertions)` 在 release 下为 false，分支被编译期折叠，变量设置也不读；一律用系统默认配置目录 |
+
+> 为什么必须 debug-only：这个开关会把 `global.db` 指到任意目录。让它只活在调试构建里，是为了**不可能**把用户的生产数据指丢、也不可能被用来绕过真实配置目录的迁移逻辑；它的唯一正当用途是测试隔离。
+
 ### D.3 M0 未完成 / 待决策项（不得带占位进入 M1）
 
 | # | 事项 | 状态 |

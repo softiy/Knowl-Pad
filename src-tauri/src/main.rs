@@ -26,6 +26,7 @@ mod index_watch_tests;
 // 写入侧（把 ParsedNote 落进派生表）—— 从 index_engine 拆出（CODE-11 硬上限）
 #[cfg(test)]
 mod ac_vault_01_tests;
+mod app_paths;
 #[cfg(test)]
 mod index_cancel_tests;
 mod index_write;
@@ -80,6 +81,8 @@ fn setup_app(app: &mut tauri::App, smoke: bool) -> Result<(), Box<dyn std::error
         use tauri::Manager;
         match app.path().app_config_dir() {
             Ok(dir) => {
+                // 调试构建可用 `KP_CONFIG_DIR` 覆盖（测试隔离；release 忽略该变量 —— 见 app_paths 的模块头）
+                let dir = app_paths::resolve_config_dir(dir);
                 // 但**日志失败不得阻断存储层**——两者是独立的降级单元。
                 if let Err(err) = logging::init(&dir.join("logs")) {
                     eprintln!("日志初始化失败（继续运行）：{err}");
