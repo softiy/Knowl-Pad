@@ -16,11 +16,13 @@
 // 指标行会被粘成 `·PERF_METRIC …`，行首锚点 `^PERF_METRIC` 于是静默漏掉一条，表现为"large 通过、small 消失、
 // 退出码非零且没有解释"。现在探针把指标**写成 JSON 文件**（`KP_PERF_OUT`），脚本读文件；行解析只作兜底，
 // 且所有失败分支都会把**可定位的原因**打到 stdout（门禁汇总一定会显示的那一路）。
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { cpus } from 'node:os';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import {
+  BASELINE_VERSION,
   envBlock,
   envNames,
   parseBaseline,
@@ -33,6 +35,16 @@ import { parseMetricsLines, readMetricsFile, runProbe, tailLines } from './lib/p
 const argv = process.argv.slice(2);
 const bi = argv.indexOf('--baseline');
 const BASELINE = bi >= 0 && argv[bi + 1] ? argv[bi + 1] : '.perf-baseline.json';
+/**
+ * `--emit-baseline <path>`：**只读**地把"当前环境这一块"写到指定文件（CI 作为 artifact 上传，供人工提回基线）。
+ *
+ * 语义边界（**必须守住**）：
+ * - **绝不**写 `BASELINE`（`.perf-baseline.json`）—— 基线只能由人确认后作为提交写入；
+ * - 缺当前环境基线时仍然**判失败（exit 2）**，只是"先把数字量出来放进 artifact"，避免为此放宽门禁；
+ * - 与 `--update-baseline` 互斥（同时给会 exit 2）。
+ */
+const ei = argv.indexOf('--emit-baseline');
+const EMIT = ei >= 0 && argv[ei + 1] ? argv[ei + 1] : null;
 // 跨机器容差：本机与 CI runner 实测差异可达 55%，因此回归判定放宽到 2×（仍能抓住 O(n²) / 多一遍管线这类
 // 算法级回退），绝对预算单独硬性把关。**不得再放宽**：负对照见 DEBT-31 的处置记录。
 const MAX_REGRESSION = 1.0;
@@ -83,6 +95,16 @@ const ENV_NAME = resolveEnvName({ env: process.env, cpuCount: cpus().length });
 console.log('基线口径 ' + PIPELINE + ' / 环境 ' + ENV_NAME);
 
 const update = argv.includes('--update-baseline');
+if (update && EMIT !== null) {
+  fail(
+    '--emit-baseline 与 --update-baseline 不能同时使用',
+    [
+      '--emit-baseline 是只读产出（给 CI 传 artifact）；--update-baseline 会改 .perf-baseline.json',
+      '请分两次跑：先 --emit-baseline 拿数字，确认后再在本地用 --update-baseline',
+    ],
+    2,
+  );
+}
 if (!existsSync(BASELINE) && !update) {
   fail(
     '缺少性能基线 ' + BASELINE,
@@ -107,14 +129,23 @@ try {
 }
 
 const current = envBlock(baseline, ENV_NAME);
+/** 引导模式：缺当前环境基线、但要求产出 artifact（CI 首次建立基线）。**判定仍然失败**。 */
+let bootstrap = false;
 if (!current && !update) {
-  fail('基线里没有当前环境的数值', [
+  const details = [
     '当前环境：' + ENV_NAME,
     '已有环境：' + (envNames(baseline).length > 0 ? envNames(baseline).join(', ') : '（无）'),
     '**绝不**跨环境比较：绝对耗时跨机器不可比（24 逻辑核本机 vs 2 vCPU 共享 runner）',
     '建立方式（在该环境上跑一次）：pnpm test:perf -- --update-baseline',
     'CI 上可用 KP_PERF_ENV 显式指定环境名（工作流已钉死为 ci-ubuntu-2vcpu）',
-  ], 2);
+  ];
+  if (EMIT === null) {
+    fail('基线里没有当前环境的数值', details, 2);
+  }
+  console.log('');
+  console.log('⚠️ 基线里没有当前环境的数值：本次会测量并产出 artifact，但**判定仍失败（exit 2）**');
+  for (const line of details) console.log('   ' + line);
+  bootstrap = true;
 }
 
 const probe = runProbe({ root, vitest });
@@ -154,7 +185,7 @@ for (const metric of METRICS) {
   console.log(
     metric.label + '：min(批次中位数) = ' + value.value.toFixed(1) + ' ms（' + value.docBytes + ' 字节）',
   );
-  if (update) continue;
+  if (update || bootstrap) continue;
   const budget = metric.budgetMs;
   if (budget && value.value > budget) {
     console.log('  ❌ 超出预算 ' + budget + ' ms（实测 ' + value.value.toFixed(1) + ' ms）');
@@ -185,14 +216,34 @@ for (const metric of METRICS) {
 
 rmSync(probe.dir, { recursive: true, force: true });
 
+const now = new Date().toISOString();
+const metricsForEnv = Object.fromEntries(METRICS.map((m) => [m.key, { ...measured[m.key], updatedAt: now }]));
+
 if (update) {
-  const now = new Date().toISOString();
-  const metrics = Object.fromEntries(METRICS.map((m) => [m.key, { ...measured[m.key], updatedAt: now }]));
-  const next = setEnvMetrics(baseline, ENV_NAME, metrics, now);
+  const next = setEnvMetrics(baseline, ENV_NAME, metricsForEnv, now);
   next.pipeline = PIPELINE;
   writeFileSync(BASELINE, JSON.stringify(next, null, 2) + '\n', 'utf8');
   console.log('✓ 已写入 ' + BASELINE + ' 的 envs[' + ENV_NAME + ']（口径 ' + PIPELINE + '，其它环境保持不变）');
   process.exit(0);
+}
+
+if (EMIT !== null) {
+  // **只读**产出：给 CI 传 artifact，供人下载后作为提交写进 .perf-baseline.json 的 envs。
+  // 这里刻意用 `baseline.envs[ENV_NAME]` 的结构（可直接贴），并且**不**碰 BASELINE。
+  mkdirSync(dirname(EMIT), { recursive: true });
+  const payload = {
+    env: ENV_NAME,
+    pipeline: PIPELINE,
+    generatedAt: now,
+    note: '本文件只读产出，不修改 .perf-baseline.json；人工确认后把 baseline.envs 下的这一块贴进仓库基线并提交',
+    baseline: { version: BASELINE_VERSION, pipeline: PIPELINE, envs: { [ENV_NAME]: { metrics: metricsForEnv, updatedAt: now } } },
+  };
+  writeFileSync(EMIT, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+  console.log('✓ 已写出 ' + EMIT + '（env=' + ENV_NAME + '；**只读**：未修改 ' + BASELINE + '）');
+  if (bootstrap) {
+    console.log('  ❌ 本次判定仍失败（exit 2）：本环境还没有基线 —— 下载 artifact、人工提交该块后再跑一次');
+    process.exit(2);
+  }
 }
 if (baseline.pipeline !== PIPELINE) {
   fail(
