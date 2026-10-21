@@ -4,6 +4,8 @@
 //! 全局库版本化迁移（§4.5）。索引库 schema 与「丢弃重建」在 PR-2。
 
 pub mod global;
+// 全局库的启动恢复（FR-GLOBAL-01 / DEBT-20）：从 `global` 拆出以守住 CODE-11 的文件长度线
+pub mod global_recovery;
 pub mod index;
 pub mod index_query;
 pub mod index_rebuild;

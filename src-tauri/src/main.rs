@@ -84,8 +84,19 @@ fn setup_app(app: &mut tauri::App, smoke: bool) -> Result<(), Box<dyn std::error
                         "Knowl Pad 启动"
                     );
                 }
-                match storage::global::open(&dir) {
-                    Ok(pool) => {
+                // FR-GLOBAL-01 / DEBT-20：**保留原文件**后重建，并把恢复信息交给前端提示一次。
+                // 真正打不开（连降级库都建不出来）时走下面的 Err 分支 —— 以默认配置继续启动。
+                match storage::global::open_with_recovery(&dir) {
+                    Ok(opened) => {
+                        let pool = opened.pool;
+                        if let Some(recovery) = opened.outcome.recovery() {
+                            tracing::warn!(
+                                preserved = ?recovery.preserved_file,
+                                reason = %recovery.reason,
+                                "全局库已重建（原文件已保留）"
+                            );
+                            app.state::<AppState>().set_global_recovery(recovery);
+                        }
                         match storage::diagnostics(&pool) {
                             Ok(info) => tracing::info!(
                                 path = %info.path.display(),

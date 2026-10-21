@@ -198,6 +198,15 @@ export interface SystemInfo {
   platform: string;
   arch: string;
   version: string;
+  /**
+   * **FR-GLOBAL-01 / DEBT-20**：本次启动是否因全局库不可用而重建（正常启动恒 false）。
+   * 重建时前端提示一次即可 —— 恢复信息只在启动时产生一次。
+   */
+  globalDbRebuilt?: boolean;
+  /** 原库被保留成的**文件名**（不含目录；未保留时为 undefined）。 */
+  globalDbBackup?: string;
+  /** 重建原因摘要（中文可读；正常启动为 undefined）。 */
+  globalDbReason?: string;
 }
 
 export const systemInfo = (): Promise<SystemInfo> => call<SystemInfo>('system_info');

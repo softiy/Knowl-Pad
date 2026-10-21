@@ -10,6 +10,9 @@ pub struct AppState {
     vault_root: Mutex<Option<PathBuf>>,
     /// 全局库连接池（M1 PR-1 接入；打开失败时为 None，应用以默认配置继续，FR-GLOBAL-01）。
     global_db: Mutex<Option<Arc<DbPool>>>,
+    /// 全局库在本次启动的**恢复信息**（FR-GLOBAL-01 / DEBT-20）：只在"损坏后重建"时有值，
+    /// 供 `system_info` 让前端提示一次；正常启动恒 None（不得产生噪声）。
+    global_recovery: Mutex<Option<crate::storage::global::GlobalRecovery>>,
     /// 当前 Vault 的索引库连接池（M1 PR-2 接入；未打开 Vault 时为 None）。
     index_db: Mutex<Option<Arc<DbPool>>>,
     /// 当前 Vault 在全局库中的注册 id（未注册或全局库不可用时为 None）。
@@ -62,6 +65,21 @@ impl AppState {
     /// 全局库句柄（尚未就绪时返回 None）。
     pub fn global_db(&self) -> Option<Arc<DbPool>> {
         self.global_db.lock().ok().and_then(|guard| guard.clone())
+    }
+
+    /// 记录"本次启动重建过全局库"（启动路径调用一次；正常启动不调用）。
+    pub fn set_global_recovery(&self, recovery: crate::storage::global::GlobalRecovery) {
+        if let Ok(mut guard) = self.global_recovery.lock() {
+            *guard = Some(recovery);
+        }
+    }
+
+    /// 本次启动的全局库恢复信息（没有重建时为 None）。
+    pub fn global_recovery(&self) -> Option<crate::storage::global::GlobalRecovery> {
+        self.global_recovery
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     /// 记录/清除当前 Vault 的索引库句柄（关闭 Vault 时传 None）。
