@@ -12,6 +12,13 @@ const titles: Record<string, string> = {
   delete: '移入回收站',
 };
 const title = computed(() => (ops.dialog ? titles[ops.dialog.mode] : ''));
+/**
+ * 有引用时按钮改成「仍然删除」：**多一次明确的确认动作**（FR-FILE-32「需用户确认」），
+ * 没有引用时保持「确定」（不制造噪声）。
+ */
+const submitLabel = computed(() =>
+  ops.dialog?.mode === 'delete' && (ops.dialog.referenceCount ?? 0) > 0 ? '仍然删除' : '确定',
+);
 </script>
 
 <template>
@@ -21,6 +28,22 @@ const title = computed(() => (ops.dialog ? titles[ops.dialog.mode] : ''));
 
       <p v-if="ops.dialog.mode === 'delete'" data-testid="fileops-delete-hint">
         确定把「{{ ops.dialog.target }}」移入回收站吗？该操作不会删除磁盘内容，可在回收站恢复。
+      </p>
+      <!-- FR-FILE-32 / AC-FILE-11 / DEBT-29：删除前用既有反链查询提示"被 N 处引用" -->
+      <p
+        v-if="ops.dialog.mode === 'delete' && (ops.dialog.referenceCount ?? 0) > 0"
+        class="kp-fileops__warn"
+        data-testid="delete-references"
+      >
+        该笔记被 {{ ops.dialog.referenceCount }} 处引用，删除后这些链接将变为悬空链接。
+      </p>
+      <!-- R-15：统计失败不静默、也不用 0 冒充（0 表示确实没有引用） -->
+      <p
+        v-if="ops.dialog.mode === 'delete' && ops.dialog.referenceError"
+        class="kp-fileops__warn"
+        data-testid="delete-references-error"
+      >
+        无法统计引用（{{ ops.dialog.referenceError }}），删除前请自行确认。
       </p>
       <!-- FR-FILE-07 / DEBT-19：`file_move` 的 UI 入口（移动到…） -->
       <p v-if="ops.dialog.mode === 'move'" class="kp-fileops__hint" data-testid="fileops-move-hint">
@@ -66,7 +89,7 @@ const title = computed(() => (ops.dialog ? titles[ops.dialog.mode] : ''));
 
       <div class="kp-fileops__actions">
         <button type="button" data-testid="fileops-submit" :disabled="ops.dialog.busy" @click="ops.submit()">
-          确定
+          {{ submitLabel }}
         </button>
         <button type="button" data-testid="fileops-cancel" @click="ops.close()">取消</button>
       </div>
@@ -80,6 +103,7 @@ const title = computed(() => (ops.dialog ? titles[ops.dialog.mode] : ''));
 .kp-fileops__title { margin: 0 0 8px; font-size: 15px; }
 .kp-fileops__field { display: flex; gap: 8px; align-items: center; }
 .kp-fileops__hint { margin: 0 0 6px; color: #666; }
+.kp-fileops__warn { margin: 6px 0 0; color: #b00020; font-weight: 600; }
 .kp-fileops__error { margin: 6px 0 0; color: #b00020; }
 .kp-fileops__conflict { margin-top: 8px; padding: 8px; background: #fff8e1; border-radius: 4px; }
 .kp-fileops__conflict button { margin-right: 6px; }

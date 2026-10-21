@@ -5,44 +5,24 @@ import {
   fileDelete,
   fileMove,
   fileRename,
-  fileValidateName,
   folderCreate,
   noteCreate,
   type ConflictPolicy,
 } from '@core/ipc/commands';
 import { useEditorStore } from '@features/editor';
+import { countReferences } from '../deleteReferences';
 import { useFileTreeStore } from './fileTree';
 
-/**
- * 对话框模式。`move` 是 DEBT-19 补的（`file_move` 此前**没有 UI 入口**）：语义与重命名同一条命令
- * （跨目录即移动），区别只在输入的是**目标路径**而不是单个名称。
- */
-export type FileOpMode = 'newNote' | 'newFolder' | 'rename' | 'move' | 'delete';
+import {
+  dirOf,
+  joinRel,
+  makeDialog,
+  validateDialogValue,
+  type FileOpDialog,
+} from './fileOpsDialogState';
 
-export interface FileOpDialog {
-  mode: FileOpMode;
-  /** 重命名/删除的目标（源路径）；新建时为空 */
-  target: string;
-  /** 新建时的父目录（'' 表示 Vault 根） */
-  parentDir: string;
-  /** 输入值：新建/重命名时为名称 */
-  value: string;
-  /** 名称校验结果——非法时必须给出**具体原因**（AC-FILE-03 / ERR-02） */
-  validation: { valid: boolean; reason?: string | undefined } | null;
-  /** 目标已存在，需要用户选择冲突策略（AC-FILE-04） */
-  conflict: boolean;
-  error: string | null;
-  busy: boolean;
-}
-
-function dirOf(relPath: string): string {
-  const index = relPath.lastIndexOf('/');
-  return index < 0 ? '' : relPath.slice(0, index);
-}
-
-function joinRel(dir: string, name: string): string {
-  return dir ? `${dir}/${name}` : name;
-}
+// 对话框的形状/构造/校验在 `fileOpsDialogState.ts`（CODE-11 的文件长度纪律）；这里只做编排。
+export type { FileOpDialog, FileOpMode } from './fileOpsDialogState';
 
 /**
  * 文件操作编排（FR-FILE-10~13、FR-FILE-30；AC-FILE-03/04/05）。
@@ -57,10 +37,6 @@ export const useFileOpsStore = defineStore('fileOps', () => {
   /** 删除前需要确认（该路径下仍有打开的标签；含未保存的必须先问，R-07） */
   const pendingDelete = ref<{ target: string; open: string[]; dirty: string[] } | null>(null);
 
-  /** 建立一个"新建/重命名/删除"对话框的初始状态（四种模式共用同一形状，避免四处抄字段）。 */
-  function makeDialog(mode: FileOpMode, target: string, parentDir: string, value: string): FileOpDialog {
-    return { mode, target, parentDir, value, validation: null, conflict: false, error: null, busy: false };
-  }
 
   function openNewNote(parentDir: string): void {
     dialog.value = makeDialog('newNote', '', parentDir, '');
@@ -93,31 +69,35 @@ export const useFileOpsStore = defineStore('fileOps', () => {
     dialog.value = makeDialog('move', relPath, dirOf(relPath), relPath);
   }
 
+  /**
+   * 打开删除确认（FR-FILE-30）并**异步**统计引用处数（**FR-FILE-32 / DEBT-29**）。
+   *
+   * 顺序刻意如此：对话框先出现（用户马上看到"确定要删吗"），计数随后填进同一个对话框 ——
+   * 统计失败也**不阻断**删除，只是在界面上如实说明"无法统计"（R-15）。
+   */
   function openDelete(relPath: string): void {
     dialog.value = makeDialog('delete', relPath, dirOf(relPath), '');
+    void applyReferences(relPath);
+  }
+
+  /** 把引用数写回**仍然有效**的删除对话框（用户可能已经关掉或换成了别的目标）。 */
+  async function applyReferences(relPath: string): Promise<void> {
+    const summary = await countReferences(relPath);
+    const current = dialog.value;
+    if (current === null || current.mode !== 'delete' || current.target !== relPath) return;
+    current.referenceCount = summary.count;
+    current.referenceError = summary.error;
   }
 
   function close(): void {
     dialog.value = null;
   }
 
-  /** 校验输入的名称（AC-FILE-03）：非法时把**具体原因**放进 dialog.validation。 */
+  /** 校验输入（AC-FILE-03）：具体规则在 `validateDialogValue`（名称/路径两种口径）。 */
   async function validateValue(): Promise<boolean> {
     const current = dialog.value;
-    if (!current || current.mode === 'delete') return true;
-    const raw = current.value.trim();
-    if (!raw) {
-      current.validation = {
-        valid: false,
-        reason: current.mode === 'move' ? '目标路径不能为空' : '名称不能为空',
-      };
-      return false;
-    }
-    // 移动输入的是**路径**：名称校验只对最后一段做（目录段的合法性由 Rust 的七步校验负责，SEC-02）
-    const name = current.mode === 'move' ? (raw.split('/').pop() ?? '') : raw;
-    const result = await fileValidateName(name);
-    current.validation = result;
-    return result.valid;
+    if (!current) return true;
+    return validateDialogValue(current);
   }
 
   /** 真正执行删除（软删除 + 关闭该子树下的全部标签 + 刷新树）。 */
