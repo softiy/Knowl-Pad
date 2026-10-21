@@ -29,6 +29,8 @@ mod ac_vault_01_tests;
 mod index_write;
 mod logging;
 #[cfg(test)]
+mod nfr_perf_11_tests;
+#[cfg(test)]
 mod perf_calib_tests;
 #[cfg(test)]
 mod perf_d25_tests;
