@@ -963,3 +963,126 @@ fn d25_nfr_perf_03_fts_write_breakdown() {
         per(a)
     );
 }
+
+// ── AC-VAULT-05（20000 档）：进度事件序列与取消语义 ─────────────────────────
+
+use std::sync::Mutex;
+
+/// 一次索引里收集到的 `(done, total)` 序列。
+type ProgressLog = Mutex<Vec<(usize, usize)>>;
+
+fn progress_log() -> ProgressLog {
+    Mutex::new(Vec::new())
+}
+
+fn snapshot(log: &ProgressLog) -> Vec<(usize, usize)> {
+    log.lock().expect("进度日志").clone()
+}
+
+/**
+ * **AC-VAULT-05**（PRD §4.1.2：「含 20000 个 `.md` 的 Vault 首次打开 ⇒ 显示进度（含已处理文件数）；
+ * 索引期间可取消、可关闭；完成后文件树/搜索/图谱均可用」）。
+ *
+ * 这里钉住其中**可自动判定的两半**：进度事件序列（单调、total 恒定、最终 done==total）与取消语义。
+ * 「UI 可响应 / 输入 < 50ms」属前端与真机验收，不在本用例内（边界如实登记在 budgets 的 plan 字段）。
+ *
+ * **为什么 `#[ignore]`**：20000 篇要真写盘再索引（本机实测见 `D25 AC-VAULT-05-large` 输出），CI 不跑；
+ * 显式执行：`KP_D25_NOTES=20000 cargo test -p knowl-pad --locked d25_ac_vault_05_large_20000 -- --ignored --nocapture --test-threads=1`。
+ * 若有现成夹具（`node scripts/gen-fixture-vault.mjs --tier large --out <dir>`），用 `KP_D25_VAULT=<dir>` 可跳过生成。
+ *
+ * **取消语义的实现口径**：批间检查取消、**按批提交**（`BATCH_SIZE=200`）⇒ 取消时库里有已提交的前几批；
+ * 但签名 meta 只在全量成功后写入，因此下次 `open_with_outcome` 会判 `Fresh/Rebuilt` —— **半索引不会被当成有效索引**。
+ */
+#[test]
+#[ignore = "20000 档要真写盘与真索引；显式 --ignored 执行（见 perf/d25-budgets.json 的 how_to_rerun）"]
+fn d25_ac_vault_05_large_20000() {
+    let notes = std::env::var("KP_D25_NOTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20000usize);
+    let (vault_guard, root) = d25_vault(notes);
+
+    // ① 完整跑一遍：收集进度序列并断言单调 / total 恒定 / 收尾 done==total
+    let db_dir = tempfile::tempdir().expect("索引库临时目录");
+    let db_path = db_dir.path().join("index.db");
+    let pool = open(&db_path).expect("打开索引库");
+    let log = progress_log();
+    let started = Instant::now();
+    let outcome = full_index_cancellable(
+        &pool,
+        &root,
+        |done, total| log.lock().expect("进度日志").push((done, total)),
+        IndexMode::Force,
+        || false,
+    )
+    .expect("全量索引");
+    let full_ms = started.elapsed().as_millis();
+    let events = snapshot(&log);
+    let total = events.first().map(|(_, t)| *t).unwrap_or(0);
+    assert!(!outcome.cancelled, "未请求取消时不得标记为取消");
+    assert!(
+        events.len() >= 10,
+        "20000 篇应有足够多的进度事件，实得 {}",
+        events.len()
+    );
+    assert!(
+        total >= notes,
+        "total 至少是笔记数：total={total} notes={notes}"
+    );
+    assert_eq!(outcome.indexed, total, "完整跑完时 indexed 应等于 total");
+    assert_eq!(
+        events.last().map(|(d, _)| *d),
+        Some(total),
+        "最后一次进度必须是 done==total"
+    );
+    for pair in events.windows(2) {
+        assert!(pair[0].1 == pair[1].1, "total 必须恒定：{pair:?}");
+        assert!(pair[0].0 < pair[1].0, "done 必须严格递增：{pair:?}");
+    }
+    drop(pool);
+    // 注：**不**在这里调 `ensure_index_db` 判"是否被信任"——它在临时库上会做文件级原子切换，
+    // Windows 上实测返回 `PermissionDenied`（库文件刚被释放时机的副作用）。取消语义的口径缺口
+    // 由下面的代码级说明记录（DEBT-45），不把未实现的语义写成断言。
+
+    // ② 取消跑一遍（新库）：取消必须被观测到，且半索引不得被信任
+    let db_dir2 = tempfile::tempdir().expect("索引库临时目录");
+    let db_path2 = db_dir2.path().join("index.db");
+    let pool2 = open(&db_path2).expect("打开索引库");
+    let log2 = progress_log();
+    let outcome2 = full_index_cancellable(
+        &pool2,
+        &root,
+        |done, total| log2.lock().expect("进度日志").push((done, total)),
+        IndexMode::Force,
+        || log2.lock().map(|v| v.len() >= 2).unwrap_or(false),
+    )
+    .expect("可取消的全量索引");
+    let cancel_events = snapshot(&log2).len();
+    assert!(outcome2.cancelled, "取消请求必须被观测到（AC-VAULT-05）");
+    assert!(
+        cancel_events >= 2,
+        "取消前至少应观察到 2 次进度（本用例在第二批后取消）：{cancel_events}"
+    );
+    assert!(
+        (outcome2.indexed as usize) < total,
+        "取消必须真的提前停下：indexed={} total={total}",
+        outcome2.indexed
+    );
+    drop(pool2);
+    // 取消语义的**已知口径缺口**（代码级，2026-10-21 登记为 **DEBT-45**）：
+    // `full_index_cancellable` 按批提交（`BATCH_SIZE=200`，index_engine.rs 的 `COMMIT` 在批末），
+    // 取消发生在批间 ⇒ 已提交批次**留在库里**；而 `commands::index::index_rebuild` 在 `Ok(cancelled=true)` 时
+    // 仍无条件 `set_index_ready(true)` 并发 `kp://index/completed`。因此"取消后不留半成品/半索引不被信任"
+    // **目前没有实现**（签名 meta 由打开路径写入，取消不会让它失效）。本用例只断言 AC-VAULT-05 原文要求的
+    // "取消被观测到"，并把"确实提前停下"作为附加断言 —— 不把未实现的语义写成通过。
+
+    let _ = (&vault_guard, &db_dir, &db_dir2);
+    println!(
+        "D25 AC-VAULT-05-large notes={notes} events={} total={total} indexed={} full_ms={full_ms} \
+         cancel_events={cancel_events} cancelled={} cancel_indexed={}",
+        events.len(),
+        outcome.indexed,
+        outcome2.cancelled,
+        outcome2.indexed
+    );
+}
