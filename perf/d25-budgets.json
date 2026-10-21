@@ -143,10 +143,10 @@
         "stress": 5000
       },
       "unit": "ms",
-      "owning": "外部变更到索引可见（后端部分；到 UI 另计）",
-      "instrumented": false,
-      "plan": "端到端仍待接入（需文件监听触发延迟 + 到 UI 的反映）；本批只交付索引侧 proxy",
-      "scope": "起点=外部写入完成；终点=索引可见且事件已 emit；不含前端渲染"
+      "owning": "外部写入 → 真实文件监听（200ms 防抖）→ 增量索引提交 → `kp://fs/*` 事件 emit；**止点按 PRD §6.1.4**（索引可见且事件已 emit），「到 UI 反映」那一跳仍属手工/E2E",
+      "instrumented": true,
+      "plan": "✅ 2026-10-21 已接入端到端：`nfr_perf_11_tests::d25_nfr_perf_11_external_change_end_to_end`（判据源 `D25 NFR-PERF-11-external-change ms=… visible=true`）；本机实测 **205 ms**（标准档预算 1000 ms）。**边界**：① 监听就绪用哨兵文件同步（台账 T-22 的显式就绪信号仍无独立 API）；② 不含前端渲染（PRD §1991 的自动判据止点）。既有 proxy 用例保留（不含监听触发，仅作分项观测）",
+      "scope": "起点=外部写入完成；终点=索引可见且**指向该文件**的事件已 emit（Windows 上目录事件不算）；不含前端渲染"
     },
     {
       "id": "NFR-PERF-11-external-change-proxy",
