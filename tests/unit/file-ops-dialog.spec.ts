@@ -63,6 +63,19 @@ describe('FileOpsDialog', () => {
     expect(resolve).toHaveBeenCalledWith('renameNew');
   });
 
+  it('DEBT-19：移动到… 显示**目标路径**输入与说明（file_move 的 UI 入口）', async () => {
+    const { wrapper, ops } = mountDialog();
+    ops.openMove('dir/a.md');
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain('移动到');
+    expect(wrapper.find('[data-testid="fileops-move-hint"]').exists()).toBe(true);
+    const input = wrapper.find('[data-testid="fileops-move-target"]');
+    expect(input.exists()).toBe(true);
+    expect((input.element as HTMLInputElement).value).toBe('dir/a.md');
+    // 移动用的是路径输入，不是"名称"输入（两者语义不同，不能混用同一个 testid）
+    expect(wrapper.find('[data-testid="fileops-name"]').exists()).toBe(false);
+  });
+
   it('删除：提示移入回收站（不删磁盘内容）且不显示名称输入', async () => {
     const { wrapper, ops } = mountDialog();
     ops.openDelete('dir/a.md');

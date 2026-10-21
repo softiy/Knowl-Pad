@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { asKpError } from '@core/ipc/errors';
 import {
   fileDelete,
+  fileMove,
   fileRename,
   fileValidateName,
   folderCreate,
@@ -12,7 +13,11 @@ import {
 import { useEditorStore } from '@features/editor';
 import { useFileTreeStore } from './fileTree';
 
-export type FileOpMode = 'newNote' | 'newFolder' | 'rename' | 'delete';
+/**
+ * 对话框模式。`move` 是 DEBT-19 补的（`file_move` 此前**没有 UI 入口**）：语义与重命名同一条命令
+ * （跨目录即移动），区别只在输入的是**目标路径**而不是单个名称。
+ */
+export type FileOpMode = 'newNote' | 'newFolder' | 'rename' | 'move' | 'delete';
 
 export interface FileOpDialog {
   mode: FileOpMode;
@@ -78,6 +83,16 @@ export const useFileOpsStore = defineStore('fileOps', () => {
     dialog.value = makeDialog('rename', relPath, dirOf(relPath), relPath.split('/').pop() ?? relPath);
   }
 
+  /**
+   * FR-FILE-07 / DEBT-19：**移动到…**（`file_move` 的 UI 入口）。
+   *
+   * 预填完整目标路径（= 当前位置），用户改目录部分即可；提交时走与重命名同一条命令，
+   * 因此冲突三选项（AC-FILE-04）与"编辑器跟随"（FR-FILE-28）都照旧生效。
+   */
+  function openMove(relPath: string): void {
+    dialog.value = makeDialog('move', relPath, dirOf(relPath), relPath);
+  }
+
   function openDelete(relPath: string): void {
     dialog.value = makeDialog('delete', relPath, dirOf(relPath), '');
   }
@@ -90,11 +105,17 @@ export const useFileOpsStore = defineStore('fileOps', () => {
   async function validateValue(): Promise<boolean> {
     const current = dialog.value;
     if (!current || current.mode === 'delete') return true;
-    if (!current.value.trim()) {
-      current.validation = { valid: false, reason: '名称不能为空' };
+    const raw = current.value.trim();
+    if (!raw) {
+      current.validation = {
+        valid: false,
+        reason: current.mode === 'move' ? '目标路径不能为空' : '名称不能为空',
+      };
       return false;
     }
-    const result = await fileValidateName(current.value);
+    // 移动输入的是**路径**：名称校验只对最后一段做（目录段的合法性由 Rust 的七步校验负责，SEC-02）
+    const name = current.mode === 'move' ? (raw.split('/').pop() ?? '') : raw;
+    const result = await fileValidateName(name);
     current.validation = result;
     return result.valid;
   }
@@ -149,8 +170,10 @@ export const useFileOpsStore = defineStore('fileOps', () => {
         const relPath = joinRel(current.parentDir, current.value.trim());
         const result = await noteCreate(relPath, '', policy);
         await refreshTree();
-        // FR-FILE-10：新建后直接进入编辑态
-        await useEditorStore().openNote(result.relPath);
+        // FR-FILE-10：新建后直接进入编辑态，并**聚焦标题行**（新文件的第一行就是标题的位置）。
+        // 走既有的 reveal 通路（FR-LINK-13 同一条），不新造定位机制：它内部会先 openNote，
+        // 再把"待定位行"写进 store，由 EditorView 消费一次。
+        await useEditorStore().reveal(result.relPath, 1);
         notice.value = `已新建 ${result.relPath}`;
       } else if (current.mode === 'newFolder') {
         const relPath = joinRel(current.parentDir, current.value.trim());
@@ -164,6 +187,17 @@ export const useFileOpsStore = defineStore('fileOps', () => {
         useEditorStore().followRenameUnder(result.from, result.to);
         await refreshTree();
         notice.value = `已重命名为 ${result.to}`;
+      } else if (current.mode === 'move') {
+        const to = current.value.trim();
+        if (to === current.target) {
+          current.error = '目标路径与当前相同，无需移动';
+          return;
+        }
+        const result = await fileMove(current.target, to, policy);
+        // 移动 = 跨目录的重命名：编辑器跟随（含子树）与刷新逻辑与重命名完全一致
+        useEditorStore().followRenameUnder(result.from, result.to);
+        await refreshTree();
+        notice.value = `已移动到 ${result.to}`;
       } else {
         const editorStore = useEditorStore();
         const prefix = current.target + '/';
@@ -211,6 +245,7 @@ export const useFileOpsStore = defineStore('fileOps', () => {
     createFromLink,
     openNewFolder,
     openRename,
+    openMove,
     openDelete,
     validateValue,
     submit,

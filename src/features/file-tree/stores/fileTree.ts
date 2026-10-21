@@ -8,7 +8,13 @@ import {
   vaultStateSet,
   type FileNode,
 } from '@core/ipc/commands';
-import { STATE_KEY_SHOW_HIDDEN, STATE_KEY_TREE_EXPANDED, type TreeRow } from '../types';
+import { sortNodes } from '../logic';
+import {
+  STATE_KEY_SHOW_HIDDEN,
+  STATE_KEY_TREE_EXPANDED,
+  type TreeRow,
+  type TreeSortMode,
+} from '../types';
 
 const ROOT = '';
 
@@ -26,8 +32,10 @@ export const useFileTreeStore = defineStore('fileTree', () => {
   const includeHidden = ref(false);
   const loading = ref(false);
   const error = ref<string | null>(null);
-  /** 已加载层级缓存：父目录相对路径 → 子节点（根为 ''） */
+  /** 已加载层级缓存：父目录相对路径 → 子节点（根为 ''）；**存入前已按当前排序模式排好** */
   const cache = new Map<string, FileNode[]>();
+  /** FR-FILE-02：排序模式（默认名称；纯视图状态，不持久化 —— 见 DEBT-19 的处置说明） */
+  const sortMode = ref<TreeSortMode>('name');
 
   /** 依据 `expanded` 与缓存把树压平成一维可视行。 */
   function flatten(): TreeRow[] {
@@ -55,7 +63,20 @@ export const useFileTreeStore = defineStore('fileTree', () => {
 
   async function loadChildren(relPath: string): Promise<void> {
     const nodes = await fileTree(relPath === ROOT ? undefined : relPath, includeHidden.value);
-    cache.set(relPath, nodes);
+    cache.set(relPath, sortNodes(nodes, sortMode.value));
+  }
+
+  /**
+   * FR-FILE-02：切换排序 —— **纯前端重排，不重新请求**（缓存里的每层按新模式再排一次即可）。
+   * 不持久化：排序是"当前视图怎么看"，PRD §4.11.3 的设置项清单里没有它；要持久化应作为设置项另行登记。
+   */
+  function setSortMode(mode: TreeSortMode): void {
+    if (sortMode.value === mode) return;
+    sortMode.value = mode;
+    for (const [parent, nodes] of [...cache.entries()]) {
+      cache.set(parent, sortNodes(nodes, mode));
+    }
+    rows.value = flatten();
   }
 
   /** 载入根层并重建可视行。 */
@@ -200,6 +221,8 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     rows,
     expanded,
     includeHidden,
+    sortMode,
+    setSortMode,
     loading,
     error,
     loadRoot,

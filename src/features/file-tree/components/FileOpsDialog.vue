@@ -8,6 +8,7 @@ const titles: Record<string, string> = {
   newNote: '新建笔记',
   newFolder: '新建文件夹',
   rename: '重命名',
+  move: '移动到…',
   delete: '移入回收站',
 };
 const title = computed(() => (ops.dialog ? titles[ops.dialog.mode] : ''));
@@ -21,11 +22,15 @@ const title = computed(() => (ops.dialog ? titles[ops.dialog.mode] : ''));
       <p v-if="ops.dialog.mode === 'delete'" data-testid="fileops-delete-hint">
         确定把「{{ ops.dialog.target }}」移入回收站吗？该操作不会删除磁盘内容，可在回收站恢复。
       </p>
-      <label v-else class="kp-fileops__field">
-        名称
+      <!-- FR-FILE-07 / DEBT-19：`file_move` 的 UI 入口（移动到…） -->
+      <p v-if="ops.dialog.mode === 'move'" class="kp-fileops__hint" data-testid="fileops-move-hint">
+        目标路径要含文件名（例如 笔记/归档.md）。跨目录即移动；目标已存在时会让你选处理方式。
+      </p>
+      <label v-if="ops.dialog.mode !== 'delete'" class="kp-fileops__field">
+        {{ ops.dialog.mode === 'move' ? '目标路径' : '名称' }}
         <input
           v-model="ops.dialog.value"
-          data-testid="fileops-name"
+          :data-testid="ops.dialog.mode === 'move' ? 'fileops-move-target' : 'fileops-name'"
           @input="ops.dialog.validation = null"
           @keyup.enter="ops.submit()"
         >
@@ -74,6 +79,7 @@ const title = computed(() => (ops.dialog ? titles[ops.dialog.mode] : ''));
 .kp-fileops__panel { min-width: 320px; max-width: 460px; padding: 16px; background: #fff; border-radius: 6px; box-shadow: 0 8px 24px rgb(0 0 0 / 20%); font-size: 13px; }
 .kp-fileops__title { margin: 0 0 8px; font-size: 15px; }
 .kp-fileops__field { display: flex; gap: 8px; align-items: center; }
+.kp-fileops__hint { margin: 0 0 6px; color: #666; }
 .kp-fileops__error { margin: 6px 0 0; color: #b00020; }
 .kp-fileops__conflict { margin-top: 8px; padding: 8px; background: #fff8e1; border-radius: 4px; }
 .kp-fileops__conflict button { margin-right: 6px; }

@@ -153,6 +153,7 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
   const parent = parentOf(payload.relPath, payload.isDir);
   if (payload.type === 'newNote') ops.openNewNote(parent);
   else if (payload.type === 'newFolder') ops.openNewFolder(parent);
+  else if (payload.type === 'move') ops.openMove(payload.relPath);
   else if (payload.type === 'rename') ops.openRename(payload.relPath);
   else if (payload.type === 'delete') ops.openDelete(payload.relPath);
 }

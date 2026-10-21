@@ -13,14 +13,26 @@ export interface TreeRow {
   expanded: boolean;
 }
 
-/** 右键菜单可触发的动作（FR-FILE-07 的 P0 子集）。 */
+/** 右键菜单可触发的动作（FR-FILE-07 的 P0 全集；DEBT-19 补 `move` 与 `copyWikilink`）。 */
 export type MenuAction =
   | 'newNote'
   | 'newFolder'
   | 'rename'
+  | 'move'
   | 'delete'
   | 'reveal'
-  | 'copyPath';
+  | 'copyPath'
+  | 'copyWikilink';
+
+/** FR-FILE-02 的排序模式：名称（默认）/ 修改时间 / 类型。 */
+export type TreeSortMode = 'name' | 'mtime' | 'type';
+
+/** 排序下拉的选项（标签即界面文案；顺序即下拉顺序）。 */
+export const SORT_OPTIONS: readonly { value: TreeSortMode; label: string }[] = [
+  { value: 'name', label: '名称' },
+  { value: 'mtime', label: '修改时间' },
+  { value: 'type', label: '类型' },
+];
 
 /** 每 Vault 的界面状态键（PRD §3.3 的 `vault_state` 键名约定）。 */
 export const STATE_KEY_TREE_EXPANDED = 'tree.expanded';
