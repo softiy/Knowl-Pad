@@ -13,6 +13,10 @@
   "include": [
     "vite.config.ts",
     "vitest.config.ts",
+    // 门禁 10 的 vitest 配置（DEBT-31）：与主配置同属"工具配置"，由这个 project 承接，
+    // 从而既满足 ESLint 的 parserOptions.project，又不会被 vue-tsc 的严格类型检查拉进来
+    // （它要引入 @vitejs/plugin-vue（vite 8 类型），与 vitest 3 自带的 vite 7 类型不同源）。
+    "vitest.perf.config.ts",
     "eslint.config.js"
   ]
 }
