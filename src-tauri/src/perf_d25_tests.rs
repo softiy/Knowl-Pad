@@ -1069,12 +1069,10 @@ fn d25_ac_vault_05_large_20000() {
         outcome2.indexed
     );
     drop(pool2);
-    // 取消语义的**已知口径缺口**（代码级，2026-10-21 登记为 **DEBT-45**）：
-    // `full_index_cancellable` 按批提交（`BATCH_SIZE=200`，index_engine.rs 的 `COMMIT` 在批末），
-    // 取消发生在批间 ⇒ 已提交批次**留在库里**；而 `commands::index::index_rebuild` 在 `Ok(cancelled=true)` 时
-    // 仍无条件 `set_index_ready(true)` 并发 `kp://index/completed`。因此"取消后不留半成品/半索引不被信任"
-    // **目前没有实现**（签名 meta 由打开路径写入，取消不会让它失效）。本用例只断言 AC-VAULT-05 原文要求的
-    // "取消被观测到"，并把"确实提前停下"作为附加断言 —— 不把未实现的语义写成通过。
+    // 取消语义（**DEBT-45，2026-10-21 已修复**）：`full_index_cancellable` 按批提交（BATCH_SIZE=200），取消发生在批间 ⇒
+    // 已提交批次留在库里；修复后 `commands::index::settle_rebuild` 会 `set_index_ready(false)` 并写 `rebuild_in_progress`
+    // 标记（`ensure_index_db` 见到即判 `Rebuilt`，下次打开必重建），命令只发 `kp://index/cancelled`。
+    // 本用例断言 AC-VAULT-05 原文要求的"取消被观测到"与"确实提前停下"；就绪/标记/事件的回归在 `index_cancel_tests`。
 
     let _ = (&vault_guard, &db_dir, &db_dir2);
     println!(
