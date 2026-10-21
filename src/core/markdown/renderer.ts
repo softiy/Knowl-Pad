@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it';
+import { highlightCodeBlock, resolveLanguage } from './highlight';
 import { registerKpInline } from './kpInline';
 import { sanitizeHtml } from './sanitize';
 
@@ -40,6 +41,29 @@ export const DEFAULT_CACHE_CAPACITY = 20;
  * FR-EDITOR-29 是 **P1**，本轮只标 `data-kp-kind="embed"`）。 */
 const md = new MarkdownIt({ html: true, linkify: false, typographer: false });
 registerKpInline(md);
+
+/**
+ * 代码块语法高亮（**FR-EDITOR-44** P0 / DEBT-18）：**覆盖默认 fence 渲染器** —— 技术方案 §2.2 写明的
+ * 集成方式就是「在 `md.renderer.rules.fence` 里调 `highlightCodeBlock(token.content, token.info)`」。
+ *
+ * 为什么覆盖渲染器而不是注册 plugin：高亮只需要「拿到代码文本 → 换成带 class 的 span」，覆盖渲染器是
+ * 最小介入点；plugin 会改 token 流，把"着色"变成"解析"，HL-02（先转义再包裹）/ HL-03（未知语言降级）
+ * 都更难守。
+ *
+ * **只处理 fence**：缩进式代码块（4 空格）走 `code_block` 规则，不在此列；**inline 代码不高亮**
+ * （§2.2：内容过短、无法可靠判定语言）。
+ *
+ * 语言 class 只对**受支持**的语言输出（`kp-hl--js` 等），未知语言只给基类 `kp-hl`；class 的取值全部
+ * 来自本模块的常量 / 固定枚举，**没有任何来自输入的插值** —— 这是 FR-EDITOR-44「不得引入执行代码的路径」
+ * 在集成层的落点。
+ */
+md.renderer.rules.fence = (tokens, idx) => {
+  const token = tokens[idx];
+  const lang = resolveLanguage(token.info);
+  const cls = lang === null ? 'kp-hl' : `kp-hl kp-hl--${lang}`;
+  const body = highlightCodeBlock(token.content, token.info);
+  return `<pre class="kp-pre"><code class="${cls}">${body}</code></pre>\n`;
+};
 
 /** 插入序即 LRU 序：命中后重新 set 使其变为最新。 */
 const cache = new Map<string, string>();

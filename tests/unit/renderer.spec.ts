@@ -138,3 +138,52 @@ describe('R-05 / FR-EDITOR-42：禁止 setConfig', () => {
     expect(scan('DOMPurify.setConfig({}); // r05-ok: 迁移期临时\n')).toEqual([]);
   });
 });
+
+describe('代码块高亮：fence 集成（FR-EDITOR-44 / DEBT-18）', () => {
+  beforeEach(() => clearRenderCache());
+
+/** 取渲染结果里的代码块（真解析 DOM，不用字符串包含断言）。 */
+function codeOf(html: string): Element | null {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return doc.querySelector('pre.kp-pre > code');
+}
+
+  it('```js：输出 pre.kp-pre / code.kp-hl--js，关键字与数字各自成 span', () => {
+    const code = codeOf(renderMarkdown('```js\nconst x = 1;\n```'));
+    expect(code).not.toBeNull();
+    expect(code?.getAttribute('class')).toBe('kp-hl kp-hl--js');
+    expect(code?.querySelector('span.kp-hl-keyword')?.textContent).toBe('const');
+    expect(code?.querySelector('span.kp-hl-number')?.textContent).toBe('1');
+    expect(code?.textContent).toContain('const x = 1;');
+  });
+
+  it('别名 javascript 归一到 kp-hl--js；info 带额外参数也取首段', () => {
+    expect(codeOf(renderMarkdown('```javascript\nlet a = 1;\n```'))?.getAttribute('class')).toBe(
+      'kp-hl kp-hl--js',
+    );
+    expect(
+      codeOf(renderMarkdown('```js title="demo"\nlet a = 1;\n```'))?.getAttribute('class'),
+    ).toBe('kp-hl kp-hl--js');
+  });
+
+  it('未知语言 / 无语言：只有基类 kp-hl，内容原样可见（HL-03）', () => {
+    for (const fence of ['```python\nprint(1)\n```', '```\nx < 1\n```', '```foobar\nx < 1\n```']) {
+      const code = codeOf(renderMarkdown(fence));
+      expect(code?.getAttribute('class')).toBe('kp-hl');
+      expect(code?.querySelectorAll('span').length).toBe(0);
+    }
+  });
+
+  it('inline 代码（单反引号）不做高亮（§2.2 明确不做）', () => {
+    const html = renderMarkdown('用 `const x = 1` 说明');
+    expect(html).toContain('<code>const x = 1</code>');
+    expect(html).not.toContain('kp-hl');
+  });
+
+  it('代码块内的 <script> 只能是文本（管线级安全断言）', () => {
+    const html = renderMarkdown('```js\nconst s = "<script>alert(1)</script>";\n```');
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    expect(doc.querySelector('script')).toBeNull();
+    expect(doc.querySelector('pre.kp-pre > code')?.textContent).toContain('<script>alert(1)</script>');
+  });
+});
