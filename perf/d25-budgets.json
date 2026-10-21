@@ -166,9 +166,10 @@
         "stress": 900
       },
       "unit": "MB",
-      "owning": "常驻内存（进程树合计，含 WebView2 子进程）：**已接入的止点**是「启动后停在 Vault 列表」的空闲态；「编辑 5 篇」为真机项",
+      "owning": "常驻内存（进程树合计，含 WebView2 子进程）：**已接入的止点**是「启动后停在 Vault 列表」的空闲态；**「编辑 5 篇」为真机项**（本期未覆盖）",
       "instrumented": true,
-      "plan": "✅ 2026-10-21 已接入（`scripts/perf-d25-lifecycle.mjs`，配置目录与 Vault 全在 %TEMP%）：**实测进程树 416.7 MB（peak 417.1，7 进程）> 标准档预算 300 MB ⇒ 如实报红**（未放宽阈值；成因与口径裁定见 **DEBT-46**）。**止点**：无 UI 自动化 ⇒ 采样的是「启动后停在 Vault 列表」的空闲态；「编辑 5 篇后的常驻内存」为真机项。原阻塞记录保留以说明为何需要 `KP_CONFIG_DIR`：：启动真实 App 会读写**真实配置目录**的 `global.db`（`last_startup_at`、注册表、`last_vault`），并按 `restore_last_vault` **自动打开上一次的 Vault** —— 在 owner 的机器上那可能是三个冒烟 Vault 之一（明令禁止改动），而应用**没有** vault/配置目录的覆盖开关（`main.rs` 只有 `KP_SMOKE`）。因此本轮**不启动**应用、**不编造数字**。**建议的解锁方式（需批准，属生产代码改动）**：给 `setup_app` 加一个仅测试用的 `KP_CONFIG_DIR`（或 `--config-dir`）覆盖 —— 让采样脚本把配置目录指到 `%TEMP%` 下的隔离目录，再用临时 Vault 打开并编辑 5 篇。解锁后本行的判据源为 `D25 NFR-PERF-13-memory mb=… peak=…`（进程树合计，`scripts/sample-process.mjs` 已支持）",
+      "budget_windows": 500,
+      "plan": "✅ 2026-10-21 已接入（`scripts/perf-d25-lifecycle.mjs`，配置目录与 Vault 全在 %TEMP%；本机：AMD Ryzen 7 8845HS 8C/16T / 59.7GB / NVMe）。**双判定（勘误 D-45）**：`Windows 平台档（500MB）：416.7–422.9（三次）≤ 500 ⇒ 达标`，`PRD 原标准档（300MB）：416.7–422.9 > 300 ⇒ 不达标` —— 原口径**仍未达标**，平台档只是把 Windows/WebView2 的多进程模型纳入既有参考档；**禁止**改回单进程口径。**止点**：无 UI 自动化 ⇒ 只覆盖「启动后停在 Vault 列表」的空闲态；**「编辑 5 篇后的常驻内存」为真机项**。原阻塞记录保留以说明为何需要 `KP_CONFIG_DIR`：：启动真实 App 会读写**真实配置目录**的 `global.db`（`last_startup_at`、注册表、`last_vault`），并按 `restore_last_vault` **自动打开上一次的 Vault** —— 在 owner 的机器上那可能是三个冒烟 Vault 之一（明令禁止改动），而应用**没有** vault/配置目录的覆盖开关（`main.rs` 只有 `KP_SMOKE`）。因此本轮**不启动**应用、**不编造数字**。**建议的解锁方式（需批准，属生产代码改动）**：给 `setup_app` 加一个仅测试用的 `KP_CONFIG_DIR`（或 `--config-dir`）覆盖 —— 让采样脚本把配置目录指到 `%TEMP%` 下的隔离目录，再用临时 Vault 打开并编辑 5 篇。解锁后本行的判据源为 `D25 NFR-PERF-13-memory mb=… peak=…`（进程树合计，`scripts/sample-process.mjs` 已支持）",
       "scope": "进程树合计 RSS（含 WebView 子进程），末次与峰值；**须在隔离配置目录 + 临时 Vault 下测量**"
     },
     {
