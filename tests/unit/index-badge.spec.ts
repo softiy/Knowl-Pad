@@ -101,4 +101,28 @@ describe('索引徽标：状态、重建与取消', () => {
     release.fn?.();
     await flushPromises();
   });
+
+  it('没有 Vault 时不发任何需要 Vault 的命令，并显示「未打开」（DEBT-44）', async () => {
+    const w = mount(IndexBadge, { props: { vault: VAULT } });
+    await flushPromises();
+    // 前置：有 Vault 时正常拉一次（统计进悬停详情）
+    expect(hoisted.indexStatus).toHaveBeenCalledTimes(1);
+    expect(hoisted.indexStats).toHaveBeenCalledTimes(1);
+
+    hoisted.indexStatus.mockClear();
+    hoisted.indexStats.mockClear();
+    // 模拟「切换知识库」把 current 置空：组件常驻，watch 会触发
+    await w.setProps({ vault: null });
+    await flushPromises();
+
+    // 关键断言：不再发 index_stats（否则后端必然回 E_VAULT_NOT_OPEN，并在日志里记一条假失败）
+    expect(hoisted.indexStats).not.toHaveBeenCalled();
+    expect(hoisted.indexStatus).not.toHaveBeenCalled();
+    const el = w.get('[data-testid="status-index"]');
+    expect(el.text()).toContain('未打开');
+    // 不许把"什么都没做"说成"在索引"（DEBT-44 的另一面：用户可见的假状态）
+    expect(el.text()).not.toContain('索引中');
+    // 上一个 Vault 的统计不得残留
+    expect(el.attributes('title') ?? '').toBe('');
+  });
 });

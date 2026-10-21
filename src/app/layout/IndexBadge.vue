@@ -32,8 +32,14 @@ const rebuilding = ref(false);
 const actionError = ref<string | null>(null);
 let unlisten: UnlistenFn[] = [];
 
-/** FR-VAULT-11 的三种状态：就绪 / 索引中 / 索引失败。 */
+/**
+ * FR-VAULT-11 的四种状态：**未打开** / 就绪 / 索引中 / 索引失败。
+ *
+ * 「未打开」是 2026-10-21 补的（**DEBT-44**）：此前没有 Vault 时走 `ready:false` 分支显示"索引中"，
+ * 而实际上什么都没在索引 —— 属**用户可见的假状态**（与"不要把现状说成别的"这条纪律冲突）。
+ */
 const label = computed(() => {
+  if (!props.vault) return '未打开';
   if (failed.value) return '索引失败';
   if (progress.value) {
     const p = progress.value;
@@ -50,7 +56,25 @@ const detail = computed(() => {
   return '文件 ' + s.files + ' · 链接 ' + s.links + ' · 标签 ' + s.tags;
 });
 
+/**
+ * 拉一次索引状态 + 规模详情。
+ *
+ * **没有 Vault 时直接返回**（**DEBT-44**）：`index_stats` 需要打开的 Vault（`index_stats_impl` 的守卫
+ * 返回 `E_VAULT_NOT_OPEN`），而本组件挂在 `StatusBar` 里、**不随 Vault 卸载**
+ * （`WorkspaceLayout.vue` 的 `v-if` 只包住工作区），所以关闭/切换 Vault 时 watch 仍会触发一次 ——
+ * 以前那条命令必然失败，由 `error_wrapper` 记一条 WARN（**每次切换一条假失败日志**），
+ * 再被下面的 catch 静默吞掉。现在在调用点就收手。
+ * 注意：`indexStatus` 本身不需要 Vault（无索引库时返回 `ready:false`），但仍一并不发 ——
+ * 没有 Vault 时它的返回值对界面毫无意义，留着只是多一次 IPC。
+ */
 async function refresh(): Promise<void> {
+  if (!props.vault) {
+    index.value = null;
+    stats.value = null;
+    failed.value = false;
+    error.value = null;
+    return;
+  }
   failed.value = false;
   try {
     index.value = await indexStatus();
