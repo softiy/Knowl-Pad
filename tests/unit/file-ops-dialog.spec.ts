@@ -10,11 +10,16 @@ vi.mock('@core/ipc/commands', () => ({
   fileValidateName: vi.fn(async () => ({ valid: true })),
 }));
 vi.mock('@features/file-tree/stores/fileTree', () => ({ useFileTreeStore: () => ({ refresh: vi.fn() }) }));
+// FR-FILE-32：删除确认里的引用数来自既有反链查询（替身，用例按需给值）
+vi.mock('@core/ipc/linkCommands', () => ({ linkBacklinks: vi.fn(async () => []) }));
 vi.mock('@features/editor', () => ({
   useEditorStore: () => ({ openNote: vi.fn(), closeNote: vi.fn(), followRename: vi.fn() }),
 }));
 
+import { linkBacklinks } from '@core/ipc/linkCommands';
 import { FileOpsDialog, useFileOpsStore } from '@features/file-tree';
+
+const mBacklinks = vi.mocked(linkBacklinks);
 
 function mountDialog() {
   const pinia = createPinia();
@@ -61,6 +66,44 @@ describe('FileOpsDialog', () => {
     expect(resolve).toHaveBeenCalledWith('overwrite');
     await wrapper.find('[data-testid="conflict-rename-new"]').trigger('click');
     expect(resolve).toHaveBeenCalledWith('renameNew');
+  });
+
+  it('FR-FILE-32 / AC-FILE-11：N>0 时显示「该笔记被 N 处引用」并把按钮改成「仍然删除」', async () => {
+    mBacklinks.mockResolvedValue([
+      { srcRelPath: 'a.md', srcName: 'a', linkCount: 4, embedCount: 0, items: [] },
+      { srcRelPath: 'b.md', srcName: 'b', linkCount: 1, embedCount: 0, items: [] },
+    ]);
+    const { wrapper, ops } = mountDialog();
+    ops.openDelete('A.md');
+    await vi.waitFor(() => expect(ops.dialog?.referenceCount).toBe(5));
+    await wrapper.vm.$nextTick();
+    const warn = wrapper.find('[data-testid="delete-references"]');
+    expect(warn.exists()).toBe(true);
+    // 文案逐字对齐 AC-FILE-11
+    expect(warn.text()).toContain('该笔记被 5 处引用，删除后这些链接将变为悬空链接');
+    expect(wrapper.find('[data-testid="fileops-submit"]').text()).toBe('仍然删除');
+  });
+
+  it('FR-FILE-32：N=0 时**不**出现提示、按钮保持「确定」（不制造噪声）', async () => {
+    mBacklinks.mockResolvedValue([]);
+    const { wrapper, ops } = mountDialog();
+    ops.openDelete('A.md');
+    await vi.waitFor(() => expect(ops.dialog?.referenceCount).toBe(0));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="delete-references"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="fileops-submit"]').text()).toBe('确定');
+  });
+
+  it('R-15：统计失败时如实提示「无法统计引用」，不伪装成 0 处', async () => {
+    mBacklinks.mockRejectedValue({ code: 'E_VAULT_NOT_OPEN', message: '知识库未打开' });
+    const { wrapper, ops } = mountDialog();
+    ops.openDelete('A.md');
+    await vi.waitFor(() => expect(ops.dialog?.referenceError).toBe('知识库未打开'));
+    await wrapper.vm.$nextTick();
+    const err = wrapper.find('[data-testid="delete-references-error"]');
+    expect(err.exists()).toBe(true);
+    expect(err.text()).toContain('无法统计引用');
+    expect(wrapper.find('[data-testid="delete-references"]').exists()).toBe(false);
   });
 
   it('DEBT-19：移动到… 显示**目标路径**输入与说明（file_move 的 UI 入口）', async () => {
