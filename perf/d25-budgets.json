@@ -27,9 +27,9 @@
       "kind": "acceptance",
       "budget": null,
       "unit": "boolean",
-      "owning": "解析断言：M3 解析器 + M4 链接裁决的端到端断言",
-      "instrumented": false,
-      "plan": "M5 批次 5（与 D-25 夹具一起）"
+      "owning": "解析断言：M3 解析器 + M4 链接裁决的端到端断言（300 篇夹具 + `.obsidian/` 逐字节不变 + 抽查 20 篇的出链/标签）",
+      "instrumented": true,
+      "plan": "✅ 2026-10-21 已接入：perf_d25_tests 同级的 `ac_vault_01_tests::d25_ac_vault_01_parse`（判据源 `D25 AC-VAULT-01-parse ok=1 …`）；边界=不含 IPC 薄壳与前端文件树（那两跳由真机验收覆盖）"
     },
     {
       "id": "AC-VAULT-05-progress",
