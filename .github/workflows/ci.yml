@@ -67,6 +67,14 @@ jobs:
           name: gate-report
           path: gate-report.json
 
+      # 门禁 10 的**只读**产出：本次测量（含"缺该环境基线"的情况）。`if: always()` 保证门禁红时也能拿到数字；
+      # 人工下载后把 `baseline.envs` 下的这一块贴进 .perf-baseline.json 并提交（门禁**不会**自动更新基线）。
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-baseline
+          path: artifacts/perf-baseline.json
+
   windows-gates:
     name: Windows 冒烟（构建 + 单元测试）
     runs-on: windows-latest
