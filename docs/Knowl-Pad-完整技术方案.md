@@ -514,7 +514,7 @@ pub struct VaultHandle {
 | --- | --- | --- | --- |
 | `md-editor-v3` | `^6.5.6` | MVP 阶段编辑器 | M2 使用，M8 被替换。⚠️ **刻意不升到 7.0.0**：上游已发布 major 版（2026-09-21 核实 latest = 7.0.0），但该包在 M8 即被 CodeMirror 6 整体替换，为将废弃的临时方案做 breaking 升级投入产出比过低。`^6.5.6` 的范围天然阻断升到 7.x |
 | **CodeMirror 6**（M8 引入） | 见下方子包清单 | 正式版编辑器内核 | ✅ **2026-09-21 已锁定各子包版本**（原为「各子包最新，开发前核实」） |
-| `markdown-it` | `^15.0.2` | Markdown → HTML | 🔴 安全版：修复 linkify DoS、smartquotes 二次复杂度 |
+| `markdown-it` | `^15.0.3` | Markdown → HTML | 🔴 安全版：修复 linkify DoS、smartquotes 二次复杂度 |
 | `dompurify` | `^3.4.15` | HTML 净化 | 🔴 安全版：修复 `setConfig()` 绕过 clone-guard 的 XSS；2026-09-21 跟进上游（3.4.12→3.4.15，patch，安全库建议及时跟进） |
 | 代码高亮 | **两阶段，均不引入第三方高亮库** | 代码块着色 | 详见下方「代码高亮方案」 |
 
@@ -1042,7 +1042,7 @@ strip = false
     "vue-router": "^5.3.1",
     "@tauri-apps/api": "^2.11.1",
     "md-editor-v3": "^6.5.6",
-    "markdown-it": "^15.0.2",
+    "markdown-it": "^15.0.3",
     "dompurify": "^3.4.15",
     "cytoscape": "^3.34.3",
     "cytoscape-fcose": "^2.2.0",
@@ -1154,7 +1154,7 @@ strip = false
 | `cytoscape` / `cytoscape-fcose` | `^3.34.3` / `^2.2.0` | `3.34.3` / `2.2.0` | 同 | — 无更新 |
 | `@tanstack/vue-virtual` | `^3.13.39` | `3.13.39` | `3.13.39` | — 无更新 |
 | `dayjs` | `^1.11.23` | `1.11.23` | `1.11.23` | — 无更新 |
-| `markdown-it` | `^15.0.2` | `15.0.2` | `15.0.2` | — 无更新（安全版） |
+| `markdown-it` | `^15.0.3` | `15.0.3` | `15.0.3` | 2026-10-21 升到 15.0.3（GHSA-gfr2-rv44-r23c 补丁版） |
 | `tailwindcss` / `@tailwindcss/vite` | `^4.3.3` | `4.3.3` | `4.3.3` | — 无更新 |
 | `shadcn-vue` | `^2.8.2` | `2.8.2` | `2.8.2` | — 无更新 |
 | **`typescript`** | **`~6.0.3`** | `6.0.3` | `7.0.2`（latest） | ⛔ **刻意不跟进**：`~` 阻断 7.x。理由见 §3.2.1「TS 版本决策」。6.x 分支当前最新即 6.0.3 |

@@ -18,3 +18,21 @@ overrides:
   source-map-js: ^1.2.2
   # PostCSS 选择器解析的二次复杂度导致 CPU 耗尽（GHSA-rj75-hqrm-r3gf，<7.1.6）——补丁级提升。
   postcss-selector-parser: ^7.1.6
+
+# ── 安全覆盖（2026-10-21，修门禁 7：`pnpm audit --audit-level=high` 的 3 条 high）──────────
+# ① vite **7.x**（GHSA-587h-7wmj-h5pm，受影响 >=7.0.0 <=7.3.6，修版 >=7.3.7）——来自 vitest 子树：
+#    vitest / vite-node / @vitest/mocker 声明的 vite 是 `^5 || ^6 || ^7`（**不接受 8**），因此
+#    **绝不能用全局 `vite` override 把两代混成一代**（那会让 vitest 拿到 vite 8）；按**父包逐条**提到
+#    ^7.3.7（补丁级，仍在各自声明的 ^7 范围内）。影响面：仅 vitest 那一套（测试期），不进产物。
+#    **移除条件**：vitest 升到自带 vite >= 7.3.7 的版本（或迁到支持 vite 8 的大版本）后删掉这三条，
+#    并跑一次 `pnpm install` 让它回到自然解析。
+  'vitest>vite': ^7.3.7
+  'vite-node>vite': ^7.3.7
+  '@vitest/mocker>vite': ^7.3.7
+# ② markdown-it **14.x**（GHSA-gfr2-rv44-r23c「单条多行链接引用定义的二次时间渲染（默认选项）」
+#    回归自 14.0，受影响 >=14.1.0 <14.3.3，修版 >=14.3.3）——md-editor-v3 仍锁 `^14.0.0`，
+#    markdown-it-image-figures 以 peer `*` 跟随它。两条 override 把它提到 ^14.3.3（**同 14.x**，
+#    满足父包 ^14.0.0 与 peer *，API 兼容）。注意：**直接依赖**的 markdown-it 是 15.0.3，不受影响。
+#    **移除条件**：md-editor-v3 升级到依赖 markdown-it >=14.3.3（或 15.x）后删掉这两条。
+  'md-editor-v3>markdown-it': ^14.3.3
+  'markdown-it-image-figures>markdown-it': ^14.3.3
