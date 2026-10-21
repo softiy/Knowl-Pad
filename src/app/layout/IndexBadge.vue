@@ -10,7 +10,7 @@ import {
   type VaultInfo,
 } from '@core/ipc/commands';
 import { asKpError } from '@core/ipc/errors';
-import { onIndexCompleted, onIndexFailed, onIndexProgress } from '@core/ipc/events';
+import { onIndexCancelled, onIndexCompleted, onIndexFailed, onIndexProgress } from '@core/ipc/events';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
 /**
@@ -119,6 +119,11 @@ onMounted(async () => {
         progress.value = { done: p.done, total: p.total };
       }),
       await onIndexCompleted(() => {
+        progress.value = null;
+        void refresh();
+      }),
+      // DEBT-45：取消 ≠ 完成 —— 隐藏进度并刷新（refresh 会读到 ready=false 并显示未就绪）
+      await onIndexCancelled(() => {
         progress.value = null;
         void refresh();
       }),

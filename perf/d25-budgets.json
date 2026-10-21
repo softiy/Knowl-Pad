@@ -38,7 +38,7 @@
       "unit": "events",
       "owning": "20000 篇规模的进度与取消事件断言（进度单调、total 恒定、收尾 done==total；取消被观测到且真的提前停下）",
       "instrumented": true,
-      "plan": "✅ 2026-10-21 已接入：`d25_ac_vault_05_large_20000`（`#[ignore]`，显式 `KP_D25_NOTES=20000 … -- --ignored`）；实测 events=100 total=20000 indexed=20000 full_ms=63281 cancel_events=2 cancelled=true cancel_indexed=400。**取消语义的口径缺口**（取消后仍 set_index_ready(true)、半索引不被判废）登记为 DEBT-45，不在本行伪装成已满足"
+      "plan": "✅ 2026-10-21 已接入：`d25_ac_vault_05_large_20000`（`#[ignore]`，显式 `KP_D25_NOTES=20000 … -- --ignored`）；实测 events=100 total=20000 indexed=20000 full_ms=63281 cancel_events=2 cancelled=true cancel_indexed=400。**取消语义**（DEBT-45，2026-10-21 已修复）：取消 ⇒ `index_ready=false` + 写 `rebuild_in_progress` 标记（下次打开必重建）+ 只发 `kp://index/cancelled`，用例见 `index_cancel_tests`"
     },
     {
       "id": "AC-REL-02-crash",

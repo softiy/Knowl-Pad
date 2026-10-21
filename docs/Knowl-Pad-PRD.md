@@ -1893,6 +1893,7 @@ interface KpError {
 | `kp://fs/renamed` | `{ from, to }` | 外部重命名/移动 | 文件树更新，链接重算 |
 | `kp://index/progress` | `{ phase, done, total, current_file? }` | 索引进行中（节流 ≥ 100ms） | 更新进度条 |
 | `kp://index/completed` | `{ stats, duration_ms }` | 索引完成 | 隐藏进度，刷新各面板 |
+| `kp://index/cancelled` | `{ stats, duration_ms }` | 索引被用户取消（**半索引不被信任**：已写入批次留在库里，但会留下 `rebuild_in_progress` 标记 ⇒ 下次打开必须重建；**不**发 `kp://index/completed`、**不**宣称就绪） | 隐藏进度，提示"已取消，下次打开会重建" |
 | `kp://index/failed` | `{ code, message, failed_files }` | 索引失败 | 显示错误与重试入口 |
 | `kp://index/rebuild-required` | `{ reason, old_sig, new_sig }` | 签名不匹配 | 提示需重建（FR-SIG-01） |
 | `kp://note/updated` | `{ rel_path }` | 内部写入笔记完成 | 刷新反链、标签、图谱缓存 |
