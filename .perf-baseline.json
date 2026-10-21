@@ -2,14 +2,15 @@
   "version": 2,
   "metrics": {
     "markdownRenderSmall": {
-      "value": 4.344,
+      "value": 116.44,
       "docBytes": 67160,
-      "updatedAt": "2026-10-05T04:00:23.602Z"
+      "updatedAt": "2026-10-21T03:48:45.929Z"
     },
     "markdownRenderLarge": {
-      "value": 165.3,
-      "docBytes": 2499560,
-      "updatedAt": "2026-10-05T04:00:25.180Z"
+      "value": 779.541,
+      "docBytes": 515560,
+      "updatedAt": "2026-10-21T03:48:45.930Z"
     }
-  }
+  },
+  "pipeline": "production"
 }
