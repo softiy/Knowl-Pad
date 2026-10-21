@@ -494,6 +494,185 @@ fn failed_batch_does_not_leave_the_connection_stuck_in_a_transaction() {
     );
 }
 
+// ── DEBT-43：未配对 rename 事件的自愈（count=0 的假文案 + count≥1 的误删存活文件）──────
+
+/// **2 路径 ⇒ 正常配对成 `Renamed`**，不得再多产生 Removed/Created（自愈只对未配对事件生效）。
+#[test]
+fn paired_rename_produces_only_renamed() {
+    let root = Path::new("C:/vault");
+    let kinds = vec![(
+        notify::EventKind::Modify(notify::event::ModifyKind::Name(
+            notify::event::RenameMode::Both,
+        )),
+        vec![
+            std::path::PathBuf::from("C:/vault/b.md"),
+            std::path::PathBuf::from("C:/vault/c.md"),
+        ],
+    )];
+    assert_eq!(
+        merge_events(root, kinds),
+        vec![Change::Renamed("b.md".to_string(), "c.md".to_string())],
+        "配对成功时只应有一条 Renamed（不要画蛇添足再加删/建）"
+    );
+}
+
+/// **1 路径 ⇒ `Removed` + `Created`（先删后建）**（DEBT-43 的关键判据）。
+///
+/// 这就是应用自己原子写（`note_io::atomic_write`：`.kp-tmp-*` + rename）被 debouncer 拆成
+/// 单路径事件时的形态 —— 目标文件**仍然存在**，只删不建会让它从搜索/反链/标签面板消失，
+/// 而改写类命令自己不重索引（只靠监听器捡回来）。
+#[test]
+fn unpaired_rename_enqueues_removed_and_created() {
+    let root = Path::new("C:/vault");
+    let kinds = vec![(
+        notify::EventKind::Modify(notify::event::ModifyKind::Name(
+            notify::event::RenameMode::To,
+        )),
+        vec![std::path::PathBuf::from("C:/vault/a.md")],
+    )];
+    assert_eq!(
+        merge_events(root, kinds),
+        vec![
+            Change::Removed("a.md".to_string()),
+            Change::Created("a.md".to_string()),
+        ],
+        "单路径 rename 必须既清旧行又重建（先删后建），否则存活文件会从索引消失"
+    );
+}
+
+/// **≥3 路径 ⇒ 每条都按"删 + 建"处理**（无法判断哪两条是一对时，宁可多索引也不漏）。
+#[test]
+fn multi_path_rename_enqueues_removed_and_created_for_each() {
+    let root = Path::new("C:/vault");
+    let kinds = vec![(
+        notify::EventKind::Modify(notify::event::ModifyKind::Name(
+            notify::event::RenameMode::Any,
+        )),
+        vec![
+            std::path::PathBuf::from("C:/vault/a.md"),
+            std::path::PathBuf::from("C:/vault/b.md"),
+            std::path::PathBuf::from("C:/vault/c.md"),
+        ],
+    )];
+    let changes = merge_events(root, kinds);
+    assert_eq!(
+        changes.len(),
+        6,
+        "三条路径各产生 Removed + Created：{changes:?}"
+    );
+    assert!(changes
+        .iter()
+        .any(|c| matches!(c, Change::Removed(p) if p == "a.md")));
+    assert!(changes
+        .iter()
+        .any(|c| matches!(c, Change::Created(p) if p == "c.md")));
+}
+
+/// **count=0 ⇒ 一条 Change 都不产生**（路径全落在忽略目录/根外）。
+///
+/// 这是 DEBT-43 的"假文案"那一面：旧实现在这里打 WARN 说"按删除处理"，而循环一次都不执行。
+#[test]
+fn rename_event_with_only_ignored_paths_produces_nothing() {
+    let root = Path::new("C:/vault");
+    let kinds = vec![(
+        notify::EventKind::Modify(notify::event::ModifyKind::Name(
+            notify::event::RenameMode::Both,
+        )),
+        vec![
+            std::path::PathBuf::from("C:/vault/.knowlpad/index.db.rebuild"),
+            std::path::PathBuf::from("C:/vault/.knowlpad/index.db"),
+        ],
+    )];
+    assert!(
+        merge_events(root, kinds).is_empty(),
+        "忽略目录内的 rename（如重建的原子切换）不得产生任何 Change"
+    );
+}
+
+/// **DEBT-43 的端到端判据**：应用自己的原子写（`note_io::atomic_write`，与链接/标签改写同一条路径）
+/// 之后，目标文件**仍在索引里且内容已更新** —— 不是被当成删除后消失。
+///
+/// 钉的是"误删存活文件"那一面：命令自己不重索引，全靠监听器把它捡回来。
+#[test]
+fn atomic_write_keeps_the_file_indexed() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲\n\noldword\n").expect("写笔记");
+    let pool = Arc::new(open(&root).expect("建索引库"));
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    assert_eq!(fts_hits(&pool, "oldword", "a.md"), 1, "基线：旧词命中");
+
+    let handle =
+        start_watcher_with(pool.clone(), root.clone(), |_| {}, |_c, _m| {}).expect("启动监听");
+    std::thread::sleep(SETTLE_BEFORE_CHANGE);
+
+    kp_domain::note_io::atomic_write(&root.join("a.md"), "# 甲\n\nnewword\n".as_bytes())
+        .expect("原子写应成功");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let rows = count(
+            &pool,
+            "SELECT count(*) FROM file WHERE rel_path = 'a.md' AND deleted = 0",
+        );
+        let hit_new = fts_hits(&pool, "newword", "a.md");
+        let hit_old = fts_hits(&pool, "oldword", "a.md");
+        if rows == 1 && hit_new == 1 && hit_old == 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "原子写后索引未收敛（file 行 {rows}、新词 {hit_new}、旧词 {hit_old}）
+             —— 存活文件被误判为删除？"
+        );
+        std::thread::sleep(POLL_STEP_FAST);
+    }
+    handle.stop();
+}
+
+/// **DEBT-43 的确定性端到端判据**（不依赖 notify 在本平台怎么拆事件）：
+///
+/// 直接构造"原子写被拆成单路径 rename"的那条事件，走完整链路
+/// `merge_events` → `apply_changes` → 索引，断言目标文件**仍在索引里且内容已更新**。
+///
+/// 为什么要这条：真 watcher 的版本（上面那条）在本机把原子写报成"两路径"⇒ 走配对路径，
+/// **去掉自愈也照样绿**；只有这条能把"未配对 ⇒ 只删不建"的回归钉死。
+#[test]
+fn unpaired_rename_event_keeps_the_file_indexed() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲\n\noldword\n").expect("写笔记");
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    assert_eq!(fts_hits(&pool, "oldword", "a.md"), 1, "基线：旧词命中");
+
+    // 模拟"原子写的目标侧"：内容已换新，事件只带来这一条路径
+    fs::write(root.join("a.md"), "# 甲\n\nnewword\n").expect("改写");
+    let changes = merge_events(
+        &root,
+        vec![(
+            notify::EventKind::Modify(notify::event::ModifyKind::Name(
+                notify::event::RenameMode::To,
+            )),
+            vec![root.join("a.md")],
+        )],
+    );
+    assert_eq!(
+        changes.len(),
+        2,
+        "单路径 rename 必须先删后建（DEBT-43）：{changes:?}"
+    );
+    crate::index_watch::apply_changes(&pool, &root, &changes, |_| {}).expect("增量写库");
+
+    let rows = count(
+        &pool,
+        "SELECT count(*) FROM file WHERE rel_path = 'a.md' AND deleted = 0",
+    );
+    assert_eq!(rows, 1, "存活文件不得从索引消失");
+    assert_eq!(fts_hits(&pool, "newword", "a.md"), 1, "新内容必须已可检索");
+    assert_eq!(fts_hits(&pool, "oldword", "a.md"), 0, "旧内容必须已淘汰");
+}
+
 // ── PRD 勘误 D-42 候选 (a)：增量收尾清理孤儿标签 ───────────────────────
 
 /// 某标签的 `ref_count`；`None` = 该 `tag` 行**不存在**。

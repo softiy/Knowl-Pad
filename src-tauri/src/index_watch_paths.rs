@@ -113,12 +113,29 @@ pub fn merge_events(root: &Path, kinds: Vec<(EventKind, Vec<PathBuf>)>) -> Vec<C
                 }
             }
             EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
-                // 重命名由 debouncer 的 RenameMode 处理；此处按「两个路径」尽力配对
+                // 重命名由 debouncer 的 RenameMode 处理；此处按「两个路径」尽力配对。
                 // 审计 I3：配对失败时**不能整条丢弃** —— 那会让旧路径的索引行留下（幽灵条目：
-                // 文件树里已经不存在，索引却还在，搜索/反链都会命中它）。配不上就按"删除"处理。
+                // 文件树里已经不存在，索引却还在，搜索/反链都会命中它）。
+                //
+                // **DEBT-43**：但"只按删除处理"本身也会在两个方向上出错：
+                // ① `count == 0`：所有路径都被忽略规则滤掉（`.knowlpad/` 里的重建原子切换、`.obsidian/`、
+                //    `.git/`、`.kp-tmp-*`、或 Vault 根外）⇒ **没有任何 Change 可产生**。以前这里打的是
+                //    "按删除处理"，而 for 循环一次都不执行 —— 文案是假的，降为 debug。
+                // ② `count >= 1` 但配不上：最典型的是应用自己的原子写（`note_io::atomic_write` 先写
+                //    `.kp-tmp-<pid>-<nanos>-<seq>` 再 rename）。若 debouncer 把它拆成单路径事件，可用路径
+                //    只剩**目标** —— 那是一个仍然存在的文件，被当成删除后派生行会真的消失；而链接/标签
+                //    改写命令**自己不做重索引**（只靠监听器把它捡回来）⇒ 这篇笔记会从搜索/反链/标签面板
+                //    消失，直到下一次变更或全量重建。
+                //
+                // 因此未配对时对每条可用路径**同时**入队 `Removed` + `Created`：
+                // · `Removed` 清掉"旧路径/已消失"的行（保住审计 I3 的结论）；
+                // · `Created` 是**安全空操作** —— `apply_changes` 对不存在的文件只走 `scan_entry` → None →
+                //   不写；对存在的文件则重新索引 ⇒ 这条路径无论是 rename 的 From 还是 To 侧，都收敛。
+                // 顺序固定"先删后建"（`apply_changes` 按入队顺序执行）；代价是每次未配对事件多索引一个文件。
                 let usable: Vec<_> = paths.into_iter().filter(|p| !is_ignored(root, p)).collect();
+                let count = usable.len();
                 let mut paired = false;
-                if usable.len() == 2 {
+                if count == 2 {
                     if let (Some(f), Some(t)) = (rel_of(root, &usable[0]), rel_of(root, &usable[1]))
                     {
                         if seen.insert(format!("r:{f}->{t}")) {
@@ -128,14 +145,30 @@ pub fn merge_events(root: &Path, kinds: Vec<(EventKind, Vec<PathBuf>)>) -> Vec<C
                     }
                 }
                 if !paired {
-                    tracing::warn!(
-                        count = usable.len(),
-                        "重命名事件未能配对，按删除处理以避免索引幽灵条目"
-                    );
-                    for p in usable {
-                        if let Some(rel) = rel_of(root, &p) {
-                            if seen.insert(format!("d:{rel}")) {
-                                out.push(Change::Removed(rel));
+                    if count == 0 {
+                        // 忽略目录/根外的事件：无事可做（不产生 Change，也不再谎称"按删除处理"）
+                        tracing::debug!(
+                            "重命名事件没有可用路径（忽略目录或 Vault 根外），无需处理"
+                        );
+                    } else {
+                        tracing::warn!(
+                            count,
+                            paths = %usable
+                                .iter()
+                                .map(|p| p.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            "重命名事件未能配对：先按删除处理，再重新索引（避免幽灵条目与误删存活文件）"
+                        );
+                        for p in usable {
+                            if let Some(rel) = rel_of(root, &p) {
+                                if seen.insert(format!("d:{rel}")) {
+                                    out.push(Change::Removed(rel.clone()));
+                                }
+                                // DEBT-43：同一条路径再入队 Created（不存在 ⇒ 空操作；存在 ⇒ 重索引）
+                                if seen.insert(format!("c:{rel}")) {
+                                    out.push(Change::Created(rel));
+                                }
                             }
                         }
                     }
