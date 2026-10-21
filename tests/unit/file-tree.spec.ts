@@ -173,8 +173,50 @@ describe('FileTree 组件', () => {
     ]);
     const wrapper = mountTree();
     await flushPromises();
-    const icons = renderedRows(wrapper).map((r) => r.find('.file-tree__icon').text());
-    expect(icons).toEqual(['📎', '📄']);
+    // 按**名字**断言图标（默认排序是名称，行序不再等于服务端返回序；FR-FILE-02）
+    const iconOf = (name: string) =>
+      renderedRows(wrapper)
+        .find((r) => r.find('.file-tree__name').text() === name)
+        ?.find('.file-tree__icon')
+        .text();
+    expect(iconOf('img.png')).toBe('📎');
+    expect(iconOf('data.txt')).toBe('📄');
+  });
+
+  it('FR-FILE-02：排序下拉存在，切到「修改时间」按 mtime 重排（文件夹仍优先）', async () => {
+    mTree.mockResolvedValue([
+      { relPath: 'a.md', name: 'a.md', isDir: false, kind: 'note', mtimeMs: 100 },
+      { relPath: 'b.md', name: 'b.md', isDir: false, kind: 'note', mtimeMs: 900 },
+      { relPath: 'zdir', name: 'zdir', isDir: true, kind: 'other', hasChildren: true },
+    ]);
+    const wrapper = mountTree();
+    await flushPromises();
+    const names = () => renderedRows(wrapper).map((r) => r.find('.file-tree__name').text());
+    expect(names()).toEqual(['zdir', 'a.md', 'b.md']);
+    await wrapper.find('[data-testid="tree-sort"]').setValue('mtime');
+    await flushPromises();
+    expect(names()).toEqual(['zdir', 'b.md', 'a.md']);
+  });
+
+  it('FR-FILE-07：复制 Wikilink（笔记去 .md；目录不提供该入口）', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const wrapper = mountTree();
+    await flushPromises();
+    await renderedRows(wrapper)[0].trigger('contextmenu');
+    expect(wrapper.find('[data-testid="menu-copy-wikilink"]').exists()).toBe(false);
+    await renderedRows(wrapper)[1].trigger('contextmenu');
+    await wrapper.find('[data-testid="menu-copy-wikilink"]').trigger('click');
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith('[[root]]');
+  });
+
+  it('DEBT-19：右键「移动到…」向外抛 move 动作（file_move 的 UI 入口）', async () => {
+    const wrapper = mountTree();
+    await flushPromises();
+    await renderedRows(wrapper)[1].trigger('contextmenu');
+    await wrapper.find('[data-testid="menu-move"]').trigger('click');
+    expect(wrapper.emitted('action')?.[0]).toEqual([{ type: 'move', relPath: 'root.md', isDir: false }]);
   });
 
   it('右键菜单：目录显示新建项，选择后向外抛 action', async () => {

@@ -5,6 +5,7 @@ vi.mock('@core/ipc/commands', () => ({
   noteCreate: vi.fn(),
   folderCreate: vi.fn(),
   fileRename: vi.fn(),
+  fileMove: vi.fn(),
   fileDelete: vi.fn(),
   fileValidateName: vi.fn(),
 }));
@@ -12,6 +13,7 @@ vi.mock('@core/ipc/commands', () => ({
 const hoisted = vi.hoisted(() => ({
   refresh: vi.fn(async () => {}),
   openNote: vi.fn(async () => {}),
+  reveal: vi.fn(async () => {}),
   closeNote: vi.fn(),
   closeUnder: vi.fn(),
   followRenameUnder: vi.fn(),
@@ -25,6 +27,7 @@ vi.mock('@features/editor', () => ({
   useEditorStore: () => ({
     buffers: [],
     openNote: hoisted.openNote,
+    reveal: hoisted.reveal,
     closeNote: hoisted.closeNote,
     closeUnder: hoisted.closeUnder,
     followRenameUnder: hoisted.followRenameUnder,
@@ -34,6 +37,7 @@ vi.mock('@features/editor', () => ({
 
 import {
   fileDelete,
+  fileMove,
   fileRename,
   fileValidateName,
   folderCreate,
@@ -45,6 +49,7 @@ const mValidate = vi.mocked(fileValidateName);
 const mCreate = vi.mocked(noteCreate);
 const mFolder = vi.mocked(folderCreate);
 const mRename = vi.mocked(fileRename);
+const mMove = vi.mocked(fileMove);
 const mDelete = vi.mocked(fileDelete);
 
 describe('useFileOpsStore（AC-FILE-03/04/05）', () => {
@@ -55,6 +60,7 @@ describe('useFileOpsStore（AC-FILE-03/04/05）', () => {
     mCreate.mockResolvedValue({ relPath: 'dir/新笔记.md', newMtime: 1 });
     mFolder.mockResolvedValue(undefined);
     mRename.mockResolvedValue({ from: 'a.md', to: 'b.md', newMtimeMs: 2 });
+    mMove.mockResolvedValue({ from: 'dir/a.md', to: 'arch/a.md', newMtimeMs: 3 });
     mDelete.mockResolvedValue({ relPath: 'a.md', trashedCount: 1 });
   });
 
@@ -78,16 +84,39 @@ describe('useFileOpsStore（AC-FILE-03/04/05）', () => {
     expect(mFolder).not.toHaveBeenCalled();
   });
 
-  it('新建笔记：按父目录拼路径 → 刷新树 → 打开编辑器（FR-FILE-10）', async () => {
+  it('新建笔记：按父目录拼路径 → 刷新树 → 进入编辑态并**聚焦标题行**（FR-FILE-10）', async () => {
     const ops = useFileOpsStore();
     ops.openNewNote('dir');
     ops.dialog!.value = '新笔记.md';
     await ops.submit();
     expect(mCreate).toHaveBeenCalledWith('dir/新笔记.md', '', 'cancel');
     expect(hoisted.refresh).toHaveBeenCalledTimes(1);
-    expect(hoisted.openNote).toHaveBeenCalledWith('dir/新笔记.md');
+    // FR-FILE-10 的"聚焦标题行"：走既有 reveal 通路（第 1 行），不新造定位机制
+    expect(hoisted.reveal).toHaveBeenCalledWith('dir/新笔记.md', 1);
     expect(ops.dialog).toBeNull();
     expect(ops.notice).toContain('已新建');
+  });
+
+  it('DEBT-19：移动到… —— 调 file_move、编辑器跟随、刷新树、给出提示', async () => {
+    const ops = useFileOpsStore();
+    ops.openMove('dir/a.md');
+    expect(ops.dialog?.mode).toBe('move');
+    expect(ops.dialog?.value).toBe('dir/a.md');
+    ops.dialog!.value = 'arch/a.md';
+    await ops.submit();
+    expect(mMove).toHaveBeenCalledWith('dir/a.md', 'arch/a.md', 'cancel');
+    expect(hoisted.followRenameUnder).toHaveBeenCalledWith('dir/a.md', 'arch/a.md');
+    expect(hoisted.refresh).toHaveBeenCalledTimes(1);
+    expect(ops.notice).toContain('已移动到');
+    expect(ops.dialog).toBeNull();
+  });
+
+  it('DEBT-19：移动到同一路径 → 不发命令、给出可读原因', async () => {
+    const ops = useFileOpsStore();
+    ops.openMove('dir/a.md');
+    await ops.submit();
+    expect(mMove).not.toHaveBeenCalled();
+    expect(ops.dialog?.error).toContain('相同');
   });
 
   it('AC-FILE-04：目标已存在 → 进入冲突态；选「覆盖」后带策略重试', async () => {

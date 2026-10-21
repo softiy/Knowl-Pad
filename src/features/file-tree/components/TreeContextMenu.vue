@@ -18,6 +18,9 @@ const emit = defineEmits<{ select: [action: MenuAction]; close: [] }>();
   <div class="kp-menu" :style="{ left: `${x}px`, top: `${y}px` }" @mouseleave="emit('close')">
     <button v-if="isDir && !isProtected" type="button" @click="emit('select', 'newNote')">新建笔记</button>
     <button v-if="isDir && !isProtected" type="button" @click="emit('select', 'newFolder')">新建文件夹</button>
+    <button v-if="!isProtected" type="button" data-testid="menu-move" @click="emit('select', 'move')">
+      移动到…
+    </button>
     <button v-if="!isProtected" type="button" @click="emit('select', 'rename')">重命名</button>
     <button v-if="!isProtected" type="button" @click="emit('select', 'delete')">删除</button>
     <p v-if="isProtected" class="kp-menu__note" data-testid="protected-note">
@@ -25,6 +28,14 @@ const emit = defineEmits<{ select: [action: MenuAction]; close: [] }>();
     </p>
     <button type="button" @click="emit('select', 'reveal')">在文件管理器中显示</button>
     <button type="button" @click="emit('select', 'copyPath')">复制相对路径</button>
+    <button
+      v-if="!isDir"
+      type="button"
+      data-testid="menu-copy-wikilink"
+      @click="emit('select', 'copyWikilink')"
+    >
+      复制 Wikilink
+    </button>
   </div>
 </template>
 

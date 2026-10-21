@@ -4,7 +4,15 @@ import { useVirtualizer } from '@tanstack/vue-virtual';
 import { fileReveal } from '@core/ipc/commands';
 import { asKpError } from '@core/ipc/errors';
 import { useFileTreeStore } from '../stores/fileTree';
-import { TREE_OVERSCAN, TREE_ROW_HEIGHT, type MenuAction, type TreeRow } from '../types';
+import { wikilinkOf } from '../logic';
+import {
+  SORT_OPTIONS,
+  TREE_OVERSCAN,
+  TREE_ROW_HEIGHT,
+  type MenuAction,
+  type TreeRow,
+  type TreeSortMode,
+} from '../types';
 import TreeContextMenu from './TreeContextMenu.vue';
 
 const emit = defineEmits<{
@@ -68,7 +76,22 @@ async function onMenuSelect(action: MenuAction): Promise<void> {
     await navigator.clipboard?.writeText(row.relPath);
     return;
   }
+  if (action === 'copyWikilink') {
+    // FR-FILE-07：复制的是 `[[目标]]` 文本（去掉 .md），不是路径本身
+    try {
+      await navigator.clipboard?.writeText(wikilinkOf(row.relPath));
+    } catch (err) {
+      // R-15：剪贴板被拒时给出可见原因，不静默
+      store.error = asKpError(err).message;
+    }
+    return;
+  }
   emit('action', { type: action, relPath: row.relPath, isDir: row.isDir });
+}
+
+/** FR-FILE-02：排序切换（纯前端重排，见 store 的 `setSortMode`）。 */
+function onSortChange(event: Event): void {
+  store.setSortMode((event.target as HTMLSelectElement).value as TreeSortMode);
 }
 
 /** 图标按类型区分（FR-FILE-03）；用文本符号避免引入图标库。 */
@@ -93,6 +116,12 @@ function iconOf(row: TreeRow): string {
           @change="store.setIncludeHidden(($event.target as HTMLInputElement).checked)"
         >
         显示隐藏文件
+      </label>
+      <label class="file-tree__sort">
+        排序
+        <select data-testid="tree-sort" :value="store.sortMode" @change="onSortChange">
+          <option v-for="opt in SORT_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
       </label>
     </div>
     <p v-if="store.error" class="file-tree__error">{{ store.error }}</p>

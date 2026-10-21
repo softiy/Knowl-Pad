@@ -115,6 +115,25 @@ describe('useFileTreeStore', () => {
     ]);
   });
 
+  it('FR-FILE-02：setSortMode 只重排不重新请求（默认名称；mtime 新的在前）', async () => {
+    mTree.mockResolvedValue([
+      { relPath: 'a.md', name: 'a.md', isDir: false, kind: 'note', mtimeMs: 100 },
+      { relPath: 'b.md', name: 'b.md', isDir: false, kind: 'note', mtimeMs: 900 },
+    ]);
+    const store = useFileTreeStore();
+    expect(store.sortMode).toBe('name');
+    await store.loadRoot();
+    expect(store.rows.map((r) => r.name)).toEqual(['a.md', 'b.md']);
+    mTree.mockClear();
+    store.setSortMode('mtime');
+    expect(store.sortMode).toBe('mtime');
+    expect(store.rows.map((r) => r.name)).toEqual(['b.md', 'a.md']);
+    // 纯前端重排：不得再打一次 IPC
+    expect(mTree).not.toHaveBeenCalled();
+    store.setSortMode('type');
+    expect(store.rows.map((r) => r.name)).toEqual(['a.md', 'b.md']);
+  });
+
   it('DEBT-15 一次性兼容：vault_state 没有值时回退旧全局值，并**写回本 Vault**', async () => {
     mStateGet.mockResolvedValue({ values: {} });
     mPrefGet.mockResolvedValue({ values: { [STATE_KEY_SHOW_HIDDEN]: true } });
