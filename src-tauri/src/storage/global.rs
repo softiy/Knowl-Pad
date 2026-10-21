@@ -41,10 +41,17 @@ pub fn record_startup(pool: &DbPool) -> Result<(), AppError> {
 /// 打开全局库：确保配置目录存在 → 打开库 → 应用 PRAGMA → 执行迁移。
 ///
 /// 对应 FR-GLOBAL-01 的前提：调用方在失败时必须以默认配置继续启动，不得崩溃。
+///
+/// **启动路径请用 [`open_with_recovery`]**（会保留损坏的原库并重建）；本函数保留为"严格打开"，
+/// 供测试与不关心恢复的调用点使用。
 pub fn open(config_dir: &Path) -> Result<DbPool, AppError> {
     std::fs::create_dir_all(config_dir)?;
     DbPool::open(&db_path(config_dir))
 }
+
+// 恢复逻辑单独成模块（`global_recovery.rs`）：既让本文件的 SLOC 回到 CODE-11 的预警线内，
+// 也把"启动编排"与"常规打开"两类关注点分开。这里 re-export，保持 `storage::global::*` 的调用路径不变。
+pub use crate::storage::global_recovery::{open_with_recovery, GlobalRecovery};
 
 /// Vault 注册表行（PRD §3.3 的 `vault` 表）。
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -36,6 +36,13 @@ vi.mock('@core/ipc/commands', () => ({
   fileRename: vi.fn(),
   fileDelete: vi.fn(),
   fileValidateName: vi.fn(async () => ({ valid: true })),
+  // DEBT-20：布局挂载时会取一次系统信息（全局库是否重建过）
+  systemInfo: vi.fn(async () => ({
+    platform: 'windows',
+    arch: 'x86_64',
+    version: '0.1.0',
+    globalDbRebuilt: false,
+  })),
 }));
 
 vi.mock('@core/ipc/linkCommands', () => ({ linkOutgoing: vi.fn(async () => []) }));
@@ -84,6 +91,32 @@ function mountLayout() {
 describe('WorkspaceLayout（M2 接线）', () => {
   beforeEach(() => vi.resetAllMocks());
 
+  it('FR-GLOBAL-01 / DEBT-20：全局库重建时提示一次（含保留文件名），可关闭', async () => {
+    const { systemInfo } = await import('@core/ipc/commands');
+    vi.mocked(vaultCurrent).mockResolvedValue(null);
+    // ① 正常启动：不出现任何提示
+    const normal = mountLayout();
+    await flushPromises();
+    expect(normal.find('[data-testid="global-recovered"]').exists()).toBe(false);
+    // ② 重建：出现提示，带上"原文件已保留"的文件名
+    vi.mocked(systemInfo).mockResolvedValueOnce({
+      platform: 'windows',
+      arch: 'x86_64',
+      version: '0.1.0',
+      globalDbRebuilt: true,
+      globalDbBackup: 'global.db.corrupt-1761000000',
+      globalDbReason: 'file is not a database',
+    });
+    const rebuilt = mountLayout();
+    await flushPromises();
+    const banner = rebuilt.find('[data-testid="global-recovered"]');
+    expect(banner.exists()).toBe(true);
+    expect(banner.text()).toContain('全局库已重建');
+    expect(banner.text()).toContain('global.db.corrupt-1761000000');
+    // ③ 关闭后不再出现（只提示一次）
+    await rebuilt.find('[data-testid="global-recovered-dismiss"]').trigger('click');
+    expect(rebuilt.find('[data-testid="global-recovered"]').exists()).toBe(false);
+  });
   it('未打开 Vault 时展示 Vault 列表', async () => {
     vi.mocked(vaultCurrent).mockResolvedValue(null);
     const wrapper = mountLayout();

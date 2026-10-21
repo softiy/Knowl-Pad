@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { systemInfo } from '@core/ipc/commands';
 import { bindShortcuts } from '@core/shortcut';
 import { useVaultStore } from '@features/vault';
 import { EditorView, useEditorStore } from '@features/editor';
@@ -30,12 +31,32 @@ const quickOpen = ref<InstanceType<typeof QuickOpen> | null>(null);
 const tagPanel = ref<InstanceType<typeof TagPanel> | null>(null);
 let unbind: (() => void) | null = null;
 
+/**
+ * **FR-GLOBAL-01 / DEBT-20**：全局库在本次启动被重建过时，提示一次（可关闭）。
+ *
+ * 为什么用 `system_info` 而不是事件：重建发生在**启动早期**（webview 还没就绪），事件发出去也收不到；
+ * 恢复信息是"每次启动一个值"，挂载时取一次正好，且正常启动恒为 false（不产生噪声）。
+ */
+const globalRecovery = ref<{ backup: string | null; reason: string } | null>(null);
+
+async function checkGlobalRecovery(): Promise<void> {
+  try {
+    const info = await systemInfo();
+    if (info.globalDbRebuilt === true) {
+      globalRecovery.value = { backup: info.globalDbBackup ?? null, reason: info.globalDbReason ?? '' };
+    }
+  } catch {
+    // 诊断信息取不到不影响主流程（也不静默改写别的状态）
+  }
+}
+
 // Vault 状态来自 store（唯一来源）：切换/打开/移除都会响应式传播，
 // 状态栏的 watch 因此真正生效（M1/M2 复核：此前只在挂载时取一次）。
 // 顺带绑定搜索入口（FR-SEARCH-01 的 Mod+Shift+F 与 FR-SEARCH-40 的 Mod+O）——
 // 快捷键统一走 core/shortcut（ED-04：组件不自行绑 keydown），卸载时必须注销（ED-01）。
 onMounted(() => {
   void vaultStore.init();
+  void checkGlobalRecovery();
   unbind = bindShortcuts(window, [
     {
       spec: 'Mod+Shift+F',
@@ -175,6 +196,20 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
         切换知识库
       </button>
     </header>
+    <!-- FR-GLOBAL-01 / DEBT-20：全局库重建的一次性告知（正常启动不渲染） -->
+    <div v-if="globalRecovery" class="kp-workspace__recovery" data-testid="global-recovered" role="status">
+      <p>
+        全局库已重建，请重新选择知识库。笔记数据在 Vault 内，未受影响。
+        <span v-if="globalRecovery.backup">原文件已保留为「{{ globalRecovery.backup }}」。</span>
+      </p>
+      <button
+        type="button"
+        data-testid="global-recovered-dismiss"
+        @click="globalRecovery = null"
+      >
+        知道了
+      </button>
+    </div>
     <p v-if="switchError" class="kp-workspace__error" data-testid="workspace-switch-error">
       {{ switchError }}
     </p>
@@ -226,6 +261,8 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
 .kp-workspace__body { flex: 1; display: flex; min-height: 0; }
 .kp-workspace__side { width: 280px; min-width: 200px; border-right: 1px solid var(--kp-border, #ddd); overflow: hidden; }
 .kp-workspace__main { flex: 1; min-width: 0; }
+.kp-workspace__recovery { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #fff8e1; border-bottom: 1px solid #ffe082; font-size: 13px; }
+.kp-workspace__recovery p { margin: 0; flex: 1; }
 .kp-workspace__error { margin: 0; padding: 6px 8px; color: #b00020; }
 .kp-workspace__notice { position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%); margin: 0; padding: 6px 12px; background: #e8f5e9; border-radius: 4px; font-size: 12px; }
 </style>

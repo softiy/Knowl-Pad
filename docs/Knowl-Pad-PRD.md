@@ -1877,7 +1877,7 @@ interface KpError {
 | `preference_set` ⚠️ | `{ entries }` | `null` | 批量写入偏好 |
 | `vault_state_get` | `{ keys? }` | `Record<string, unknown>` | 读取**当前 Vault** 的界面状态（文件树展开、滚动位置等；**勘误 D-13 补齐**） |
 | `vault_state_set` ⚠️ | `{ entries }` | `null` | 批量写入当前 Vault 的界面状态（界面防抖后调用） |
-| `system_info` | — | `SystemInfo` | 平台、版本、路径信息（关于页） |
+| `system_info` | — | `SystemInfo` | 平台、版本、路径信息（关于页）。**2026-10-21（DEBT-20）**：返回值追加 `globalDbRebuilt` / `globalDbBackup` / `globalDbReason` —— 全局库损坏后**重建**时的一次性告知（正常启动恒 `false`/缺省；见技术方案 §13.2 `DEBT-20`、需求 `FR-GLOBAL-01`） |
 
 > **统计核对**：9 + 14 + 4 + 6 + 9 + 5 + 5 + 5 + 5 = **62** 个 Command（`vault_pin` 为勘误 D-10 补齐项，`vault_state_get/set` 为勘误 D-13 补齐项）。其中标注 ⚠️ 的写操作共 **26** 个，分域为：Vault 域 4、文件域 8、链接改写域 3、搜索域 2、链接与图谱域 1、标签域 1、索引域 1、回收站域 4、设置与系统域 2（4+8+3+2+1+1+1+4+2 = 26）。
 
