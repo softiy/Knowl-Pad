@@ -20,6 +20,8 @@
  * 两者都不参与门禁。
  */
 import { describe, expect, it } from 'vitest';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import MarkdownIt from 'markdown-it';
 import { clearRenderCache, renderMarkdown } from '@core/markdown/renderer';
 
@@ -72,7 +74,31 @@ function renderFresh(doc: string): string {
   return renderMarkdown(doc);
 }
 
+/** 指标值表（key → 实测）。 */
+interface MetricValue {
+  value: number;
+  docBytes: number;
+}
+
+/**
+ * **门禁的判定依据**：把指标写成 JSON 文件，由 `scripts/run-perf.mjs` 读取。
+ *
+ * 为什么不靠 stdout 解析（2026-10-21 CI 真实事故）：`--reporter=dot` 的进度点是**不带换行**输出的，
+ * 于是指标行可能被粘成 `·PERF_METRIC …`；脚本用 `^PERF_METRIC` 行首锚点解析时，这条指标就**静默丢失**，
+ * 门禁只报"缺指标"（而那行又打在 stderr 上）—— 表现正是"large 通过、small 消失、退出码非零、没有解释"。
+ * 写文件后，判定不再依赖"指标行是否恰好独占一行"这种脆弱前提。
+ */
+function writeMetricsFile(metrics: Record<string, MetricValue>): void {
+  const outPath = process.env.KP_PERF_OUT;
+  if (!outPath) return;
+  mkdirSync(dirname(outPath), { recursive: true });
+  const payload = { measuredAt: new Date().toISOString(), node: process.version, metrics };
+  writeFileSync(outPath, JSON.stringify(payload, null, 2), 'utf8');
+  console.log(`PERF_METRICS_FILE ${outPath}`);
+}
+
 function emit(prefix: string, key: string, value: number, bytes: number): void {
+  // 给人看的行（日志友好）；**门禁判定不解析它** —— 见 writeMetricsFile 的说明。
   console.log(`${prefix}PERF_METRIC ${key} ${value.toFixed(3)} ${bytes}`);
 }
 
@@ -100,8 +126,15 @@ describe('门禁 10：生产渲染管线（DEBT-31）', () => {
 
     // 采样次数刻意压到"够用"：jsdom 每次渲染都会建/拆一棵 DOM，140 次小文档渲染实测会耗尽默认堆。
     // 估计量仍是「多批次中位数的最小值」，对机器噪声稳健。
-    emit('', 'markdownRenderSmall', measure(() => renderFresh(docs.small), 3, 5), bytes.small);
-    emit('', 'markdownRenderLarge', measure(() => renderFresh(docs.large), 2, 3), bytes.large);
+    const values: Record<string, MetricValue> = {
+      markdownRenderSmall: { value: measure(() => renderFresh(docs.small), 3, 5), docBytes: bytes.small },
+      markdownRenderLarge: { value: measure(() => renderFresh(docs.large), 2, 3), docBytes: bytes.large },
+    };
+    // 两条指标一起写文件、一起打印（相邻输出也降低被 reporter 打断的概率）
+    writeMetricsFile(values);
+    for (const [key, item] of Object.entries(values)) emit('', key, item.value, item.docBytes);
+    // 自检：两个门禁指标必须都在（少一个就说明探针自己坏了，别等门禁脚本去猜）
+    expect(Object.keys(values).sort()).toEqual(['markdownRenderLarge', 'markdownRenderSmall']);
   });
 
   it.skipIf(process.env.KP_PERF_FULL !== '1')(

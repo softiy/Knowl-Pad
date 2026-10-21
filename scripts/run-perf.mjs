@@ -7,13 +7,17 @@
 //
 // **为什么不再在这里 import markdown-it**：DEBT-31 实测旧路径（自建 `new MarkdownIt({html:false})`）不含
 // `renderer.ts` 的 html:true / DOMPurify / 图片策略 / kp-inline / fence 高亮，其"预算内"结论不代表用户路径
-// （0.52MB 夹具：旧 35.7ms vs 生产 781ms，约 22×）。现在的测量宿主是 `tests/perf/render-pipeline.perf.spec.ts`
-// （vitest + jsdom + 生产 `renderMarkdown`），本脚本只负责**跑它、解析数字、判预算/回退**。
-import { spawnSync } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+// （0.52MB 夹具：旧 35.7ms vs 生产 781ms，约 22×）。测量宿主是 `tests/perf/render-pipeline.perf.spec.ts`
+// （vitest + jsdom + 生产 `renderMarkdown`），本脚本只负责**跑它、读指标、判预算/回退**。
+//
+// **2026-10-21 CI 事故（#160）后的加固**：指标不再靠 stdout 行解析 —— `--reporter=dot` 的进度点不带换行，
+// 指标行会被粘成 `·PERF_METRIC …`，行首锚点 `^PERF_METRIC` 于是静默漏掉一条，表现为"large 通过、small 消失、
+// 退出码非零且没有解释"。现在探针把指标**写成 JSON 文件**（`KP_PERF_OUT`），脚本读文件；行解析只作兜底，
+// 且所有失败分支都会把**可定位的原因**打到 stdout（门禁汇总一定会显示的那一路）。
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
+import { loadBaseline, parseMetricsLines, readMetricsFile, runProbe, tailLines } from './lib/perf-probe.mjs';
 
 const argv = process.argv.slice(2);
 const bi = argv.indexOf('--baseline');
@@ -46,63 +50,66 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const vitest = fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url));
 
 /**
- * 跑测量宿主并解析 `PERF_METRIC <key> <ms> <docBytes>`。
+ * 打印**可定位**的失败原因。
  *
- * 用子进程而不是直接 import：生产管线是 TS + 路径别名 + 依赖 DOM 的 DOMPurify，必须由 vitest（jsdom）跑；
- * `--max-old-space-size=4096` 是 jsdom 里 0.52MB 文档反复渲染的实测需要（默认堆会 OOM）。
+ * 刻意打到 **stdout**：`scripts/run-gates.mjs` 会把子进程的 stdout 原样回显，而 CI 日志里 stderr 有时与 stdout
+ * 交错甚至被裁剪（#160 事故里"没有任何错误说明"就是这么来的）。另加一行 stderr 摘要，便于单独看错误流。
+ * 退出码：2 = 配置/口径问题；1 = 测量/判定失败。
  */
-function collectMetrics() {
-  const env = { ...process.env };
-  if (process.env.KP_PERF_LEGACY === undefined) env.KP_PERF_LEGACY = '0';
-  const child = spawnSync(
-    process.execPath,
-    ['--max-old-space-size=4096', vitest, 'run', '--config', 'vitest.perf.config.ts', '--reporter=dot'],
-    { cwd: root, encoding: 'utf8', env, shell: false },
-  );
-  const out = (child.stdout ?? '') + (child.stderr ?? '');
-  if (child.status !== 0) {
-    console.error('❌ 性能探针执行失败（vitest 退出码 ' + String(child.status) + '）');
-    console.error(out.trim());
-    process.exit(1);
-  }
-  const metrics = {};
-  for (const line of out.split(/\r?\n/)) {
-    const m = /^PERF_METRIC (\S+) ([\d.]+) (\d+)$/.exec(line.trim());
-    if (m) metrics[m[1]] = { value: Number(m[2]), docBytes: Number(m[3]) };
-  }
-  return metrics;
+function fail(title, details, code = 1) {
+  console.log('');
+  console.log('❌ 门禁 10 失败：' + title);
+  for (const line of details) console.log('   ' + line);
+  console.error('❌ 门禁 10 失败：' + title + '（详情见 stdout）');
+  process.exit(code);
 }
 
-function loadBaseline(raw) {
-  if (!raw) return { version: 2, pipeline: PIPELINE, metrics: {} };
-  const parsed = JSON.parse(raw);
-  if (parsed.version === 2 && parsed.metrics) return parsed;
-  // 旧格式（单指标）自动迁移，避免基线丢失
-  return {
-    version: 2,
-    pipeline: PIPELINE,
-    metrics: { markdownRenderSmall: { value: parsed.value, docBytes: parsed.docBytes, updatedAt: parsed.updatedAt } },
-  };
-}
-
-const baseline = loadBaseline(existsSync(BASELINE) ? await readFile(BASELINE, 'utf8') : null);
+const baseline = loadBaseline(existsSync(BASELINE) ? readFileSync(BASELINE, 'utf8') : null, PIPELINE);
 const update = argv.includes('--update-baseline');
 if (!existsSync(BASELINE) && !update) {
-  // 门禁不得"自愈"：基线缺失时写一份新的并放行，等于把性能门禁变成永真（删文件即可绕过）。
-  console.error('❌ 缺少性能基线 ' + BASELINE + '。首次建立请显式执行：pnpm test:perf -- --update-baseline');
-  process.exit(2);
+  fail(
+    '缺少性能基线 ' + BASELINE,
+    [
+      '首次建立请显式执行：pnpm test:perf -- --update-baseline',
+      '（门禁不得自愈：删掉基线文件就能通过，等于把性能门禁变成永真）',
+    ],
+    2,
+  );
 }
 
-const measured = collectMetrics();
-let failed = false;
+const probe = runProbe({ root, vitest });
+if (probe.exitCode !== 0) {
+  fail('测量宿主执行失败（探针进程非零退出）', [
+    '退出码：' + String(probe.exitCode) + '，signal：' + String(probe.signal) + '，耗时 ' + probe.elapsedMs + 'ms',
+    '指标文件：' + probe.filePath + (probe.fileExists ? '（存在）' : '（不存在）'),
+    '探针输出尾部（最近 30 行）：',
+    ...tailLines(probe.out, 30).map((l) => '  ' + l),
+  ]);
+}
 
+const fromFile = readMetricsFile(probe);
+const fallback = parseMetricsLines(probe.out);
+const measured = fromFile.metrics ?? fallback.metrics;
+if (fromFile.error !== null) {
+  console.log('⚠️ 指标文件不可用（' + fromFile.error + '），已回退到 stdout 行解析（命中 ' + fallback.hits + ' 条）');
+}
+
+const received = Object.keys(measured ?? {});
+const missing = METRICS.map((m) => m.key).filter((k) => measured?.[k] === undefined);
+if (missing.length > 0) {
+  fail('探针没有产出全部指标', [
+    '缺失指标：' + missing.join(', '),
+    '收到的指标：' + (received.length > 0 ? received.join(', ') : '（无）'),
+    '指标文件：' + probe.filePath + (fromFile.error ? '（不可用：' + fromFile.error + '）' : '（已读取）'),
+    '行解析兜底命中：' + fallback.hits + ' 条（若指标行被 reporter 的进度点粘住，行首锚点会漏 —— 这正是 #160）',
+    '探针输出尾部（最近 20 行）：',
+    ...tailLines(probe.out, 20).map((l) => '  ' + l),
+  ]);
+}
+
+let failed = false;
 for (const metric of METRICS) {
   const current = measured[metric.key];
-  if (!current) {
-    console.error('❌ 探针没有输出指标 ' + metric.key + '（测量宿主坏了？）');
-    failed = true;
-    continue;
-  }
   const stored = baseline.metrics[metric.key];
   console.log(
     metric.label + '：min(批次中位数) = ' + current.value.toFixed(1) + ' ms（' + current.docBytes + ' 字节）',
@@ -116,27 +123,20 @@ for (const metric of METRICS) {
     console.log('  ✓ 基线已' + (stored ? '更新' : '写入'));
     continue;
   }
-  if (metric.budgetMs && current.value > metric.budgetMs) {
-    console.error('  ❌ 超出预算 ' + metric.budgetMs + ' ms（实测 ' + current.value.toFixed(1) + ' ms）');
+  const budget = metric.budgetMs;
+  if (budget && current.value > budget) {
+    console.log('  ❌ 超出预算 ' + budget + ' ms（实测 ' + current.value.toFixed(1) + ' ms）');
     failed = true;
     continue;
   }
   if (!stored) {
-    console.error('  ❌ 基线中没有该指标（新增指标需在本次提交内用 --update-baseline 建立基线）');
+    console.log('  ❌ 基线中没有该指标（新增指标需在本次提交内用 --update-baseline 建立基线）');
     failed = true;
     continue;
   }
   const ratio = (current.value - stored.value) / stored.value;
   if (ratio > MAX_REGRESSION) {
-    console.error(
-      '  ❌ 性能回退 ' +
-        (ratio * 100).toFixed(1) +
-        '%（容差 ' +
-        MAX_REGRESSION * 100 +
-        '%，基线 ' +
-        stored.value +
-        ' ms）',
-    );
+    console.log('  ❌ 性能回退 ' + (ratio * 100).toFixed(1) + '%（容差 ' + MAX_REGRESSION * 100 + '%，基线 ' + stored.value + ' ms）');
     failed = true;
   } else {
     console.log(
@@ -145,22 +145,29 @@ for (const metric of METRICS) {
         '%，基线 ' +
         stored.value +
         ' ms，预算 ' +
-        metric.budgetMs +
+        budget +
         ' ms）',
     );
   }
 }
 
+rmSync(probe.dir, { recursive: true, force: true });
+
 if (update) {
   baseline.version = 2;
   baseline.pipeline = PIPELINE;
-  await writeFile(BASELINE, JSON.stringify(baseline, null, 2) + '\n', 'utf8');
+  writeFileSync(BASELINE, JSON.stringify(baseline, null, 2) + '\n', 'utf8');
   console.log('✓ 基线已写入 ' + BASELINE + '（口径 ' + PIPELINE + '）');
   process.exit(0);
 }
 if (baseline.pipeline !== PIPELINE) {
-  console.error('❌ 基线的测量口径与当前不一致（基线=' + String(baseline.pipeline) + '，当前=' + PIPELINE + '）：');
-  console.error('   旧口径是与生产管线不可比的数字，必须用 --update-baseline 重建。');
-  process.exit(2);
+  fail(
+    '基线的测量口径与当前不一致',
+    [
+      '基线 pipeline=' + String(baseline.pipeline) + '，当前=' + PIPELINE,
+      '旧口径是与生产管线不可比的数字，必须用 --update-baseline 重建。',
+    ],
+    2,
+  );
 }
 process.exit(failed ? 1 : 0);
