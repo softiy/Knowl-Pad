@@ -72,14 +72,4 @@ export function parseMetricsLines(out) {
   return { metrics, hits };
 }
 
-/** 读基线（兼容旧格式：单指标自动迁移）。 */
-export function loadBaseline(raw, pipeline) {
-  if (!raw) return { version: 2, pipeline, metrics: {} };
-  const parsed = JSON.parse(raw);
-  if (parsed.version === 2 && parsed.metrics) return parsed;
-  return {
-    version: 2,
-    pipeline,
-    metrics: { markdownRenderSmall: { value: parsed.value, docBytes: parsed.docBytes, updatedAt: parsed.updatedAt } },
-  };
-}
+// 基线读写搬到 `perf-baseline.mjs`（DEBT-31 的环境维度）：本文件只管"跑宿主 + 取指标"。
