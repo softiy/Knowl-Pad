@@ -3,7 +3,9 @@
 //
 // 口径（2026-10-05 修订 + 2026-10-21 DEBT-31 再修订）：
 // ① 每项指标有**绝对预算**（jsdom 标定的异常保护线）；
-// ② 相对基线回退超容差（2×）也失败 —— CI 与本机差异由 2× 容忍吸收，绝对预算单独把关。
+// ② 相对基线回退超容差（2×）也失败 —— CI 与本机差异由 2× 容忍吸收，绝对预算单独把关；
+// ③ **基线按环境隔离**（v3 的 `envs`）：绝对耗时跨机器不可比，当前环境没有基线就硬失败（exit 2）并给出建立方式，
+//    **绝不**回退到别的环境的数字（原因见 `scripts/lib/perf-baseline.mjs` 的模块头）。
 //
 // **为什么不再在这里 import markdown-it**：DEBT-31 实测旧路径（自建 `new MarkdownIt({html:false})`）不含
 // `renderer.ts` 的 html:true / DOMPurify / 图片策略 / kp-inline / fence 高亮，其"预算内"结论不代表用户路径
@@ -15,9 +17,18 @@
 // 退出码非零且没有解释"。现在探针把指标**写成 JSON 文件**（`KP_PERF_OUT`），脚本读文件；行解析只作兜底，
 // 且所有失败分支都会把**可定位的原因**打到 stdout（门禁汇总一定会显示的那一路）。
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
-import { loadBaseline, parseMetricsLines, readMetricsFile, runProbe, tailLines } from './lib/perf-probe.mjs';
+import {
+  envBlock,
+  envNames,
+  parseBaseline,
+  resolveEnvName,
+  selfTest,
+  setEnvMetrics,
+} from './lib/perf-baseline.mjs';
+import { parseMetricsLines, readMetricsFile, runProbe, tailLines } from './lib/perf-probe.mjs';
 
 const argv = process.argv.slice(2);
 const bi = argv.indexOf('--baseline');
@@ -54,7 +65,7 @@ const vitest = fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import
  *
  * 刻意打到 **stdout**：`scripts/run-gates.mjs` 会把子进程的 stdout 原样回显，而 CI 日志里 stderr 有时与 stdout
  * 交错甚至被裁剪（#160 事故里"没有任何错误说明"就是这么来的）。另加一行 stderr 摘要，便于单独看错误流。
- * 退出码：2 = 配置/口径问题；1 = 测量/判定失败。
+ * 退出码：2 = 配置/口径/环境问题；1 = 测量/判定失败。
  */
 function fail(title, details, code = 1) {
   console.log('');
@@ -64,7 +75,13 @@ function fail(title, details, code = 1) {
   process.exit(code);
 }
 
-const baseline = loadBaseline(existsSync(BASELINE) ? readFileSync(BASELINE, 'utf8') : null, PIPELINE);
+if (argv.includes('--self-test')) {
+  process.exit(selfTest() ? 0 : 1);
+}
+
+const ENV_NAME = resolveEnvName({ env: process.env, cpuCount: cpus().length });
+console.log('基线口径 ' + PIPELINE + ' / 环境 ' + ENV_NAME);
+
 const update = argv.includes('--update-baseline');
 if (!existsSync(BASELINE) && !update) {
   fail(
@@ -75,6 +92,29 @@ if (!existsSync(BASELINE) && !update) {
     ],
     2,
   );
+}
+
+let baseline;
+try {
+  baseline = existsSync(BASELINE)
+    ? parseBaseline(readFileSync(BASELINE, 'utf8'))
+    : { version: 3, pipeline: PIPELINE, envs: {} };
+} catch (err) {
+  fail('基线不可用（' + (err && err.message ? err.message : String(err)) + '）', [
+    ...(Array.isArray(err?.detail) ? err.detail : []),
+    '文件：' + BASELINE,
+  ], 2);
+}
+
+const current = envBlock(baseline, ENV_NAME);
+if (!current && !update) {
+  fail('基线里没有当前环境的数值', [
+    '当前环境：' + ENV_NAME,
+    '已有环境：' + (envNames(baseline).length > 0 ? envNames(baseline).join(', ') : '（无）'),
+    '**绝不**跨环境比较：绝对耗时跨机器不可比（24 逻辑核本机 vs 2 vCPU 共享 runner）',
+    '建立方式（在该环境上跑一次）：pnpm test:perf -- --update-baseline',
+    'CI 上可用 KP_PERF_ENV 显式指定环境名（工作流已钉死为 ci-ubuntu-2vcpu）',
+  ], 2);
 }
 
 const probe = runProbe({ root, vitest });
@@ -109,32 +149,24 @@ if (missing.length > 0) {
 
 let failed = false;
 for (const metric of METRICS) {
-  const current = measured[metric.key];
-  const stored = baseline.metrics[metric.key];
+  const value = measured[metric.key];
+  const stored = current?.metrics?.[metric.key];
   console.log(
-    metric.label + '：min(批次中位数) = ' + current.value.toFixed(1) + ' ms（' + current.docBytes + ' 字节）',
+    metric.label + '：min(批次中位数) = ' + value.value.toFixed(1) + ' ms（' + value.docBytes + ' 字节）',
   );
-  if (update) {
-    baseline.metrics[metric.key] = {
-      value: current.value,
-      docBytes: current.docBytes,
-      updatedAt: new Date().toISOString(),
-    };
-    console.log('  ✓ 基线已' + (stored ? '更新' : '写入'));
-    continue;
-  }
+  if (update) continue;
   const budget = metric.budgetMs;
-  if (budget && current.value > budget) {
-    console.log('  ❌ 超出预算 ' + budget + ' ms（实测 ' + current.value.toFixed(1) + ' ms）');
+  if (budget && value.value > budget) {
+    console.log('  ❌ 超出预算 ' + budget + ' ms（实测 ' + value.value.toFixed(1) + ' ms）');
     failed = true;
     continue;
   }
   if (!stored) {
-    console.log('  ❌ 基线中没有该指标（新增指标需在本次提交内用 --update-baseline 建立基线）');
+    console.log('  ❌ 本环境基线中没有该指标（新增指标需在本次提交内用 --update-baseline 建立基线）');
     failed = true;
     continue;
   }
-  const ratio = (current.value - stored.value) / stored.value;
+  const ratio = (value.value - stored.value) / stored.value;
   if (ratio > MAX_REGRESSION) {
     console.log('  ❌ 性能回退 ' + (ratio * 100).toFixed(1) + '%（容差 ' + MAX_REGRESSION * 100 + '%，基线 ' + stored.value + ' ms）');
     failed = true;
@@ -154,10 +186,12 @@ for (const metric of METRICS) {
 rmSync(probe.dir, { recursive: true, force: true });
 
 if (update) {
-  baseline.version = 2;
-  baseline.pipeline = PIPELINE;
-  writeFileSync(BASELINE, JSON.stringify(baseline, null, 2) + '\n', 'utf8');
-  console.log('✓ 基线已写入 ' + BASELINE + '（口径 ' + PIPELINE + '）');
+  const now = new Date().toISOString();
+  const metrics = Object.fromEntries(METRICS.map((m) => [m.key, { ...measured[m.key], updatedAt: now }]));
+  const next = setEnvMetrics(baseline, ENV_NAME, metrics, now);
+  next.pipeline = PIPELINE;
+  writeFileSync(BASELINE, JSON.stringify(next, null, 2) + '\n', 'utf8');
+  console.log('✓ 已写入 ' + BASELINE + ' 的 envs[' + ENV_NAME + ']（口径 ' + PIPELINE + '，其它环境保持不变）');
   process.exit(0);
 }
 if (baseline.pipeline !== PIPELINE) {

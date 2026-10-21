@@ -1,16 +1,21 @@
 {
-  "version": 2,
-  "metrics": {
-    "markdownRenderSmall": {
-      "value": 116.44,
-      "docBytes": 67160,
-      "updatedAt": "2026-10-21T03:48:45.929Z"
-    },
-    "markdownRenderLarge": {
-      "value": 779.541,
-      "docBytes": 515560,
+  "version": 3,
+  "pipeline": "production",
+  "envs": {
+    "local-win-16c": {
+      "metrics": {
+        "markdownRenderSmall": {
+          "value": 116.44,
+          "docBytes": 67160,
+          "updatedAt": "2026-10-21T03:48:45.929Z"
+        },
+        "markdownRenderLarge": {
+          "value": 779.541,
+          "docBytes": 515560,
+          "updatedAt": "2026-10-21T03:48:45.930Z"
+        }
+      },
       "updatedAt": "2026-10-21T03:48:45.930Z"
     }
-  },
-  "pipeline": "production"
+  }
 }

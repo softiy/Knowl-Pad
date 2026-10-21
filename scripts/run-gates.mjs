@@ -25,7 +25,9 @@ const GATES = [
   { id: '7', name: '依赖安全审计（pnpm + cargo）', cmd: [null, null], steps: [['pnpm', ['audit', '--audit-level=high']], ['cargo', ['audit', '--file', 'Cargo.lock']]] },
   { id: '8', name: 'Lockfile 一致性', cmd: ['pnpm', ['gate:lockfile']] },
   { id: '9', name: 'Rust 应用构建（tauri build 的本地等价）', cmd: ['cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--locked']] },
-  { id: '10', name: '性能基准（预算 + 回退 ≤ 2×）', cmd: ['pnpm', ['test:perf']] },
+  // 门禁 10：先跑「基线环境维度」自检（纯函数：环境名解析 / v3 格式 / 缺环境不回退），再跑性能基准。
+  // DEBT-31 / #160：基线按环境隔离，自检保证"不会偷偷用别的环境的数字"。
+  { id: '10', name: '性能基准（预算 + 回退 ≤ 2×）', cmd: [null, null], steps: [['node', ['scripts/run-perf.mjs', '--self-test']], ['pnpm', ['test:perf']]] },
     // DEBT-21：门禁 10 只测前端渲染 —— 索引路径在 Rust 侧，单列一项（基线 + 2× 容忍）。
     { id: '10b', name: '索引性能基线（列表 + 裁决）', cmd: ['node', ['scripts/run-index-perf.mjs']] },
   { id: '11', name: '安全测试集（AC-SEC）', cmd: ['pnpm', ['test:security']] },

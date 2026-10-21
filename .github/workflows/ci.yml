@@ -11,6 +11,9 @@ env:
   NODE_VERSION: '24.19.0'
   RUST_TOOLCHAIN: '1.90.0'
   CARGO_TERM_COLOR: always
+  # 门禁 10 的基线**按环境隔离**（DEBT-31 / #160 后续）：CI 用钉死的环境名读 `envs[ci-ubuntu-2vcpu]`，
+  # 不随 runner 规格（CPU 数）漂移；该环境没有基线时门禁 exit 2 并打印建立方式（绝不跨环境比较）。
+  KP_PERF_ENV: ci-ubuntu-2vcpu
 
 jobs:
   gates:
