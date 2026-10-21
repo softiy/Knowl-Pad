@@ -128,4 +128,22 @@ function onKeydown(event: KeyboardEvent): void {
 .kp-markdown :deep(.kp-link--ambiguous) { color: #b26a00; text-decoration-style: dotted; }
 .kp-markdown :deep(.kp-link--dangling)::after { content: ' ⚠'; font-size: 0.8em; }
 .kp-markdown :deep(.kp-tag) { color: #00695c; background: #e0f2f1; border-radius: 3px; padding: 0 4px; cursor: pointer; }
+
+/* ── 代码块高亮（FR-EDITOR-44 / DEBT-18）：class 全部是 kp-hl-*，沿用上面的浅色主题 ── */
+.kp-markdown :deep(pre.kp-pre) { background: #f6f8fa; border: 1px solid var(--kp-border, #eee); border-radius: 4px; padding: 8px 10px; overflow: auto; }
+.kp-markdown :deep(code.kp-hl) { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5; }
+.kp-markdown :deep(.kp-hl-keyword) { color: #a626a4; font-weight: 600; }
+.kp-markdown :deep(.kp-hl-string) { color: #50a14f; }
+.kp-markdown :deep(.kp-hl-comment) { color: #a0a1a7; font-style: italic; }
+.kp-markdown :deep(.kp-hl-number) { color: #986801; }
+.kp-markdown :deep(.kp-hl-literal) { color: #0184bc; }
+.kp-markdown :deep(.kp-hl-var) { color: #e45649; }
+.kp-markdown :deep(.kp-hl-heading) { color: #0b5394; font-weight: 600; }
+.kp-markdown :deep(.kp-hl-quote) { color: #6a737d; font-style: italic; }
+.kp-markdown :deep(.kp-hl-list) { color: #a626a4; }
+.kp-markdown :deep(.kp-hl-code) { color: #c7254e; }
+.kp-markdown :deep(.kp-hl-link) { color: #1565c0; }
+.kp-markdown :deep(.kp-hl-url) { color: #6c757d; text-decoration: underline; }
+.kp-markdown :deep(.kp-hl-strong) { font-weight: 700; }
+.kp-markdown :deep(.kp-hl-em) { font-style: italic; }
 </style>
