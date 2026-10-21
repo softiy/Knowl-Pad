@@ -197,6 +197,32 @@ fn signature_digest_is_deterministic_and_sensitive() {
     assert!(base.diff_reason(&bumped).contains("schema_version"));
 }
 
+/// **词典指纹变化的后果**（DEBT-28 / 技术方案 §4.6）：指纹变了 ⇒ 签名 digest 变 ⇒ 既有索引判废重建，
+/// 且重建原因必须**点名 `tokenizer_dict_hash`**（用户与日志能看出是词典口径变了，而不是解析规则变了）。
+#[test]
+fn tokenizer_dict_hash_change_invalidates_signature() {
+    let base = IndexSignature::from_parts(1, 0, "v1", "h1", "/vault");
+    let old_dict = IndexSignature::from_parts(1, 0, "v1", "5d5182e208a4a8a0", "/vault");
+    assert_ne!(
+        base.digest, old_dict.digest,
+        "词典指纹变化必须改变签名 digest"
+    );
+    let reason = base.diff_reason(&old_dict);
+    assert!(
+        reason.contains("tokenizer_dict_hash"),
+        "重建原因必须点名字段：{reason}"
+    );
+    assert!(
+        reason.contains("词典指纹"),
+        "同时给人读得懂的说法：{reason}"
+    );
+    // 与当前实际常量对照：签名可被"旧常量 + 当前其它字段"区分开（这就是一次性重建的判据）
+    assert_ne!(
+        TOKENIZER_DICT_HASH, "5d5182e208a4a8a0",
+        "DEBT-28 之后指纹应是构建期算出的新值（旧 FNV 常量已删除）"
+    );
+}
+
 /// **file_tag.source / explicit 两列的 DDL 判据**（2026-10-17 批次 4；SCHEMA_VERSION 1 → 2 的原因）。
 ///
 /// 用 PRAGMA table_info 而不是「插一行看看」：前者直接钉住列名与 NOT NULL，后者会随写入路径演进

@@ -10,8 +10,23 @@ use std::sync::{Arc, OnceLock};
 
 use jieba_rs::Jieba;
 
-/// 分词器版本（进索引签名；**升级 jieba-rs 时必须同步修改**，否则签名不变、不会触发重建）。
-pub const TOKENIZER_VERSION: &str = "0.11.0";
+/// 分词器版本（进索引签名；**升级 jieba-rs 时必须同步修改**）。
+///
+/// 单一来源在 `tokenizer_meta`：`build.rs` 也用 `#[path]` 引入同一个文件算词典指纹，
+/// 避免"库里的版本"与"指纹清单里的版本"两处漂移。
+pub use crate::tokenizer_meta::TOKENIZER_VERSION;
+
+/// 词典指纹（**构建期**由 `build.rs` 算出；口径见 `tokenizer_meta` 的模块头）。
+///
+/// 进索引签名：值变了 ⇒ 既有索引判废重建（技术方案 §4.6）。
+pub const fn dict_hash() -> &'static str {
+    env!("KP_TOKENIZER_DICT_HASH")
+}
+
+/// 指纹对应的**规范清单**（构建期写入；用于自检与诊断，不参与签名）。
+pub const fn dict_manifest() -> &'static str {
+    env!("KP_TOKENIZER_DICT_MANIFEST")
+}
 
 static JIEBA: OnceLock<Arc<Jieba>> = OnceLock::new();
 

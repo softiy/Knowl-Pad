@@ -13,6 +13,13 @@ dunce = "1.0.5"
 yaml-rust2 = "0.13.0"
 # 中文分词（技术方案 §3.5.2 矩阵：jieba-rs 0.11.0，引入阶段 M3；词典全量内置、不联网）
 jieba-rs = "0.11.0"
+# 词典指纹的哈希（DEBT-28）：与 src-tauri 用的同一个 crate/版本（Cargo.lock 里已是 0.11.0，无新依赖）
+# 库侧用它做"清单重算"自检；构建期由 build.rs 用它算指纹
+sha2 = "0.11.0"
+
+[build-dependencies]
+# build.rs 计算词典指纹（DEBT-28）：同一个 sha2 0.11.0，不引入新 crate
+sha2 = "0.11.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"

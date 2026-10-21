@@ -25,4 +25,5 @@ pub mod snippet;
 pub mod tag_rewrite;
 pub mod tag_tree;
 pub mod tokenize;
+pub mod tokenizer_meta;
 pub mod vault_paths;
