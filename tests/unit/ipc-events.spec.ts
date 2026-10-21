@@ -12,7 +12,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   }),
 }));
 
-import { EMITTED_EVENT_NAMES, onFsModified, onIndexFailed, onIndexProgress } from '@core/ipc/events';
+import { EMITTED_EVENT_NAMES, onFsModified, onIndexCancelled, onIndexFailed, onIndexProgress } from '@core/ipc/events';
 
 describe('IPC 事件层（FR-VAULT-09/11 的真实信号）', () => {
   beforeEach(() => {
@@ -55,6 +55,16 @@ describe('IPC 事件层（FR-VAULT-09/11 的真实信号）', () => {
     await onIndexFailed((p) => seen.push(p));
     listeners.get('kp://index/failed')?.({ payload: { code: 'E_INDEX', message: '索引失败', failedFiles: ['a.md'] } });
     expect(seen).toEqual([{ code: 'E_INDEX', message: '索引失败', failedFiles: ['a.md'] }]);
+  });
+
+  it('onIndexCancelled：取消走独立事件（DEBT-45：不得复用 completed）', async () => {
+    const seen: unknown[] = [];
+    await onIndexCancelled((p) => seen.push(p));
+    expect(listeners.has('kp://index/cancelled')).toBe(true);
+    listeners.get('kp://index/cancelled')?.({
+      payload: { stats: { indexed: 400, skipped: 0, cancelled: true }, durationMs: 1234 },
+    });
+    expect(seen).toEqual([{ stats: { indexed: 400, skipped: 0, cancelled: true }, durationMs: 1234 }]);
   });
 
   it('onFsModified：透传真实 mtime（独立审查指出此前恒为 0）', async () => {

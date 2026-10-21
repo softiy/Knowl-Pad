@@ -26,6 +26,8 @@ mod index_watch_tests;
 // 写入侧（把 ParsedNote 落进派生表）—— 从 index_engine 拆出（CODE-11 硬上限）
 #[cfg(test)]
 mod ac_vault_01_tests;
+#[cfg(test)]
+mod index_cancel_tests;
 mod index_write;
 mod logging;
 #[cfg(test)]

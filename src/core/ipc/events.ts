@@ -29,6 +29,12 @@ export interface IndexCompleted {
   durationMs: number;
 }
 
+/** `kp://index/cancelled`（DEBT-45：取消 ≠ 完成；半索引会留下不可信标记，下次打开重建）。 */
+export interface IndexCancelled {
+  stats: IndexStatsPayload;
+  durationMs: number;
+}
+
 /** `kp://index/failed`（**无 detail 字段**：以 PRD 为准）。 */
 export interface IndexFailed {
   code: string;
@@ -70,6 +76,7 @@ export interface FsRenamed {
 export const EMITTED_EVENT_NAMES = [
   'kp://index/progress',
   'kp://index/completed',
+  'kp://index/cancelled',
   'kp://index/failed',
   'kp://fs/created',
   'kp://fs/modified',
@@ -87,6 +94,8 @@ function on<T>(name: EmittedEventName, handler: (payload: T) => void): Promise<U
 
 export const onIndexProgress = (h: (p: IndexProgress) => void) => on<IndexProgress>('kp://index/progress', h);
 export const onIndexCompleted = (h: (p: IndexCompleted) => void) => on<IndexCompleted>('kp://index/completed', h);
+export const onIndexCancelled = (h: (p: IndexCancelled) => void) =>
+  on<IndexCancelled>('kp://index/cancelled', h);
 export const onIndexFailed = (h: (p: IndexFailed) => void) => on<IndexFailed>('kp://index/failed', h);
 export const onFsCreated = (h: (p: FsCreated) => void) => on<FsCreated>('kp://fs/created', h);
 export const onFsModified = (h: (p: FsModified) => void) => on<FsModified>('kp://fs/modified', h);
