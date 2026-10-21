@@ -16,6 +16,21 @@
         }
       },
       "updatedAt": "2026-10-21T03:48:45.930Z"
+    },
+    "ci-ubuntu-2vcpu": {
+      "metrics": {
+        "markdownRenderSmall": {
+          "value": 175.1313799999998,
+          "docBytes": 67160,
+          "updatedAt": "2026-10-21T04:37:11.261Z"
+        },
+        "markdownRenderLarge": {
+          "value": 1083.736019,
+          "docBytes": 515560,
+          "updatedAt": "2026-10-21T04:37:11.261Z"
+        }
+      },
+      "updatedAt": "2026-10-21T04:37:11.261Z"
     }
   }
 }
