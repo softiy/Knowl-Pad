@@ -67,8 +67,12 @@ pub const PARSER_SOURCE_HASH_VERSION: u32 = 1;
 /// 分词器版本：M3 引入 jieba-rs 后填写其 crate 版本。
 pub const TOKENIZER_VERSION: &str = kp_domain::tokenize::TOKENIZER_VERSION;
 
-/// 词典指纹：M3 由 build.rs 对内嵌词典计算 SHA-256 前 16 位（技术方案 §4.6）。
-pub const TOKENIZER_DICT_HASH: &str = "5d5182e208a4a8a0";
+/// 词典指纹（**构建期**由 `kp-domain/build.rs` 算出，SHA-256 前 16 位；技术方案 §4.6）。
+///
+/// 2026-10-21（DEBT-28）：此前是**手写 FNV-1a64 常量**，jieba-rs 升级后不会自动变；
+/// 现在引用 `kp_domain::tokenize::dict_hash()`（清单口径见 `kp_domain::tokenizer_meta`），
+/// 并在 `build.rs` 里 `rerun-if-changed=../../Cargo.lock` ⇒ 升级 jieba-rs 会自动改指纹、触发一次重建。
+pub const TOKENIZER_DICT_HASH: &str = kp_domain::tokenize::dict_hash();
 
 /// meta 中的重建标记键：重建开始时置位，完成后清除（FR-SIG-03 / NFR-REL-07）。
 pub const META_REBUILD_IN_PROGRESS: &str = "rebuild_in_progress";
@@ -137,7 +141,8 @@ impl IndexSignature {
             diffs.push("tokenizer_version 变化".to_string());
         }
         if self.tokenizer_dict_hash != other.tokenizer_dict_hash {
-            diffs.push("词典指纹变化".to_string());
+            // 带**字段名**：重建原因会进日志与 kp://index/rebuild-required，点名比"某个东西变了"可诊断
+            diffs.push("tokenizer_dict_hash 变化（词典指纹）".to_string());
         }
         if self.vault_root != other.vault_root {
             diffs.push("vault_root 变化".to_string());
