@@ -2044,7 +2044,7 @@ interface KpError {
 - Given 索引进行中（约 50% 完成）强杀进程
 - When 重新启动并打开 Vault
 - Then SQLite 无损坏报错；检测到不完整重建标记后自动重新开始全量索引；索引完成后结果与一次性完整索引**逐表一致**
-  - **实现状态（2026-10-22）**：✅ **已实现（含自动对账补齐 + 失败不宣称就绪）**。实际机制 = 每次打开走 `reconcile_after_open` → `run_reconcile`（`SkipUnchanged` 全库对账）**无条件补齐**；`rebuild_in_progress` 标记由索引引擎**开始前写、成功收尾清**（取消/崩溃共用同一套，见 DEBT-45），重开时 `ensure_index_db` 见标记即判 `Rebuilt`；对账完成前不置 `index_ready`、失败则**不启动监听**且保持未就绪。判据：`ac_rel_02_tests` 四条（链式自动补齐与干净重建逐表一致 / 正常完成重开 `Unchanged` / 失败不就绪 / `.old` 清理）；真 kill 的库完整性仍由 `d25_ac_rel_02_kill_mid_index` 覆盖（两条用例分工不同）。
+  - **实现状态（2026-10-22）**：✅ **已实现（含自动对账补齐 + 对账期不就绪 + 失败不启 watcher）**。实际机制 = 每次打开走 `reconcile_after_open` → `run_reconcile`（`SkipUnchanged` 全库对账）**无条件补齐**；`rebuild_in_progress` 标记由索引引擎**开始前写、成功收尾清**（取消/崩溃共用同一套，见 DEBT-45），重开时 `ensure_index_db` 见标记即判 `Rebuilt`；对账完成前不置 `index_ready`、失败则**不启动监听**且保持未就绪。判据：`ac_rel_02_tests` 四条（链式自动补齐与干净重建逐表一致 / 正常完成重开 `Unchanged` / 失败不就绪 / `.old` 清理）；真 kill 的库完整性仍由 `d25_ac_rel_02_kill_mid_index` 覆盖（两条用例分工不同）。
 
 **AC-REL-03｜索引可丢弃可重建（成功判据 SJ-03）**
 - Given 一个已完成索引的 Vault，记录当前全部链接、标签、标题、搜索命中结果作为基线
