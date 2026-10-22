@@ -96,17 +96,16 @@ export class MdEditorV3Adapter implements KpEditorAdapter {
   }
 
   insertLink(target: string, alias?: string): void {
-    // 链接补全的插入需要索引与光标事务（ED-03 的补全流程），M4 接入；显式失败而非静默无效
-    // 链接补全的插入需要索引与光标事务（ED-03 的补全流程在适配器之外），M4 接入；
-    // 这里显式失败而非静默无效——参数仅为满足契约签名。
+    // 链接补全的插入需要「索引 + 光标事务」的补全流程（ED-03 在适配器之外），随 M8 的编辑器重写接入
+    // （与勘误 D-39① 的 `FR-TAG-06` 同一去向）；这里显式失败而非静默无效——参数仅为满足契约签名。
     void target;
     void alias;
-    throw new EditorFeaturePendingError('链接补全与插入', 'M4');
+    throw new EditorFeaturePendingError('链接补全与插入', 'M8');
   }
 
   triggerSuggest(kind: 'link' | 'tag' | 'heading'): void {
     void kind;
-    throw new EditorFeaturePendingError('补全触发', 'M4');
+    throw new EditorFeaturePendingError('补全触发', 'M8');
   }
 
   /** 文件内查找（纯函数式，作用于当前缓冲区内容）。 */
