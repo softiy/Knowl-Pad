@@ -69,6 +69,14 @@ let failed = 0;
 for (const item of spec.budgets) {
   const kv = measured.get(item.id);
   const b = budgetOf(item);
+  // 手动脚本（审查 M7）：有测量方法、但**不经过本采样器**（例如 App 生命周期采样）。
+  // 显式标成「手动脚本 + 命令」，不写成「待接入」（那会和 instrumented:true 自相矛盾）。
+  if (item.manual) {
+    report.items.push({ id: item.id, status: "manual", command: item.manual, owning: item.owning });
+    report.coverage.manual = (report.coverage.manual ?? 0) + 1;
+    console.log("  🖐  " + item.id.padEnd(30) + " 手动脚本（不自动判定）：" + item.manual);
+    continue;
+  }
   if (!kv) {
     report.items.push({ id: item.id, status: "pending", plan: item.plan, owning: item.owning });
     report.coverage.pending += 1;
@@ -91,7 +99,7 @@ for (const item of spec.budgets) {
   else { report.coverage.failed += 1; failed += 1; console.log("  ❌ " + item.id.padEnd(28) + " " + (b === null ? "信号不成立（" + JSON.stringify(kv) + "）" : v + " " + item.unit + " 超出预算 " + b)); }
 }
 
-console.log("\n▶ D-25 覆盖：" + report.coverage.instrumented + " 已达标 / " + report.coverage.failed + " 超预算 / " + (report.coverage.proxy ?? 0) + " proxy / " + report.coverage.pending + " 待接入（共 " + spec.budgets.length + " 条，proxy 不计入判优）");
+console.log("\n▶ D-25 覆盖：" + report.coverage.instrumented + " 已达标 / " + report.coverage.failed + " 超预算 / " + (report.coverage.proxy ?? 0) + " proxy / " + (report.coverage.manual ?? 0) + " 手动脚本 / " + report.coverage.pending + " 待接入（共 " + spec.budgets.length + " 条，proxy 不计入判优）");
 if (WRITE) {
   writeFileSync(REPORT, JSON.stringify(report, null, 2) + "\n", "utf8");
   console.log("  报告已写入 " + REPORT);
