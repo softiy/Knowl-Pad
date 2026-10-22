@@ -187,3 +187,44 @@ function codeOf(html: string): Element | null {
     expect(doc.querySelector('pre.kp-pre > code')?.textContent).toContain('<script>alert(1)</script>');
   });
 });
+
+describe('阅读态 frontmatter 剥离（审查 M1 / DEBT-34 收尾，2026-10-22）', () => {
+  beforeEach(() => clearRenderCache());
+
+  it('文件头 frontmatter 不进入渲染结果（无 tags: 字样、无由它产生的 h2/hr）', () => {
+    const src = '---\ntags: [a, b]\ntitle: 我的笔记\n---\n\n# 正文\n';
+    const html = renderMarkdown(src);
+    expect(html).not.toContain('tags:');
+    expect(html).not.toContain('title:');
+    expect(html).not.toMatch(/<h2>\s*tags/i);
+    expect(html).toContain('<h1>正文</h1>');
+  });
+
+  it('正文里的 --- 分隔线仍然渲染（不误伤）', () => {
+    const src = '# 标题\n\n上\n\n---\n\n下\n';
+    expect(renderMarkdown(src)).toContain('<hr>');
+  });
+
+  it('frontmatter 之后紧跟正文时不会吞掉正文首行', () => {
+    expect(renderMarkdown('---\nk: v\n---\n# 紧接标题')).toContain('<h1>紧接标题</h1>');
+  });
+
+  it('渲染不改变文件内容（读盘 → 渲染 → 再读盘，逐字节相同）', async () => {
+    const { mkdtempSync, readFileSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'kp-fm-'));
+    const file = join(dir, 'note.md');
+    const original = '---\ntags: [a]\n---\n\n# 标题\n\n正文\n';
+    try {
+      writeFileSync(file, original, 'utf8');
+      const before = readFileSync(file);
+      renderMarkdown(readFileSync(file, 'utf8'));
+      const after = readFileSync(file);
+      expect(Array.from(after)).toEqual(Array.from(before));
+      expect(after.toString('utf8')).toBe(original);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
