@@ -10,7 +10,7 @@ use crate::commands::paths::root_of;
 use crate::error_wrapper::KpError;
 use crate::index_engine::{full_index_cancellable, IndexMode, IndexOutcome};
 use crate::state::AppState;
-use crate::storage::index::{clear_meta, set_meta, IndexSignature, META_REBUILD_IN_PROGRESS};
+use crate::storage::index::IndexSignature;
 
 /// 签名字段视图（PRD §5.3.7 的 `SignatureInfo`）。
 #[derive(Serialize)]
@@ -211,29 +211,20 @@ pub(crate) fn ending_event(ending: RebuildEnding) -> &'static str {
     }
 }
 
-/// **DEBT-45 的修复本体**：取消 ≠ 完成。
+/// **DEBT-45 / AC-REL-02 的收尾判定**：取消 ≠ 完成，且「就绪」只能由完成来宣称。
 ///
-/// 为什么必须这样：`full_index_cancellable` 按批 COMMIT（BATCH_SIZE=200），取消发生在批间 ⇒ 已提交的批次
-/// **留在库里**；若此时仍 `set_index_ready(true)`，UI 与后续命令会把"半索引"当完整索引用（比如搜索缺结果、
-/// 反向链接缺边），而用户以为索引好了。签名 meta 由**打开路径**写入、取消不会让它失效，所以必须显式留下
-/// `rebuild_in_progress` 标记 —— `ensure_index_db` 见到它就判 `Rebuilt`（index_rebuild.rs），下次打开必重建。
+/// **标记不在这里写**：`rebuild_in_progress` 的生命周期统一由索引引擎持有 —— **开始前写、成功收尾清、取消/崩溃留着**
+/// （`index_engine::full_index_with_timeout`）。这样取消与崩溃共用同一套标记（一套机制），本函数只负责两件事：
+/// ① 取消 ⇒ `index_ready=false`（半索引不得被当成可用索引）；② 成功 ⇒ `index_ready=true`。
 pub(crate) fn settle_rebuild(
     state: &AppState,
-    pool: &crate::storage::pool::DbPool,
+    _pool: &crate::storage::pool::DbPool,
     outcome: &IndexOutcome,
 ) -> Result<RebuildEnding, kp_domain::error::AppError> {
     if outcome.cancelled {
         state.set_index_ready(false);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        let stamp = now.to_string();
-        pool.with_writer(move |conn| set_meta(conn, META_REBUILD_IN_PROGRESS, &stamp))?;
         return Ok(RebuildEnding::Cancelled);
     }
-    // 成功：清掉可能残留的标记（上一次取消留下的），再宣称就绪
-    pool.with_writer(|conn| clear_meta(conn, META_REBUILD_IN_PROGRESS))?;
     state.set_index_ready(true);
     Ok(RebuildEnding::Completed)
 }
