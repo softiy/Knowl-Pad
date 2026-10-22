@@ -391,3 +391,81 @@ fn unknown_tag_returns_empty_and_unclassified_can_be_zero() {
     let tree = tag_tree_impl(&state).expect("标签树");
     assert_eq!(tree.last().expect("非空").ref_count, 0, "未分类计数为 0");
 }
+
+/// **AC-TAG-04 第二句**（2026-10-22 审查补）：人为制造 `ref_count` 不一致 ⇒ `recount_tags` 后恢复一致。
+///
+/// 断言分两段：① **先证明不一致确实被造出来了**（否则「恢复后一致」可能一开始就一致，等于没测）；
+/// ② 再断言重算后**每个**标签的 `tag.ref_count` 都等于 `file_tag` 的实际行数。
+#[test]
+fn ac_tag_04_recount_repairs_artificial_ref_count_drift() {
+    let (_v, state) = fixture(&[
+        ("a.md", "#项目/alpha 甲\n#随笔 甲\n"),
+        ("b.md", "#项目/alpha 乙\n#work 乙\n"),
+        ("c.md", "#项目/beta 丙\n"),
+    ]);
+    let pool = state.index_db().expect("索引库");
+
+    // ① 造不一致：把 `项目/alpha` 的 ref_count 人为 +7
+    let actual_of = |pool: &crate::storage::pool::DbPool, norm: &str| -> i64 {
+        pool.with_reader(|c| {
+            c.query_row(
+                "SELECT count(*) FROM file_tag ft JOIN tag t ON t.id = ft.tag_id WHERE t.norm = ?1",
+                rusqlite::params![norm],
+                |r| r.get(0),
+            )
+            .map_err(|e| kp_domain::error::AppError::db_with("统计 file_tag", &e))
+        })
+        .expect("统计 file_tag")
+    };
+    let stored_of = |pool: &crate::storage::pool::DbPool, norm: &str| -> i64 {
+        pool.with_reader(|c| {
+            c.query_row(
+                "SELECT ref_count FROM tag WHERE norm = ?1",
+                rusqlite::params![norm],
+                |r| r.get(0),
+            )
+            .map_err(|e| kp_domain::error::AppError::db_with("读 ref_count", &e))
+        })
+        .expect("读 ref_count")
+    };
+    pool.with_writer(|c| {
+        c.execute(
+            "UPDATE tag SET ref_count = ref_count + 7 WHERE norm = '项目/alpha'",
+            [],
+        )
+        .map(|_| ())
+        .map_err(|e| kp_domain::error::AppError::db_with("造 ref_count 不一致", &e))
+    })
+    .expect("造不一致");
+    assert_ne!(
+        stored_of(&pool, "项目/alpha"),
+        actual_of(&pool, "项目/alpha"),
+        "前置断言：不一致必须真的被造出来（否则下面的恢复断言没有意义）"
+    );
+
+    // ② 重算后恢复一致
+    let repaired = pool
+        .with_writer(|c| crate::index_resolve::recount_tags(c))
+        .expect("recount_tags");
+    assert!(repaired > 0, "重算应至少扫描到一个标签");
+    let rows: Vec<String> = pool
+        .with_reader(|c| {
+            let mut stmt = c
+                .prepare("SELECT norm FROM tag ORDER BY norm")
+                .map_err(|e| kp_domain::error::AppError::db_with("读标签", &e))?;
+            let it = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| kp_domain::error::AppError::db_with("读标签行", &e))?;
+            it.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| kp_domain::error::AppError::db_with("收集标签", &e))
+        })
+        .expect("读标签");
+    assert!(!rows.is_empty(), "标签表不应为空");
+    for norm in &rows {
+        assert_eq!(
+            stored_of(&pool, norm),
+            actual_of(&pool, norm),
+            "AC-TAG-04 第二句：recount 后 {norm} 的 ref_count 必须与 file_tag 实际计数一致"
+        );
+    }
+}
