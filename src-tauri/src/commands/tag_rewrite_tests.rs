@@ -324,3 +324,108 @@ fn ac_tag_02_old_tag_disappears_after_rename_and_rebuild() {
         all_norms(&state)
     );
 }
+
+/// **AC-TAG-02：80 篇规模 + 逐字节全等**（2026-10-22 审查补：此前只有 4 篇 + `contains`）。
+///
+/// 两类来源都覆盖：40 篇正文标签、40 篇 frontmatter 标签；另有 5 篇无关笔记必须逐字节不变。
+/// 断言用 **`== expected.as_bytes()`**（不是 `contains`）—— 多一个字节、少一个字节都会红。
+#[test]
+fn ac_tag_02_eighty_notes_are_rewritten_byte_exactly() {
+    let mut files: Vec<(String, String)> = Vec::new();
+    let mut expected: Vec<(String, String)> = Vec::new();
+    for i in 0..40 {
+        let rel = format!("body-{i}.md");
+        files.push((rel.clone(), format!("正文 #old/name {i}\n")));
+        expected.push((rel, format!("正文 #new/name {i}\n")));
+    }
+    for i in 0..40 {
+        let rel = format!("fm-{i}.md");
+        files.push((
+            rel.clone(),
+            format!("---\ntags: [old/name, 其他]\n---\n正文无标签 {i}\n"),
+        ));
+        expected.push((
+            rel,
+            format!("---\ntags: [new/name, 其他]\n---\n正文无标签 {i}\n"),
+        ));
+    }
+    let mut keep = Vec::new();
+    for i in 0..5 {
+        let rel = format!("keep-{i}.md");
+        files.push((rel.clone(), format!("#无关 {i}\n")));
+        keep.push((rel, format!("#无关 {i}\n")));
+    }
+    let files_ref: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let (_v, state) = fixture(&files_ref);
+
+    let preview =
+        tag_rename_preview_impl(&state, "old/name".into(), "new/name".into()).expect("预览");
+    assert_eq!(preview.file_count, 80, "40 正文 + 40 frontmatter");
+    assert_eq!(preview.span_count, 80, "每篇 1 处");
+    let result = tag_rename_apply_impl(
+        &state,
+        "old/name".into(),
+        "new/name".into(),
+        preview.preview_id.clone(),
+    )
+    .expect("落地");
+    assert_eq!(result.file_count, 80);
+
+    let root = root_of(&state);
+    for (rel, want) in &expected {
+        let got = std::fs::read(root.join(rel)).expect("读改写后的文件");
+        assert_eq!(
+            got,
+            want.as_bytes(),
+            "AC-TAG-02：{rel} 必须与期望**逐字节**相同（多/少一个字节都不行）"
+        );
+    }
+    for (rel, want) in &keep {
+        assert_eq!(
+            std::fs::read(root.join(rel)).expect("读无关文件"),
+            want.as_bytes(),
+            "无关文件必须逐字节不变：{rel}"
+        );
+    }
+
+    reindex(&state);
+    let notes = tag_notes_impl(
+        &state,
+        TagNotesArgs {
+            tag_norm: "new/name".into(),
+            include_children: true,
+        },
+    )
+    .expect("新标签的笔记");
+    assert_eq!(notes.len(), 80, "80 篇都归到新标签下");
+}
+
+/// **AC-TAG-02 全部回滚（apply 级注入）**：失败注入点在 `tag_rename_apply_impl` **内部**（不是共享骨架的单元测试）。
+///
+/// 做法：预览之后、落地之前，把 `b.md` 换成**同名目录** ⇒ 原子写 `b.md` 必然失败；
+/// 断言命令返回错误、且已写的 `a.md` 被还原成**逐字节原文**。
+#[test]
+fn ac_tag_02_apply_level_failure_rolls_back_byte_exactly() {
+    let (_v, state) = fixture(&[("a.md", "#old 甲\n"), ("b.md", "#old 乙\n")]);
+    let preview = tag_rename_preview_impl(&state, "old".into(), "new".into()).expect("预览");
+    let root = root_of(&state);
+    std::fs::remove_file(root.join("b.md")).expect("删 b");
+    std::fs::create_dir(root.join("b.md")).expect("用目录占位 b");
+    let err = tag_rename_apply_impl(
+        &state,
+        "old".into(),
+        "new".into(),
+        preview.preview_id.clone(),
+    )
+    .expect_err("apply 级失败必须返回 Err（而不是部分成功）");
+    let _ = err;
+    assert_eq!(
+        std::fs::read(root.join("a.md")).expect("读 a"),
+        b"#old \xe7\x94\xb2\n",
+        "已写的 a.md 必须回滚成逐字节原文"
+    );
+    assert!(root.join("b.md").is_dir(), "注入物（目录）应保持原样");
+}
