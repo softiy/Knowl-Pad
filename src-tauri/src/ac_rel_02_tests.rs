@@ -170,8 +170,7 @@ fn reconcile_failure_keeps_not_ready() {
 /// `.old` 残留：签名匹配（`Matches` 提前 return）的那条路径也要清掉它。
 #[test]
 fn stale_old_file_is_removed_on_open() {
-    let (_vault_guard, root) = build_vault(5);
-    let (db_guard, pool_root, db) = vault_with_db(30);
+    let (_vault_guard, root, db) = vault_with_db(5);
     let sig = IndexSignature::current(&root);
     ensure_index_db(&db, &sig).expect("建库");
     let old = db.with_file_name("index.db.old");
@@ -184,5 +183,5 @@ fn stale_old_file_is_removed_on_open() {
         !old.with_file_name("index.db.old-wal").exists(),
         ".old-wal 必须被清理"
     );
-    let _ = db_guard;
+    let _ = &root;
 }
