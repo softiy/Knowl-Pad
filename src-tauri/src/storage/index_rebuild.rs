@@ -53,6 +53,11 @@ pub fn ensure_index_db(
     if remove_db_files(&dir.join(REBUILD_DB_NAME))? {
         tracing::warn!("发现上次未完成的索引重建产物，已丢弃（FR-SIG-03 / NFR-REL-07）");
     }
+    // AC-REL-02：`.old` 是「两次 rename 之间被杀」的残留 —— 不参与判定，只占盘。
+    // 此前只在 `switch_in` 开头清，而 `Matches` 分支会提前 return（永远走不到），因此会长期残留。
+    if remove_db_files(&dir.join(OLD_DB_NAME))? {
+        tracing::warn!("发现上次原子切换残留的旧索引库（.old），已清理");
+    }
 
     let reason = if db_path.exists() {
         match inspect(db_path, expected)? {

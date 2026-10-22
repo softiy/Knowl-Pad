@@ -309,6 +309,21 @@ pub fn full_index_with_timeout<F: FnMut(usize, usize), C: Fn() -> bool>(
     parse_timeout: Duration,
 ) -> Result<IndexOutcome, AppError> {
     let started = Instant::now();
+    // AC-REL-02 / DEBT-45：**开始前**打上「重建未完成」标记（与 `ensure_index_db` 的判定是同一套机制）。
+    // 为什么必须在开始前：强杀/断电时不会有任何收尾代码执行，只有「先写标记」才能让下次打开确定地判 `Rebuilt`。
+    // 为什么取消**不清**：取消 = 未完成 —— 与崩溃共用同一标记，下次重开必重建（这正是 AC-VAULT-05 与 AC-REL-02 的接缝）。
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+        .to_string();
+    pool.with_writer(move |conn| {
+        crate::storage::index::set_meta(
+            conn,
+            crate::storage::index::META_REBUILD_IN_PROGRESS,
+            &stamp,
+        )
+    })?;
     let (entries, warnings) = scan_vault(root)?;
     let total = entries.len();
     let mut outcome = IndexOutcome {
@@ -356,6 +371,7 @@ pub fn full_index_with_timeout<F: FnMut(usize, usize), C: Fn() -> bool>(
         done += chunk_len;
         progress(done, total);
     }
+    // AC-REL-02：完成清标记在函数末尾（`Ok` 之前）；此处保留裁决/计数的事务语义。
     // 全部文件写完后统一裁决（此时候选行才齐）；裁决与计数在同一事务内完成
     pool.with_writer(|conn| {
         use crate::index_profile::{start, stop, Phase};
@@ -385,6 +401,11 @@ pub fn full_index_with_timeout<F: FnMut(usize, usize), C: Fn() -> bool>(
         conn.execute(crate::index_sql::ORPHAN_TAGS_DELETE_SQL, [])
             .map(|_| ())
             .map_err(|e| AppError::db_with("清理孤儿标签", &e))
+    })?;
+    // AC-REL-02：**全部完成后**才清标记（裁决与计数都已提交）—— 清早了会让「裁决中途被杀」被当成已完成。
+    // 取消路径在上面提前 return，不会走到这里（标记故意留着）。
+    pool.with_writer(|conn| {
+        crate::storage::index::clear_meta(conn, crate::storage::index::META_REBUILD_IN_PROGRESS)
     })?;
     outcome.duration_ms = started.elapsed().as_millis() as u64;
     Ok(outcome)

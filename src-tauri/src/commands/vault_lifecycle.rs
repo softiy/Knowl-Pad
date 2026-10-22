@@ -57,10 +57,10 @@ pub(crate) fn prepare_vault(
 
     // M3 复核 M3-8：把存储层自己的重建判定带出来（Unchanged = 索引文件被保留 → 确实建立过）。
     let (pool, outcome) = crate::storage::index::open_with_outcome(&root)?;
-    let index_ready = matches!(
-        outcome,
-        crate::storage::index_rebuild::RebuildOutcome::Unchanged
-    );
+    // AC-REL-02：即使签名匹配也**不能**在打开时就宣称就绪 —— 打开后还要跑一次对账（`reconcile_after_open`），
+    // 半索引/缺行只有在那一轮之后才补齐。就绪由对账完成置位（见 commands::vault::run_reconcile）。
+    let _ = outcome;
+    let index_ready = false;
     Ok(PreparedVault {
         root,
         display_name,

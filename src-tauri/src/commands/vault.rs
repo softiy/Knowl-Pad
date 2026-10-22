@@ -53,7 +53,10 @@ fn spawn_reconcile_and_watch(
                 }),
             );
         };
-        match full_index_cancellable(&pool, &root, progress, IndexMode::SkipUnchanged, || false) {
+        // AC-REL-02：**对账完成前不得宣称就绪**（此前 Unchanged 在打开时就置 true，UI 会先显示「就绪」）。
+        let state = app.state::<AppState>();
+        let result = run_reconcile(&state, &pool, &root, progress);
+        match result {
             Ok(outcome) => {
                 let _ = app.emit(
                     "kp://index/completed",
@@ -77,9 +80,11 @@ fn spawn_reconcile_and_watch(
                         failed_files: Vec::new(),
                     },
                 );
+                // AC-REL-02：对账失败 ⇒ **不启动监听**（否则增量会建在半索引上），就绪保持 false。
+                // 用户能从 kp://index/failed 与「未就绪」状态看出来；下次打开会因标记而重建。
+                return;
             }
         }
-        let state = app.state::<AppState>();
         // M3 复核 blocker 修复：监听是「每个 Vault 一个」。此前用不带 root 的
         if !state.has_watcher_for(&root) {
             state.stop_watcher();
@@ -94,6 +99,24 @@ fn spawn_reconcile_and_watch(
             }
         }
     });
+}
+
+/// 打开 Vault 后的**对账本体**（可单测，不依赖 Tauri 事件/句柄）。
+///
+/// AC-REL-02：就绪信号反映「对账是否完成」—— 开始前置 false，成功后才 true；失败保持 false
+/// （调用方据此**不启动监听**，见 `spawn_reconcile_and_watch`）。
+pub(crate) fn run_reconcile<P: FnMut(usize, usize)>(
+    state: &AppState,
+    pool: &crate::storage::pool::DbPool,
+    root: &std::path::Path,
+    progress: P,
+) -> Result<crate::index_engine::IndexOutcome, kp_domain::error::AppError> {
+    state.set_index_ready(false);
+    let result = full_index_cancellable(pool, root, progress, IndexMode::SkipUnchanged, || false);
+    if result.is_ok() {
+        state.set_index_ready(true);
+    }
+    result
 }
 
 /// 从状态里取根与索引库；两者齐备才启动后台任务。
