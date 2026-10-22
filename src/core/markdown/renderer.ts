@@ -65,6 +65,21 @@ md.renderer.rules.fence = (tokens, idx) => {
   return `<pre class="kp-pre"><code class="${cls}">${body}</code></pre>\n`;
 };
 
+/**
+ * **剥离文件头 frontmatter**（审查 M1，2026-10-22）：阅读/分屏此前把 `---\ntags: [a]\n---` 交给 markdown-it，
+ * 输出 `<hr><h2>tags: [a]</h2>` —— 用户能看到一行 `tags: …` 标题。
+ *
+ * 口径：只有**文件第一行**是 `---`（可带 BOM）且后面能配到一行 `---` 时才算 frontmatter；
+ * 正文中间/开头的其它 `---` 一律不碰（它们是 CommonMark 的分隔线，必须照常渲染）。
+ * **只影响渲染输入**，不改文件内容：调用方传进来的 source 原样保留。
+ */
+const FRONTMATTER = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
+
+export function stripFrontmatter(source: string): string {
+  const matched = FRONTMATTER.exec(source);
+  return matched === null ? source : source.slice(matched[0].length);
+}
+
 /** 插入序即 LRU 序：命中后重新 set 使其变为最新。 */
 const cache = new Map<string, string>();
 let hits = 0;
@@ -140,7 +155,8 @@ export function renderMarkdown(source: string, options: RenderOptions = {}): str
     return cached;
   }
   misses += 1;
-  const html = applyImagePolicy(sanitizeHtml(md.render(source)), options.resolveAsset);
+  // 渲染输入先剥掉文件头 frontmatter（缓存键仍按**原文**算，保证同一文件命中同一份结果）
+  const html = applyImagePolicy(sanitizeHtml(md.render(stripFrontmatter(source))), options.resolveAsset);
   cache.set(key, html);
   const capacity = options.cacheCapacity ?? DEFAULT_CACHE_CAPACITY;
   while (cache.size > capacity) {
