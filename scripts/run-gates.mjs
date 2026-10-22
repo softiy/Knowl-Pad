@@ -24,6 +24,9 @@ const GATES = [
   { id: '5', name: '前端单元/组件测试 + 覆盖率', cmd: ['pnpm', ['test:coverage']] },
   { id: '7', name: '依赖安全审计（pnpm + cargo）', cmd: [null, null], steps: [['pnpm', ['audit', '--audit-level=high']], ['cargo', ['audit', '--file', 'Cargo.lock']]] },
   { id: '8', name: 'Lockfile 一致性', cmd: ['pnpm', ['gate:lockfile']] },
+  // 门禁 8b（DEBT-28 遗留）：Cargo 解析后的 jieba-rs feature 集合必须与 workspace 声明一致 ——
+  // 词典指纹清单里的 features=… 由 build.rs 读 Cargo.toml 得来；两边不一致时指纹会「声称覆盖」一个假集合。
+  { id: '8b', name: 'jieba-rs feature 集合（声明 vs cargo metadata 解析）', cmd: [null, null], steps: [['node', ['scripts/check-jieba-features.mjs', '--self-test']], ['node', ['scripts/check-jieba-features.mjs']]] },
   { id: '9', name: 'Rust 应用构建（tauri build 的本地等价）', cmd: ['cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--locked']] },
   // 门禁 10：先跑「基线环境维度」自检（纯函数：环境名解析 / v3 格式 / 缺环境不回退），再跑性能基准。
   // DEBT-31 / #160：基线按环境隔离，自检保证"不会偷偷用别的环境的数字"。

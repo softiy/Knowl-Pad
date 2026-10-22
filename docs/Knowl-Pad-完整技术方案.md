@@ -3315,6 +3315,10 @@ jobs:
       - run: pnpm audit --audit-level=high             # 门禁 7
       - run: cargo audit --file Cargo.lock             # 门禁 7（工作区锁在仓库根）
       - run: pnpm gate:lockfile                        # 门禁 8
+      # 门禁 8b（DEBT-28 遗留）：Cargo 解析后的 jieba-rs feature 集合必须与 workspace 声明一致 ——
+      # 词典指纹清单里的 features=… 由 build.rs 读 Cargo.toml 得来；两边不一致时指纹会「声称覆盖」一个假集合。
+      - run: node scripts/check-jieba-features.mjs --self-test
+      - run: node scripts/check-jieba-features.mjs
       - run: pnpm contract:verify                      # 门禁 17：IPC 契约
       - name: 路径封装检查（SEC PATH-02）
         run: bash scripts/check-path-encapsulation.sh
@@ -4103,7 +4107,7 @@ echo "✅ 路径封装检查通过"
 | 6 | M0 核实回写 | §3.3 `vue-tsc`/TS 6、§3.5 `Cargo.lock` 逐项复核、§3.5.4 测试依赖、`DEBT-08` MSRV 1.90 均回写为「M0 已验证」 |
 | 7 | 架构图 | 页脚移除过时的「待 M0 核实」四项，改为 M0 核实完成结论与后续 M9/人工项 |
 
-> 完整逐条记录见 `docs/history/M0收尾修订说明.md`。门禁现状：**17 项**（见附录 D 与仓库根 `gate-report.json`）。
+> 完整逐条记录见 `docs/history/M0收尾修订说明.md`。门禁现状：**17 项 + 子项 8b/10b/15b**（见附录 D；报告是**生成物** `gate-report.json` —— CI 用 `actions/upload-artifact` 上传为 artifact `gate-report`，**不入库**）。
 
 ## 13. 实施路线与技术债
 
@@ -4400,7 +4404,7 @@ knowl-pad/（仓库根）
 | 15 命名一致性 | ✅ | 通过（含 AGENTS.md 豁免） |
 | 16 路径封装检查 | ✅ | 通过 |
 
-**结论（重试后）**：**16/16 全部通过**，报告见仓库根 `gate-report.json`。首次执行时 5 项 Rust 门禁被 Smart App Control 瞬时阻断（M0-11），重试后自行解除；期间一并修正了 clippy 死代码、crate 路径解析、Tauri 宏的 never-type-fallback 以及性能基准噪声（M0-12）等问题。
+**结论（重试后）**：**16/16 全部通过**，报告为门禁生成物 `gate-report.json`（CI artifact，不入库；本地跑门禁会重新生成）。首次执行时 5 项 Rust 门禁被 Smart App Control 瞬时阻断（M0-11），重试后自行解除；期间一并修正了 clippy 死代码、crate 路径解析、Tauri 宏的 never-type-fallback 以及性能基准噪声（M0-12）等问题。
 ---
 
 **文档结束**
