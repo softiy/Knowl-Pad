@@ -185,3 +185,34 @@ fn stale_old_file_is_removed_on_open() {
     );
     let _ = &root;
 }
+
+/// **DEBT-45 的链式判定**（审查：此前只有分散的三处断言）。
+///
+/// 分工（与同文件第一条链式用例互补，不要互相冒充）：
+/// - 本用例只覆盖「取消 ⇒ 标记 ⇒ **重开判定** = `Rebuilt`」（判定本身）；
+/// - `interrupted_index_is_rebuilt_and_auto_reconciled` 覆盖「重开后**自动对账补齐** + 逐表一致」。
+#[test]
+fn cancelled_index_is_judged_rebuilt_on_reopen() {
+    let (_vault_guard, root) = build_vault(400);
+    let db = root.join(".knowlpad").join("index.db");
+    let sig = IndexSignature::current(&root);
+    assert!(matches!(
+        ensure_index_db(&db, &sig).expect("建库"),
+        RebuildOutcome::Fresh
+    ));
+
+    // 取消（第一次批间检查就停）⇒ 引擎已在**开始前**写了标记、且不会清
+    {
+        let pool = open(&root).expect("打开");
+        let outcome = full_index_cancellable(&pool, &root, |_, _| {}, IndexMode::Force, || true)
+            .expect("可取消索引");
+        assert!(outcome.cancelled);
+    } // drop pool：模拟进程结束（没有任何收尾代码）
+
+    // 链式：重开必须判 Rebuilt（而不是沿用半索引）
+    let (_pool, outcome) = crate::storage::index::open_with_outcome(&root).expect("重开判定");
+    assert!(
+        matches!(outcome, RebuildOutcome::Rebuilt { .. }),
+        "取消后重开应判 Rebuilt，实得 {outcome:?}"
+    );
+}
