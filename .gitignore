@@ -25,3 +25,6 @@ fp/
 
 # D-25 采样器的运行产物（预算真值 perf/d25-budgets.json 是提交的，报告不提交）
 perf/d25-report.json
+
+# 门禁报告是**生成物**：CI 用 actions/upload-artifact 上传（artifact 名 gate-report，见 ci.yml），不入库
+gate-report.json

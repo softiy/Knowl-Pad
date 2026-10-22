@@ -1853,6 +1853,11 @@ interface KpError {
 
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |
+| `trash_list` | `{ page }` | `TrashPage` | 回收站列表 |
+| `trash_restore` ⚠️ | `{ trash_id, on_conflict }` | `RestoreResult` | 恢复 |
+| `trash_delete_permanent` ⚠️ | `{ trash_id }` | `null` | 彻底删除 |
+| `trash_empty` ⚠️ | — | `EmptyResult` | 清空回收站 |
+| `trash_cleanup_expired` ⚠️ | — | `CleanupResult` | 过期清理 |
 
 **索引域的返回结构**（勘误 **D-18** 的索引域部分，2026-10-05 补齐；文件域见 §5.3.2.1）：
 
@@ -1862,12 +1867,6 @@ interface KpError {
 | `IndexStats` | `files`、`deletedFiles`、`links`、`tags`、`headings`、`blockIds`、`ftsRows`（均 `number`） | 各表实体计数；`files` 不含软删除项 |
 | `SignatureInfo` | `expected: SignatureParts`、`stored: SignatureParts \| null`、`matched: boolean`、`reason: string \| null` | 诊断用：`stored` 为 null 表示索引库未记录签名（首次打开或未完成），一律按「不可信即重建」处理 |
 | `SignatureParts` | `schemaVersion`、`parserVersion`、`tokenizerVersion`、`tokenizerDictHash`、`vaultRoot`、`digest` | 签名六要素；`digest` 为规范化拼接后的 SHA-256 |
-
-| `trash_list` | `{ page }` | `TrashPage` | 回收站列表 |
-| `trash_restore` ⚠️ | `{ trash_id, on_conflict }` | `RestoreResult` | 恢复 |
-| `trash_delete_permanent` ⚠️ | `{ trash_id }` | `null` | 彻底删除 |
-| `trash_empty` ⚠️ | — | `EmptyResult` | 清空回收站 |
-| `trash_cleanup_expired` ⚠️ | — | `CleanupResult` | 过期清理 |
 
 #### 5.3.9 设置与系统域（5）
 
