@@ -991,7 +991,9 @@ fn snapshot(log: &ProgressLog) -> Vec<(usize, usize)> {
  * 若有现成夹具（`node scripts/gen-fixture-vault.mjs --tier large --out <dir>`），用 `KP_D25_VAULT=<dir>` 可跳过生成。
  *
  * **取消语义的实现口径**：批间检查取消、**按批提交**（`BATCH_SIZE=200`）⇒ 取消时库里有已提交的前几批；
- * 但签名 meta 只在全量成功后写入，因此下次 `open_with_outcome` 会判 `Fresh/Rebuilt` —— **半索引不会被当成有效索引**。
+ * 半索引之所以不会被信任，靠的是 **`rebuild_in_progress` 标记**（索引**开始前写**、成功收尾清，取消/崩溃共用一套 ⇒
+ * 下次 `open_with_outcome` 判 `Rebuilt`）。**注意别写成「签名 meta 只在全量成功后写入」**——签名是开库（bootstrap）时
+ * 无条件写的，那是一种曾经写在注释里、但并不成立的解释（2026-10-22 审查 M5 更正）。
  */
 #[test]
 #[ignore = "20000 档要真写盘与真索引；显式 --ignored 执行（见 perf/d25-budgets.json 的 how_to_rerun）"]
