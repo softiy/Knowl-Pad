@@ -17,7 +17,9 @@ env:
 
 jobs:
   gates:
-    name: 门禁（17 项 + 子项 8b/10b/15b，与本地同一脚本）
+    # ⚠️ 这个 job 名是**分支保护的 required check 名**（契约的一部分）—— 不要改它。
+    # 门禁计数的新口径（17 项 + 子项 8b/10b/15b）写在 PRD §8.4 与技术方案里，不靠 job 名表达。
+    name: 17 项门禁（与本地同一脚本）
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
