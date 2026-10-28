@@ -18,7 +18,8 @@ use kp_domain::md_parse;
 use kp_domain::tokenize;
 
 use crate::index_sql;
-use crate::index_write::{insert_note_derived, TagBatch};
+use crate::index_tag_batch::TagBatch;
+use crate::index_write::insert_note_derived;
 use crate::storage::pool::DbPool;
 
 // ── 扫描侧已拆到 index_scan.rs（CODE-11 硬上限）；这里重新导出，既有调用路径不变 ──

@@ -17,6 +17,8 @@ mod index_resolve;
 mod index_scan;
 // 索引写入路径的全部缓存 SQL（集中一处，便于用用例钉住 rusqlite 语句缓存的容量）
 mod index_sql;
+mod index_tag_batch;
+mod index_tag_lookup;
 mod index_watch;
 mod index_watch_events;
 mod index_watch_paths;
