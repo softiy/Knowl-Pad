@@ -196,6 +196,18 @@
       "owning": "**AC-SEARCH-01**（中文命中：3 篇全中 + 排在前列 + 片段高亮 + **< 200 ms**）的严格阈值 —— 判据源 `D25 AC-SEARCH-01-04-strict ok=1`（perf_d25_tests::d25_ac_search_01_strict_chinese_search，缺省 10000 篇、可用 `KP_AC_SEARCH01_NOTES` 缩小规模但**判据不放宽**）。**AC-SEARCH-04**（foo→bar 保存后 **2 秒内**搜索一致）**不在本行内**：它是 index_watch_tests::ac_search_04_modify_converges_within_two_seconds 的行为断言（随套件执行，非 D25 采样）",
       "instrumented": true,
       "plan": ""
+    },
+    {
+      "id": "NFR-PERF-05-quick-open",
+      "unit": "ms",
+      "budget": {
+        "standard": 30,
+        "large": 50,
+        "stress": 100
+      },
+      "instrumented": true,
+      "owning": "perf_nfr_05_tests.rs（后端段）+ 真机（前端首屏段）",
+      "plan": "口径（PRD §6.1.4 + 勘误 D-30）：后端 `search_quick_open` 的 Rust `Instant` 段由用例测（30 次中位数，路径=命令入口）；前端首屏渲染（`performance.mark`）无自动化，转真机。2026-10-28 本机（**非基准机**，AMD Ryzen 7 8845HS / 59.7GB / NVMe）实测：**3000 篇 8 ms（PASS，预算 30）**；**20000 篇 59 ms（FAIL，预算 50）**；**100000 篇 330 ms（FAIL，预算 100）**。耗时随规模线性增长 ⇒ 主因在「每次查询全量取候选 + 全量打分」（`quick_open_candidates` + `quick_open::rank`），不是 IPC。"
     }
   ],
   "existing": [
