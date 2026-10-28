@@ -9,6 +9,7 @@ import { LinksPanel } from '@features/links';
 import { QuickOpen, SearchPanel, useSearchStore } from '@features/search';
 import { TagPanel, useTagsStore } from '@features/tags';
 import { CommandPalette, usePaletteStore } from '@features/palette';
+import { SettingsPanel, useSettingsStore } from '@features/settings';
 import { useFileTreeStore } from '@features/file-tree/stores/fileTree';
 import VaultList from '@features/vault/components/VaultList.vue';
 import StatusBar from './StatusBar.vue';
@@ -30,6 +31,7 @@ const search = useSearchStore();
 const tags = useTagsStore();
 const palette = usePaletteStore();
 const fileTree = useFileTreeStore();
+const settings = useSettingsStore();
 const searchPanel = ref<InstanceType<typeof SearchPanel> | null>(null);
 const quickOpen = ref<InstanceType<typeof QuickOpen> | null>(null);
 const tagPanel = ref<InstanceType<typeof TagPanel> | null>(null);
@@ -95,6 +97,8 @@ palette.configure({
   switchVault: () => { void onSwitchVault(); },
   refreshTree: () => { void fileTree.refresh(); },
   toggleHidden: () => { void fileTree.setIncludeHidden(!fileTree.includeHidden); },
+  openSettings: () => settings.open(),
+  toggleTheme: () => settings.toggleTheme(),
 });
 
 onMounted(() => {
@@ -305,6 +309,7 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
     />
     <FileOpsDialog />
     <CommandPalette />
+    <SettingsPanel />
     <p v-if="ops.notice" class="kp-workspace__notice" data-testid="workspace-notice">
       {{ ops.notice }}
     </p>

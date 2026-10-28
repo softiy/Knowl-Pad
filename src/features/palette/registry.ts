@@ -28,6 +28,8 @@ export interface PaletteActions {
   switchVault(): void | Promise<void>;
   refreshTree(): void | Promise<void>;
   toggleHidden(): void | Promise<void>;
+  openSettings(): void | Promise<void>;
+  toggleTheme(): void | Promise<void>;
 }
 
 export type PaletteGroup = 'command';
@@ -151,6 +153,22 @@ export const COMMANDS: readonly PaletteCommand[] = [
     needs: vaultOnly,
     reason: vaultReason,
     run: (a) => a.refreshTree(),
+  },
+  {
+    id: 'palette.settings',
+    name: '打开设置',
+    icon: '⚙',
+    group: 'command',
+    keywords: ['shezhi', 'sz', 'settings', 'preferences'],
+    run: (a) => a.openSettings(),
+  },
+  {
+    id: 'palette.toggle-theme',
+    name: '切换主题（浅色/深色）',
+    icon: '◐',
+    group: 'command',
+    keywords: ['zhuti', 'zt', 'theme', 'dark', 'light'],
+    run: (a) => a.toggleTheme(),
   },
   {
     id: 'palette.toggle-hidden',

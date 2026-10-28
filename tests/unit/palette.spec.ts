@@ -35,6 +35,8 @@ function stubActions(over: Partial<PaletteActions> = {}): PaletteActions {
     switchVault: vi.fn(),
     refreshTree: vi.fn(),
     toggleHidden: vi.fn(),
+    openSettings: vi.fn(),
+    toggleTheme: vi.fn(),
     ...over,
   };
 }
