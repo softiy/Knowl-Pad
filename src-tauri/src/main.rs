@@ -39,6 +39,8 @@ mod nfr_perf_11_tests;
 mod perf_calib_tests;
 #[cfg(test)]
 mod perf_d25_tests;
+#[cfg(test)]
+mod perf_nfr_05_tests;
 mod platform;
 mod state;
 mod storage;
