@@ -263,6 +263,8 @@ knowl-pad/
 │       └── release.yml           # 多平台构建 + 发布 + Gitee 同步（§11.5）
 ├── .gitee/
 │   └── README.md                 # Gitee Go 已迁移说明（DEBT-06）
+├── assets/
+│   └── brand/                  # 图标设计源与预览（§10.4；非运行时资源）
 ├── src/                          # 前端源码（§2.2）
 ├── src-tauri/                    # Rust 后端（§2.3）
 ├── tests/                        # 跨端集成与 E2E
@@ -363,7 +365,7 @@ src-tauri/
 ├── tauri.conf.json               # §9.5 CSP、Capabilities、updater
 ├── capabilities/
 │   └── default.json              # 最小权限白名单（SEC-05）
-├── icons/
+├── icons/                        # 桌面端图标产物（§10.4；设计源在 assets/brand/）
 └── src/
     ├── main.rs                   # 入口：Builder 装配、Command 注册
     ├── lib.rs
@@ -3127,7 +3129,7 @@ pub fn validate_filename(name: &str) -> Result<()> {
     "active": true,
     "targets": "all",
     "identifier": "com.knowlpad.desktop",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico", "icons/icon.icns"],
+      "icon": ["icons/32x32.png", "icons/64x64.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
     "shortDescription": "本地优先的笔记与知识管理软件",
     "longDescription": "Knowl Pad 是一款跨平台本地优先的笔记与知识管理软件，数据完全保存在你的电脑上，以纯 Markdown 文件存储。",
     "category": "Productivity",
@@ -3159,6 +3161,19 @@ pub fn validate_filename(name: &str) -> Result<()> {
 | 全平台 | updater artifacts | `createUpdaterArtifacts: true` 生成 `.sig` 签名文件与 `latest.json`，供 §9.4 更新流程使用 |
 
 > **macOS 未签名的诚实披露**（NFR-PLAT-13）：无 Apple 开发者账号时，用户下载后首次打开会被 Gatekeeper 拦截。文档中**必须**说明「右键 → 打开」或 `xattr -d com.apple.quarantine` 的操作方式，并**明确告知这会绕过系统安全检查、仅在信任来源时使用**。禁止隐瞒此限制或暗示软件已签名。
+
+应用图标资源（2026-10-28 落位）
+
+| 文件 | 说明 |
+| --- | --- |
+| assets/brand/knowl-pad-icon.svg | 1024 viewBox 的可编辑设计源；修改后需重新导出 1024 透明 PNG |
+| assets/brand/knowl-pad-icon-1024.png | 图标生成输入（1024×1024，透明圆角背景） |
+| assets/brand/knowl-pad-icon-preview.png | 尺寸、色板与设计语义预览（非运行时资源） |
+| src-tauri/icons/ | 桌面端产物：.ico（16–256）、.icns（16–1024）、多尺寸 PNG，以及 Windows Store 的 StoreLogo.png/Square*Logo.png 辅助图标；不含移动端资源（本项目不支持移动端） |
+
+图标语义：摊开的象牙色手账 = Markdown 本地笔记 / Pad；青绿晶簇 = 宝石/矿物元素与“笔记结晶为知识”；晶面节点连线 = 双向链接与知识图谱（金色节点代表当前笔记）。
+
+修改图标后运行 node scripts/gen-icons.mjs：脚本调用 tauri icon 生成各平台资源，只把桌面端文件复制到 src-tauri/icons/；复制结果包含 bundle.icon 所列的全部尺寸。该脚本是资产生成工具，不参与 17 项质量门禁。
 
 ---
 
@@ -4108,6 +4123,16 @@ echo "✅ 路径封装检查通过"
 | 7 | 架构图 | 页脚移除过时的「待 M0 核实」四项，改为 M0 核实完成结论与后续 M9/人工项 |
 
 > 完整逐条记录见 `docs/history/M0收尾修订说明.md`。门禁现状：**17 项 + 子项 8b/10b/15b**（见附录 D；报告是**生成物** `gate-report.json` —— CI 用 `actions/upload-artifact` 上传为 artifact `gate-report`，**不入库**）。
+
+## 12.3 应用图标资源补注（2026-10-28）
+
+本次只补应用图标资产与打包配置的事实，不改变 v6.3 的其余口径：
+
+- §2.1 仓库布局增加 assets/brand/，§2.3 标注 src-tauri/icons/；
+- §10.4 的 bundle.icon 同步为实际 7 项，并补设计源、桌面端产物、再生成命令与图标语义；
+- scripts/gen-icons.mjs 为资产生成脚本，不参与 17 项质量门禁；图标尺寸/格式由 tauri icon 维护。
+
+> 设计源与预览见 assets/brand/；本次未改 PRD（PRD 无应用图标需求条目），未改历史记录。
 
 ## 13. 实施路线与技术债
 
