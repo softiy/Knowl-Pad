@@ -42,6 +42,8 @@ mod perf_d25_tests;
 #[cfg(test)]
 mod perf_nfr_05_tests;
 mod platform;
+#[cfg(test)]
+mod quick_open_cache_tests;
 mod state;
 mod storage;
 use commands::file::{file_list_dir, file_stat, file_tree, file_validate_name};

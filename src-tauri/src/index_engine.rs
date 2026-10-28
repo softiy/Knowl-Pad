@@ -404,8 +404,14 @@ pub fn full_index_with_timeout<F: FnMut(usize, usize), C: Fn() -> bool>(
     })?;
     // AC-REL-02：**全部完成后**才清标记（裁决与计数都已提交）—— 清早了会让「裁决中途被杀」被当成已完成。
     // 取消路径在上面提前 return，不会走到这里（标记故意留着）。
+    // NFR-PERF-05：全量索引完成后**自增**「候选缓存代次」——改名等结构不变的变更靠它失效缓存。
+    // 用计数器而不是时间戳：同一毫秒内连续两次索引必须得到不同的代次，否则缓存会漏失效。
     pool.with_writer(|conn| {
-        crate::storage::index::clear_meta(conn, crate::storage::index::META_REBUILD_IN_PROGRESS)
+        let previous: u64 = crate::storage::index::read_meta(conn, "quick_open_generation")?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        crate::storage::index::clear_meta(conn, crate::storage::index::META_REBUILD_IN_PROGRESS)?;
+        crate::storage::index::set_meta(conn, "quick_open_generation", &(previous + 1).to_string())
     })?;
     outcome.duration_ms = started.elapsed().as_millis() as u64;
     Ok(outcome)
