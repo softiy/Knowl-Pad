@@ -30,6 +30,8 @@ export interface PaletteActions {
   toggleHidden(): void | Promise<void>;
   openSettings(): void | Promise<void>;
   toggleTheme(): void | Promise<void>;
+  toggleSidebar(): void | Promise<void>;
+  toggleRightPanel(): void | Promise<void>;
 }
 
 export type PaletteGroup = 'command';
@@ -153,6 +155,22 @@ export const COMMANDS: readonly PaletteCommand[] = [
     needs: vaultOnly,
     reason: vaultReason,
     run: (a) => a.refreshTree(),
+  },
+  {
+    id: 'palette.toggle-sidebar',
+    name: '切换左侧栏（折叠/展开）',
+    icon: '▤',
+    group: 'command',
+    keywords: ['cebianlan', 'cbl', 'sidebar', 'collapse'],
+    run: (a) => a.toggleSidebar(),
+  },
+  {
+    id: 'palette.toggle-right-panel',
+    name: '切换右侧面板',
+    icon: '▥',
+    group: 'command',
+    keywords: ['youce', 'ycmb', 'panel', 'right'],
+    run: (a) => a.toggleRightPanel(),
   },
   {
     id: 'palette.settings',

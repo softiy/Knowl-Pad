@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { systemInfo } from '@core/ipc/commands';
+import { systemInfo, vaultStateGet, vaultStateSet } from '@core/ipc/commands';
 import { bindShortcuts } from '@core/shortcut';
 import { useVaultStore } from '@features/vault';
 import { EditorView, useEditorStore } from '@features/editor';
@@ -10,6 +10,7 @@ import { QuickOpen, SearchPanel, useSearchStore } from '@features/search';
 import { TagPanel, useTagsStore } from '@features/tags';
 import { CommandPalette, usePaletteStore } from '@features/palette';
 import { SettingsPanel, useSettingsStore } from '@features/settings';
+import { Ribbon, clampSidebarWidth, useLayoutStore } from '@features/layout';
 import { useFileTreeStore } from '@features/file-tree/stores/fileTree';
 import VaultList from '@features/vault/components/VaultList.vue';
 import StatusBar from './StatusBar.vue';
@@ -32,6 +33,9 @@ const tags = useTagsStore();
 const palette = usePaletteStore();
 const fileTree = useFileTreeStore();
 const settings = useSettingsStore();
+const layout = useLayoutStore();
+/** 拖拽中的临时宽度（不每次落盘；pointerup 才写 vault_state）。 */
+const draggingWidth = ref<number | null>(null);
 const searchPanel = ref<InstanceType<typeof SearchPanel> | null>(null);
 const quickOpen = ref<InstanceType<typeof QuickOpen> | null>(null);
 const tagPanel = ref<InstanceType<typeof TagPanel> | null>(null);
@@ -62,6 +66,43 @@ async function checkGlobalRecovery(): Promise<void> {
 // 快捷键统一走 core/shortcut（ED-04：组件不自行绑 keydown），卸载时必须注销（ED-01）。
 // 命令面板（FR-PALETTE-01/03/07）：执行体在这一层注入（跨 feature 的编排只允许在 layout 层，FE-02）。
 // 命令只调用**既有**通路，不新增写路径；不可用命令由 registry 的 needs/reason 判定（FR-PALETTE-08 的机制面）。
+// FR-LAYOUT-01：布局状态按 PRD 记在 vault_state（键 ui.sidebarCollapsed / ui.sidebarWidth / ui.rightPanel）。
+layout.configureVaultState({
+  read: async (key) => (await vaultStateGet([key])).values[key],
+  write: async (key, value) => {
+    await vaultStateSet({ [key]: value });
+  },
+});
+watch(
+  () => vaultStore.current?.vaultId ?? null,
+  () => {
+    void layout.load();
+  },
+);
+function onViewportResize(): void {
+  layout.applyViewport(window.innerWidth);
+}
+function startResize(event: PointerEvent): void {
+  if (layout.effectiveCollapsed) return;
+  event.preventDefault();
+  const startX = event.clientX;
+  const startWidth = layout.sidebarWidth;
+  const onMove = (ev: PointerEvent): void => {
+    draggingWidth.value = clampSidebarWidth(startWidth + (ev.clientX - startX));
+  };
+  const onUp = (): void => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    if (draggingWidth.value !== null) {
+      const width = draggingWidth.value;
+      draggingWidth.value = null;
+      void layout.setSidebarWidth(width);
+    }
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
+
 // AC-SET-02：Vault 级设置只认「当前 Vault」——读写都走 file-tree 的 vault_state 通路
 // （ui.showHiddenFiles 已是 vault_state 作用域，见 fileTree.ts 的 restoreState/setIncludeHidden）。
 settings.configureVaultScope({
@@ -77,6 +118,9 @@ watch(
   () => vaultStore.current?.vaultId ?? null,
   () => {
     void settings.loadVaultScope();
+    void layout.load();
+    layout.applyViewport(window.innerWidth);
+    window.addEventListener('resize', onViewportResize);
   },
 );
 
@@ -116,6 +160,8 @@ palette.configure({
   refreshTree: () => { void fileTree.refresh(); },
   toggleHidden: () => { void fileTree.setIncludeHidden(!fileTree.includeHidden); },
   openSettings: () => settings.open(),
+  toggleSidebar: () => layout.toggleSidebar(),
+  toggleRightPanel: () => layout.toggleRightPanel(),
   toggleTheme: () => settings.toggleTheme(),
 });
 
@@ -291,10 +337,27 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
       {{ switchError }}
     </p>
     <div class="kp-workspace__body">
+      <Ribbon
+        :collapsed="layout.effectiveCollapsed"
+        :right-panel-visible="layout.rightPanel === 'links'"
+        @toggle-sidebar="layout.toggleSidebar()"
+        @search="search.openPanel()"
+        @tags="tags.openPanel()"
+        @settings="settings.open()"
+        @toggle-right="layout.toggleRightPanel()"
+      />
       <template v-if="vaultStore.current">
-        <aside class="kp-workspace__side">
+        <aside v-show="!layout.effectiveCollapsed" class="kp-workspace__side" data-testid="workspace-sidebar" :style="{ width: ((draggingWidth ?? layout.sidebarWidth)) + 'px' }">
           <FileTree @open="onOpen" @action="onAction" />
         </aside>
+        <div
+          v-if="!layout.effectiveCollapsed"
+          class="kp-workspace__resizer"
+          data-testid="workspace-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          @pointerdown="startResize"
+        />
         <section class="kp-workspace__main">
           <EditorView
             :open-link="onOpenWikiLink"
@@ -302,7 +365,7 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
             :create-note="onCreateFromLink"
           />
         </section>
-        <LinksPanel :active-rel-path="editor.activeRelPath ?? null" @open="onOpenLink" />
+        <LinksPanel v-if="layout.rightPanel === 'links'" :active-rel-path="editor.activeRelPath ?? null" @open="onOpenLink" />
         <SearchPanel
           v-if="search.panelOpen"
           ref="searchPanel"
@@ -338,6 +401,8 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
 <style scoped>
 .kp-workspace { display: flex; flex-direction: column; height: 100vh; }
 .kp-workspace__body { flex: 1; display: flex; min-height: 0; }
+.kp-workspace__resizer { width: 4px; flex: 0 0 4px; cursor: col-resize; background: var(--kp-border); }
+.kp-workspace__resizer:hover { background: var(--kp-accent); }
 .kp-workspace__side { width: 280px; min-width: 200px; border-right: 1px solid var(--kp-border, #ddd); overflow: hidden; }
 .kp-workspace__main { flex: 1; min-width: 0; }
 .kp-workspace__recovery { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #fff8e1; border-bottom: 1px solid #ffe082; font-size: 13px; }
