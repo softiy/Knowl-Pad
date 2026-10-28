@@ -247,7 +247,7 @@ Knowl Pad 采用 Tauri 2.0 的**前后端分离混合架构**：
 | UI | Tailwind CSS 4.3.3 / shadcn-vue 2.8.2（基于 Reka UI）/ lucide-vue-next 1.0.0 |
 | 编辑器 | md-editor-v3 6.5.6（MVP 阶段，**刻意不升 7.0.0**）→ CodeMirror 6（M8 正式版） |
 | 代码高亮 | MVP 用 md-editor-v3 内置高亮；M8 起**统一用 CodeMirror 6 / Lezer 原生方案**，不引入第三方高亮库（技术方案 §3.2.4） |
-| 渲染 | markdown-it 15.0.3 + DOMPurify 3.4.15 |
+| 渲染 | markdown-it 15.0.3 + DOMPurify 3.4.17 |
 | 可视化 | cytoscape 3.34.3 + cytoscape-fcose 2.2.0 |
 | 模糊搜索 | fuse.js 7.5.0 |
 | 虚拟滚动 | @tanstack/vue-virtual 3.13.39 |
@@ -946,7 +946,7 @@ FTS5 默认 `unicode61` 分词器按 Unicode 词边界切分，**对中文不分
 
 | 需求 ID | 需求描述 | 优先级 |
 | --- | --- | --- |
-| `FR-EDITOR-40` | Markdown → HTML 由 `markdown-it` 15.0.3 完成，**`html: true` 配置下必须**经 `DOMPurify` 3.4.15 净化后再插入 DOM | P0 |
+| `FR-EDITOR-40` | Markdown → HTML 由 `markdown-it` 15.0.3 完成，**`html: true` 配置下必须**经 `DOMPurify` 3.4.17 净化后再插入 DOM | P0 |
 | `FR-EDITOR-41` | 净化必须移除 `<script>`、事件属性（`onerror`、`onclick` 等）、`javascript:` 协议 URL、`<iframe>`、`<object>`、`<embed>` | P0 |
 | `FR-EDITOR-42` | **禁止**使用 `DOMPurify.setConfig()` 持久化配置 API（该 API 在 3.4.11 之前存在绕过 clone-guard 的 XSS 漏洞）。配置必须在每次 `sanitize()` 调用时以参数传入 | P0 |
 | `FR-EDITOR-43` | 渲染外部图片时使用 `referrerPolicy="no-referrer"`，**禁止**自动加载远程资源（默认仅渲染 Vault 内本地附件；远程 URL 图片需用户显式确认，见 SEC-08） | P0 |
@@ -2074,8 +2074,8 @@ interface KpError {
 
 | # | 威胁 | 攻击向量 | 影响 | 防护措施 | 需求 ID |
 | --- | --- | --- | --- | --- | --- |
-| T-01 | **Markdown 存储型 XSS** | 用户在笔记中写入 `<script>`、`onerror` 等，渲染时执行 | 在 Webview 内执行任意 JS，可读取已加载的笔记内容 | markdown-it 输出经 DOMPurify 3.4.15 净化；禁用 `setConfig()` | SEC-01 |
-| T-02 | **DOMPurify 配置绕过** | 使用 `setConfig()` 持久化配置导致 clone-guard 被绕过（3.4.11 前的漏洞） | 净化失效，XSS 复活 | 锁定 3.4.15（≥ 3.4.11 即含修复）；禁止使用 `setConfig()`，配置逐次传参 | SEC-01 |
+| T-01 | **Markdown 存储型 XSS** | 用户在笔记中写入 `<script>`、`onerror` 等，渲染时执行 | 在 Webview 内执行任意 JS，可读取已加载的笔记内容 | markdown-it 输出经 DOMPurify 3.4.17 净化；禁用 `setConfig()` | SEC-01 |
+| T-02 | **DOMPurify 配置绕过** | 使用 `setConfig()` 持久化配置导致 clone-guard 被绕过（3.4.11 前的漏洞） | 净化失效，XSS 复活 | 锁定 3.4.17（≥ 3.4.11 即含修复）；禁止使用 `setConfig()`，配置逐次传参 | SEC-01 |
 | T-03 | **路径穿越** | 恶意构造的相对路径（`../../etc/passwd`）通过 IPC 传入 | 读写 Vault 外任意文件 | 全部路径经规范化 + 前缀校验 + 符号链接解析后校验 | SEC-02 |
 | T-04 | **符号链接逃逸** | Vault 内放置指向外部目录的符号链接，绕过路径前缀检查 | 读写 Vault 外文件 | 解析 canonical path 后重新校验是否仍在 Vault 内 | SEC-02 |
 | T-05 | **markdown-it DoS / ReDoS** | 特制 Markdown（linkify、smartquotes 二次复杂度）导致 CPU 飙升 | 软件无响应 | 锁定 markdown-it 15.0.3（已修复）；单文件大小上限；解析超时保护 | SEC-03 |
@@ -2098,7 +2098,7 @@ interface KpError {
 | --- | --- | --- | --- |
 | `SEC-01` | 全部由 Markdown 生成的 HTML **必须**经 `DOMPurify.sanitize()` 净化后才能进入 DOM。净化配置**必须**在每次调用时以参数传入，**禁止**使用 `DOMPurify.setConfig()`。白名单外标签与属性一律移除 | T-01, T-02 | P0 |
 | `SEC-02` | 全部接收路径参数的 Command **必须**执行路径安全校验：① 拒绝绝对路径（除 Vault 注册接口）② 规范化后校验仍在 Vault 根内 ③ 解析符号链接的 canonical path 后**再次**校验 ④ 拒绝含 `\0` 的路径。校验失败返回 `E_PATH_OUTSIDE_VAULT` 并记入日志 | T-03, T-04 | P0 |
-| `SEC-03` | 锁定 `markdown-it` ≥ 15.0.3、`Vite` ≥ 8.x、`DOMPurify` ≥ 3.4.12（**此为安全下限**，即修复对应漏洞的最低版本；当前实际锁定值见技术方案 §3.2.4，为 3.4.15）。单文件解析设置大小上限（默认 5MB）与超时保护（默认 10s），超限跳过并记录警告 | T-05, T-06, T-14 | P0 |
+| `SEC-03` | 锁定 `markdown-it` ≥ 15.0.3、`Vite` ≥ 8.x、`DOMPurify` ≥ 3.4.12（**此为安全下限**，即修复对应漏洞的最低版本；当前实际锁定值见技术方案 §3.2.4，为 3.4.17）。单文件解析设置大小上限（默认 5MB）与超时保护（默认 10s），超限跳过并记录警告 | T-05, T-06, T-14 | P0 |
 | `SEC-04` | 更新包**必须**通过签名验证（公钥固化于 `tauri.conf.json`）与 SHA-256 校验，任一失败即中止安装并删除下载文件。更新源**必须**为 HTTPS | T-08 | P0 |
 | `SEC-05` | Tauri Capabilities 采用最小权限白名单：仅授予本项目自定义 Command 与必需的 `core:` 能力（path、event、window、updater、dialog、shell-open）。**明确禁止** `fs:allow-*`、`shell:allow-execute`/`shell:allow-spawn`、`process:allow-exit` 等宽权限；`process:` 仅允许 `process:allow-restart`（更新后重启，见技术方案 §9.1.1） | T-10 | P0 |
 | `SEC-06` | 依赖采用「**声明层面兼容、安装层面锁定**」策略：`package.json` 声明向后兼容范围，实际版本由 `pnpm-lock.yaml` 锁定；`Cargo.toml` 声明范围，`Cargo.lock` 锁定。**两个 lockfile 必须提交入库**，CI 与生产一律用 `pnpm install --frozen-lockfile`（禁止用会自行解析新版本的 `pnpm install` / `npm install`）。依赖升级为显式动作，lockfile 变更单独成 commit。CI 中执行 `pnpm audit --audit-level=high` 与 `cargo audit`，发现高危漏洞即构建失败（详见技术方案 §3.6.1） | T-09 | P0 |
@@ -2499,7 +2499,7 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | Vite | `^8.3.0` | 🟡 v5 自述存在生产回归（字符串枚举别名编译错误、`writeBundle` 非确定性遗漏 chunk、DevBundle 崩溃） | **不回退**。三项回归的规避手段已升级为硬性门禁：禁用 `const enum`（ESLint 拦截）、禁用自定义 `writeBundle` 插件 + CI 连续 3 次构建比对产物清单 + chunk 完整性校验（门禁 9）、开发期崩溃用 `vite build --watch` 绕过。详见技术方案 §3.4.3 |
 | TypeScript | `~6.0.3` | 🟡 默认值变更（strict/types/module/target/rootDir）可能触发工具链不兼容 | **不升 7.x、也不回退 5.x**。上游 latest 已是 7.0.2（Go 重写版），刻意停留 6.x：`~` 范围天然阻断自动升级；M0 验证 `vue-tsc ^3.3.11` 与 `typescript-eslint ^8` 的兼容性；tsconfig 显式设置全部受影响项（技术方案 §3.3.2） |
 | markdown-it | `^15.0.3` | 🟢 安全修复版，API 稳定 | 无需处置（项目未开发，无迁移成本） |
-| DOMPurify | `^3.4.15` | 🟢 安全修复版；已跟进上游（3.4.12→3.4.15） | 安全库的 patch 常含修复，建议每次跟进；由门禁 7 `pnpm audit` 兜底 |
+| DOMPurify | `^3.4.17` | 🟢 安全修复版；已跟进上游（3.4.12→3.4.17） | 安全库的 patch 常含修复，建议每次跟进；由门禁 7 `pnpm audit` 兜底 |
 | pinia | `^4.0.3` | 🟡 仅支持 ESM | 项目本身即 ESM（`"type": "module"`），无影响 |
 | vue-router | `^5.3.1` | 🟡 主版本升级；已跟进（5.2.0→5.3.1） | 官方声明无破坏性变更；若出现阻断问题，回退 4.5.x（API 差异小） |
 | md-editor-v3 | `^6.5.6` | 🟡 上游已发布 **7.0.0**（major breaking） | **刻意不升级**：该包在 M8 即被 CodeMirror 6 整体替换，为临时方案做 breaking 升级投入产出比过低。`^6.5.6` 的范围天然阻断升到 7.x |

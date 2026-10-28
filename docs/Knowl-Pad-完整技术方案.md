@@ -515,7 +515,7 @@ pub struct VaultHandle {
 | `md-editor-v3` | `^6.5.6` | MVP 阶段编辑器 | M2 使用，M8 被替换。⚠️ **刻意不升到 7.0.0**：上游已发布 major 版（2026-09-21 核实 latest = 7.0.0），但该包在 M8 即被 CodeMirror 6 整体替换，为将废弃的临时方案做 breaking 升级投入产出比过低。`^6.5.6` 的范围天然阻断升到 7.x |
 | **CodeMirror 6**（M8 引入） | 见下方子包清单 | 正式版编辑器内核 | ✅ **2026-09-21 已锁定各子包版本**（原为「各子包最新，开发前核实」） |
 | `markdown-it` | `^15.0.3` | Markdown → HTML | 🔴 安全版：修复 linkify DoS、smartquotes 二次复杂度 |
-| `dompurify` | `^3.4.15` | HTML 净化 | 🔴 安全版：修复 `setConfig()` 绕过 clone-guard 的 XSS；2026-09-21 跟进上游（3.4.12→3.4.15，patch，安全库建议及时跟进） |
+| `dompurify` | `^3.4.17` | HTML 净化 | 🔴 安全版：修复 `setConfig()` 绕过 clone-guard 的 XSS；2026-09-21 跟进上游（3.4.12→3.4.17，patch，安全库建议及时跟进） |
 | 代码高亮 | **两阶段，均不引入第三方高亮库** | 代码块着色 | 详见下方「代码高亮方案」 |
 
 ##### CodeMirror 6 子包清单（M8 引入，2026-09-21 核实 latest）
@@ -1051,7 +1051,7 @@ strip = false
     "@tauri-apps/api": "^2.11.1",
     "md-editor-v3": "^6.5.6",
     "markdown-it": "^15.0.3",
-    "dompurify": "^3.4.15",
+    "dompurify": "^3.4.17",
     "cytoscape": "^3.34.3",
     "cytoscape-fcose": "^2.2.0",
     "@tanstack/vue-virtual": "^3.13.39",
@@ -1140,7 +1140,7 @@ strip = false
 | --- | --- | --- |
 | 绝大多数依赖 | `^X.Y.Z` | SemVer 承诺 minor/patch 向后兼容，允许自动获得修复 |
 | `typescript` | **`~6.0.3`** | ⚠️ **刻意收紧**：TypeScript 的 **minor 版本历来包含破坏性变更**（新增的类型检查会揭示既有代码的错误），`^6.0.3` 会放行 6.1/6.2。TS 官方也不遵循严格 SemVer，故只允许 patch 升级 |
-| `dompurify` | `^3.4.15` | 安全关键依赖，但净化库的 patch 常含安全修复，需要能及时获得；配合门禁 7 的 `pnpm audit` 兜底 |
+| `dompurify` | `^3.4.17` | 安全关键依赖，但净化库的 patch 常含安全修复，需要能及时获得；配合门禁 7 的 `pnpm audit` 兜底 |
 | `vite` | `^8.3.0` | 🟡 已知存在生产回归（§3.4.2），但**已决策不回退 6.x**（§3.4.3）。`^` 范围允许自动获得 8.x 内的 patch 修复——这正是保留 `^` 而非锁死的理由：回归修复通常以 patch 形式发布 |
 
 **lockfile 当前锁定值**（2026-09-19 经 npm 官方 API 核实，即 M0 首次 `pnpm install` 后应产出的锁定结果）：
@@ -1151,7 +1151,7 @@ strip = false
 | --- | --- | --- | --- | --- |
 | `vue` | `^3.5.43` | `3.5.43` | `3.5.43` | ✅ 已跟进（3.5.42→3.5.43，patch） |
 | `vue-router` | `^5.3.1` | `5.3.1` | `5.3.1` | ✅ 已跟进（5.2.0→5.3.1，minor） |
-| `dompurify` | `^3.4.15` | `3.4.15` | `3.4.15` | ✅ 已跟进（安全库 patch） |
+| `dompurify` | `^3.4.17` | `3.4.17` | `3.4.17` | ✅ 已跟进（安全库 patch） |
 | `@tauri-apps/cli` | `^2.11.5` | `2.11.5` | `2.11.5` | ✅ 已跟进 |
 | `@vue/devtools-api` | `^8.2.1` | `8.2.1` | `8.2.1` | ✅ 已跟进（原 `8.x` 范围收敛为具体值） |
 | `@vitejs/plugin-vue` | `^6.0.9` | `6.0.9` | `6.0.9` | ✅ 已跟进 |
@@ -2375,7 +2375,7 @@ async function save(note: OpenNote): Promise<SaveOutcome> {
    │         typographer: false（smartquotes 是 DoS 面之一，见 SEC-03）
    │   自定义插件：wikilink 规则、tag 规则、block-id 锚点、frontmatter 剥离
    ▼
-② DOMPurify 3.4.15 净化 → 安全 HTML
+② DOMPurify 3.4.17 净化 → 安全 HTML
    │   配置逐次传参（禁止 setConfig，SEC-01）
    │   ADD_ATTR: ['data-kp-link','data-kp-tag','data-kp-anchor']  ← 供点击委托识别
    │   FORBID_TAGS: ['script','iframe','object','embed','form','input','style']
@@ -4418,7 +4418,7 @@ knowl-pad/（仓库根）
 >
 > **同期决策（2026-09-20）**：① `OPEN-02` 已决——jieba 词典全量内置，`DEBT-03` 关闭；② 暂不考虑打包体积，`[profile.release]` 的 `opt-level` 由 `"s"` 改为 `3`、`lto` 改为 `"fat"`（§3.5.4）；③ MVP 阶段代码高亮**无需单独配置**，`md-editor-v3` 已内置 highlight.js 集成（§3.2.4）。
 >
-> **同期决策（2026-09-21）**：① **Vite 确定采用 8.x、取消回退路径**（§3.4.3、PRD `OPEN-01` 关闭）——三项生产回归的规避手段升级为硬性门禁，其中「禁用 `const enum`」已落地为 ESLint 规则 `TSEnumDeclaration[const=true]`（§11.7.5，选择器写法已核实）；② **跟进上游更新**：vue 3.5.43、vue-router 5.3.1、dompurify 3.4.15、@tauri-apps/cli 2.11.5、@vue/devtools-api 8.2.1、@vitejs/plugin-vue 6.0.9、vue-tsc 3.3.11、tauri 2.11.6、tauri-plugin-updater 2.12.0（逐项见 §3.2、§3.5、§3.6.1）；③ **TypeScript 刻意停留 6.0.3**，不升 7.0.2（§3.2.1）；④ **`md-editor-v3` 刻意停留 `^6.5.6`**，不升 7.0.0（M8 即被替换，§3.2.4）；⑤ **M8 起代码高亮统一用 CodeMirror 6 / Lezer 原生方案**，不引入任何第三方高亮库——编辑态用 `syntaxHighlighting()`、阅读态用 `@lezer/highlight` 的 `highlightCode()`（已核实该 API 真实存在），详见 §3.2.4「代码高亮方案」与约束 `ED-06`、`HL-01`~`HL-06`。
+> **同期决策（2026-09-21）**：① **Vite 确定采用 8.x、取消回退路径**（§3.4.3、PRD `OPEN-01` 关闭）——三项生产回归的规避手段升级为硬性门禁，其中「禁用 `const enum`」已落地为 ESLint 规则 `TSEnumDeclaration[const=true]`（§11.7.5，选择器写法已核实）；② **跟进上游更新**：vue 3.5.43、vue-router 5.3.1、dompurify 3.4.17、@tauri-apps/cli 2.11.5、@vue/devtools-api 8.2.1、@vitejs/plugin-vue 6.0.9、vue-tsc 3.3.11、tauri 2.11.6、tauri-plugin-updater 2.12.0（逐项见 §3.2、§3.5、§3.6.1）；③ **TypeScript 刻意停留 6.0.3**，不升 7.0.2（§3.2.1）；④ **`md-editor-v3` 刻意停留 `^6.5.6`**，不升 7.0.0（M8 即被替换，§3.2.4）；⑤ **M8 起代码高亮统一用 CodeMirror 6 / Lezer 原生方案**，不引入任何第三方高亮库——编辑态用 `syntaxHighlighting()`、阅读态用 `@lezer/highlight` 的 `highlightCode()`（已核实该 API 真实存在），详见 §3.2.4「代码高亮方案」与约束 `ED-06`、`HL-01`~`HL-06`。
 >
 > **CodeMirror 6 子包版本已锁定**（2026-09-21，§3.2.4）：`@codemirror/state` 6.7.5、`view` 6.43.12、`language` 6.12.4、`commands` 6.11.1、`search` 6.7.2、`autocomplete` 6.20.3、`lang-markdown` 6.5.2、`lang-javascript` 6.2.5；`@lezer/highlight` 1.2.3、`markdown` 1.7.2、`javascript` 1.5.5。**注意易错点**：`HighlightStyle` / `syntaxHighlighting` 属于 `@codemirror/language`，不在 `@lezer/highlight` 中。其余 `@lezer/<语言>` parser（python/css/html/json/xml 等）按实际支持的语言清单在 M8 前逐个核实后引入。
 >
