@@ -3176,6 +3176,8 @@ pub fn validate_filename(name: &str) -> Result<()> {
 
 修改图标后运行 `node scripts/gen-icons.mjs`：脚本调用 `tauri icon` 生成各平台资源，只把桌面端文件复制到 `src-tauri/icons/`；复制结果包含 `bundle.icon` 所列的全部尺寸。该脚本是资产生成工具，**不参与 17 项质量门禁**。
 
+> **预览图来源**：`assets/brand/knowl-pad-icon-preview.png` 由一次性 PIL 脚本合成，该脚本**不入库**（内含本机绝对路径，不可移植）；设计原语以本节表格与图标语义为准。
+
 ---
 
 ## 11. 质量保障与发布
