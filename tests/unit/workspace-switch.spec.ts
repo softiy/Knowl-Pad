@@ -1,4 +1,5 @@
 import { mount, flushPromises } from '@vue/test-utils';
+import { createPinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@features/vault', async () => {
@@ -175,7 +176,7 @@ describe('工作区：切换知识库入口（FR-VAULT-04/05、AC-VAULT-03 的�
   });
 
   it('打开 Vault 时提供切换入口，并把 Vault 名显示出来', async () => {
-    const w = mount(WorkspaceLayout);
+    const w = mount(WorkspaceLayout, { global: { plugins: [createPinia()] } });
     await flushPromises();
     expect(w.find('[data-testid="workspace-switch-vault"]').exists()).toBe(true);
     expect(w.find('[data-testid="workspace-vault-name"]').text()).toContain('我的知识库');
@@ -183,7 +184,7 @@ describe('工作区：切换知识库入口（FR-VAULT-04/05、AC-VAULT-03 的�
   });
 
   it('点击切换：先刷盘再关闭，随后回到欢迎页列表', async () => {
-    const w = mount(WorkspaceLayout);
+    const w = mount(WorkspaceLayout, { global: { plugins: [createPinia()] } });
     await flushPromises();
     await w.find('[data-testid="workspace-switch-vault"]').trigger('click');
     await flushPromises();
@@ -195,7 +196,7 @@ describe('工作区：切换知识库入口（FR-VAULT-04/05、AC-VAULT-03 的�
   it('仍有未保存内容时不切换，并给出可见提示（R-07：不静默丢内容）', async () => {
     hasUnsaved.mockReturnValue(true);
     dirtyFlag.value = true;
-    const w = mount(WorkspaceLayout);
+    const w = mount(WorkspaceLayout, { global: { plugins: [createPinia()] } });
     await flushPromises();
     await w.find('[data-testid="workspace-switch-vault"]').trigger('click');
     await flushPromises();
@@ -215,10 +216,10 @@ describe('工作区：标签面板入口（FR-TAG-01 的 Mod+Shift+T）', () => 
     useVaultStore().current = { ...VAULT };
     useTagsStore().panelOpen = false;
     expect(shortcutRegistry.live).toBe(0); // 前面的用例都解绑了：本用例看到的只有自己挂的监听
-    const w = mount(WorkspaceLayout);
+    const w = mount(WorkspaceLayout, { global: { plugins: [createPinia()] } });
     await flushPromises();
     expect(shortcutRegistry.live).toBe(1);
-    expect(shortcutRegistry.bindings).toBe(3); // 布局一次绑三条：Mod+Shift+F / Mod+O / Mod+Shift+T
+    expect(shortcutRegistry.bindings).toBe(4); // 布局一次绑四条：Mod+Shift+F / Mod+O / Mod+Shift+T / Mod+P（命令面板）
     expect(w.find('[data-testid="workspace-tag-panel"]').exists()).toBe(false);
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', ctrlKey: true, shiftKey: true }));
@@ -229,7 +230,7 @@ describe('工作区：标签面板入口（FR-TAG-01 的 Mod+Shift+T）', () => 
     await w.find('[data-testid="tag-panel-close"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-testid="workspace-tag-panel"]').exists()).toBe(false);
-    // 显式卸载：布局一次性绑了 3 条 window 快捷键，留着监听会把下一个用例的键盘事件也吃掉
+    // 显式卸载：布局一次性绑了 4 条 window 快捷键（含命令面板的 Mod+P），留着监听会把下一个用例的键盘事件也吃掉
     w.unmount();
   });
 
@@ -238,7 +239,7 @@ describe('工作区：标签面板入口（FR-TAG-01 的 Mod+Shift+T）', () => 
     const { useTagsStore } = await import('@features/tags');
     useVaultStore().current = { ...VAULT };
     useTagsStore().panelOpen = false;
-    const w = mount(WorkspaceLayout);
+    const w = mount(WorkspaceLayout, { global: { plugins: [createPinia()] } });
     await flushPromises();
     expect(shortcutRegistry.live).toBe(1);
     w.unmount();
