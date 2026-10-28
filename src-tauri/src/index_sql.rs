@@ -6,7 +6,8 @@
 //! "我们会不会把它挤爆"。把全部缓存语句集中在这里，就能用一个用例把这件事钉住
 //! （见下方 `cached_statement_count_fits_default_capacity`）。
 //!
-//! **SQL 文本一字未改**：与加缓存之前逐字一致，这里只做"从调用点提成常量"这一件事。
+//! 只收纳**固定文本**、可缓存的语句；全量索引的 chunk 批量标签 SQL 因占位符个数随批大小
+//! 变化，不走缓存也不在本清单（见 `index_write.rs` 的 `TagBatch`）。
 //! 语义不变由 `AC-REL-03`（重建后逐表逐字节一致）与 `tag_write_semantics_*` 兜住。
 
 /// 旧 file 行 id（note_fts 的 rowid 与 file.id 对齐，必须在删 file 之前取）。
@@ -39,11 +40,12 @@ pub const LINK_INSERT_SQL: &str =
 ///   ⇒ 冲突时照旧最后一次写入者胜。
 ///
 /// 语义钉子见 `tag_write_semantics_display_first_wins_structure_last_wins` 用例。
+///
+/// 全量索引对**新** norm 用 `index_write.rs` 里同语义的多行 UPSERT；这里保留单行版本，
+/// 用于跨 chunk 已存在行的结构字段更新（`TagBatch::update_seen_structure`）。
 pub const TAG_UPSERT_SQL: &str =
     "INSERT INTO tag (norm, display, depth, is_leaf, ref_count) VALUES (?1, ?2, ?3, ?4, 0) \
      ON CONFLICT(norm) DO UPDATE SET depth = excluded.depth, is_leaf = excluded.is_leaf";
-/// 取 tag id。
-pub const TAG_SELECT_ID_SQL: &str = "SELECT id FROM tag WHERE norm = ?1";
 /// 写 file_tag 行。
 ///
 /// `source` / `explicit` 是 2026-10-17（M5 批次 4）新增的两列（PRD §5.3.6.1、勘误 **D-40②**）：
@@ -60,7 +62,7 @@ pub const ALIAS_INSERT_SQL: &str =
 ///
 /// 只在 test 构建里存在：它是"容量守卫"的输入，生产代码不需要这份清单。
 #[cfg(test)]
-pub const ALL_CACHED_SQL: [&str; 12] = [
+pub const ALL_CACHED_SQL: [&str; 11] = [
     OLD_FILE_ID_SQL,
     FTS_DELETE_SQL,
     FILE_DELETE_SQL,
@@ -70,7 +72,6 @@ pub const ALL_CACHED_SQL: [&str; 12] = [
     BLOCK_ID_INSERT_SQL,
     LINK_INSERT_SQL,
     TAG_UPSERT_SQL,
-    TAG_SELECT_ID_SQL,
     FILE_TAG_INSERT_SQL,
     ALIAS_INSERT_SQL,
 ];

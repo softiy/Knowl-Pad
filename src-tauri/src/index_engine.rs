@@ -18,7 +18,7 @@ use kp_domain::md_parse;
 use kp_domain::tokenize;
 
 use crate::index_sql;
-use crate::index_write::insert_note_derived;
+use crate::index_write::{insert_note_derived, TagBatch};
 use crate::storage::pool::DbPool;
 
 // ── 扫描侧已拆到 index_scan.rs（CODE-11 硬上限）；这里重新导出，既有调用路径不变 ──
@@ -82,18 +82,23 @@ pub fn index_file_mode(
     entry: &ScanEntry,
     mode: IndexMode,
 ) -> Result<FileOutcome, AppError> {
-    index_file_mode_with_timeout(conn, root, entry, mode, PARSE_TIMEOUT)
+    let mut tags = TagBatch::default();
+    let outcome = index_file_mode_collect(conn, root, entry, mode, PARSE_TIMEOUT, &mut tags)?;
+    tags.flush(conn)?;
+    Ok(outcome)
 }
 
-/// 同上，但把单文件解析超时**作为参数**：生产路径固定走 [`PARSE_TIMEOUT`]，用例注入
-/// `Duration::ZERO` 来确定性地打中"超时 ⇒ 跳过且不留半成品"这条分支（真的等 10 秒的用例
-/// 不会有人跑，而超时的**后果**与"等了多久"无关）。
-pub(crate) fn index_file_mode_with_timeout(
+/// 单文件写库的**收集版**：标签只进 batch，不立刻落库；调用方负责在事务提交前 flush。
+///
+/// 全量索引用同一批（chunk）的 batch；单文件增量则每文件一个 batch，语义与旧路径相同。
+/// 解析超时**作为参数**：用例注入 `Duration::ZERO` 来确定性地打中"超时 ⇒ 跳过且不留半成品"。
+fn index_file_mode_collect(
     conn: &Connection,
     root: &Path,
     entry: &ScanEntry,
     mode: IndexMode,
     parse_timeout: Duration,
+    tags: &mut TagBatch,
 ) -> Result<FileOutcome, AppError> {
     use crate::index_profile::{start, stop, Phase};
     crate::index_profile::count_file();
@@ -159,7 +164,7 @@ pub(crate) fn index_file_mode_with_timeout(
         return Ok(FileOutcome::Indexed);
     };
     let t = start();
-    insert_note_derived(conn, file_id, note)?;
+    insert_note_derived(conn, file_id, note, tags)?;
     stop(t, Phase::Derived);
     Ok(FileOutcome::Indexed)
 }
@@ -349,8 +354,16 @@ pub fn full_index_with_timeout<F: FnMut(usize, usize), C: Fn() -> bool>(
             stop(t, Phase::TxnBegin);
             let mut n = 0usize;
             let mut timed_out: Vec<String> = Vec::new();
+            let mut tags = TagBatch::default();
             for entry in &chunk {
-                match index_file_mode_with_timeout(conn, &root_owned, entry, mode, parse_timeout)? {
+                match index_file_mode_collect(
+                    conn,
+                    &root_owned,
+                    entry,
+                    mode,
+                    parse_timeout,
+                    &mut tags,
+                )? {
                     FileOutcome::Indexed => n += 1,
                     FileOutcome::TimedOut => {
                         timed_out.push(format!("skip-timeout:{}", entry.rel_path));
@@ -358,6 +371,8 @@ pub fn full_index_with_timeout<F: FnMut(usize, usize), C: Fn() -> bool>(
                     FileOutcome::Skipped => {}
                 }
             }
+            // 标签在本 chunk 的所有文件都收集完之后、COMMIT 之前一次落库。
+            tags.flush(conn)?;
             let t = start();
             conn.execute_batch("COMMIT")
                 .map_err(|e| AppError::db_with("提交索引事务", &e))?;
