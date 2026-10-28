@@ -264,8 +264,10 @@ function onOpenHit(relPath: string, line: number, range?: { start: number; end: 
  * **悬空链接的创建**：交给 file-tree 域的既有"新建笔记"流程（带建议名，新增能力见 `fileOps.createFromLink`）；
  * **标签**：打开标签面板并选中它（对接 PR-C 的 tags store）。
  */
-function onOpenWikiLink(target: string): void {
-  void editor.reveal(target, 1);
+function onOpenWikiLink(target: string, event?: MouseEvent): void {
+  // FR-EDITOR-25：Ctrl/Cmd+Alt+点击 ⇒ 新标签页打开（不切走当前标签）
+  if (event?.altKey === true) void editor.openNoteInNewTab(target);
+  else void editor.reveal(target, 1);
 }
 
 function onCreateFromLink(name: string): void {

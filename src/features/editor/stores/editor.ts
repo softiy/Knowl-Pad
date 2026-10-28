@@ -79,6 +79,19 @@ function toBuffer(relPath: string, content: string, mtimeMs: number): EditorBuff
  * 职责边界：本 store 只管**内容与落盘**；渲染走 §7.2 的净化管线（`MarkdownView`），
  * 内核交互走 `KpEditorAdapter`（§7.4）——换内核不影响这里。
  */
+async function readIntoNewTab(
+  relPath: string,
+  add: (buffer: EditorBuffer) => void,
+  fail: (message: string) => void,
+): Promise<void> {
+  try {
+    const note = await noteRead(relPath);
+    add(toBuffer(relPath, note.content, note.mtimeMs));
+  } catch (err) {
+    fail(asKpError(err).message);
+  }
+}
+
 export const useEditorStore = defineStore('editor', () => {
   const buffers = ref<EditorBuffer[]>([]);
   const activeRelPath = ref<string | null>(null);
@@ -109,18 +122,20 @@ const pendingReveal = ref<RevealRequest | null>(null);
       activeRelPath.value = relPath;
       return;
     }
-    let note;
-    try {
-      note = await noteRead(relPath);
-    } catch (err) {
-      // 文件被外部删除/索引里有幽灵行时，noteRead 会抛。此前调用方用 void 丢弃 →
-      // 点一下"什么都没发生"（审计 F1）。这里收敛成可见错误，并按 save 的既有做法处理。
-      openError.value = asKpError(err).message;
-      return;
-    }
-    openError.value = null;
-    buffers.value = [...buffers.value, toBuffer(relPath, note.content, note.mtimeMs)];
-    activeRelPath.value = relPath;
+    // 复用新标签页的读取路径（错误同样收敛为可见原因，审计 F1）
+    await openNoteInNewTab(relPath);
+    if (find(relPath) !== undefined) activeRelPath.value = relPath;
+  }
+
+  /** FR-EDITOR-25：在新标签页打开（已打开则不动作；**保持当前激活标签不变**，否则就不是新标签）。 */
+  async function openNoteInNewTab(relPath: string): Promise<void> {
+    if (find(relPath)) return;
+    await readIntoNewTab(relPath, (buffer) => {
+      openError.value = null;
+      buffers.value = [...buffers.value, buffer];
+    }, (message) => {
+      openError.value = message;
+    });
   }
 
   function activate(relPath: string): void {
@@ -251,8 +266,7 @@ const pendingReveal = ref<RevealRequest | null>(null);
   /** 标签重排（FR-EDITOR-35 的拖拽排序）：越界索引忽略，不做部分移动。 */
   function reorderTab(fromIndex: number, toIndex: number): void {
     const list = [...buffers.value];
-    if (fromIndex === toIndex) return;
-    if (fromIndex < 0 || fromIndex >= list.length || toIndex < 0 || toIndex >= list.length) return;
+    if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= list.length || toIndex < 0 || toIndex >= list.length) return;
     const [moved] = list.splice(fromIndex, 1);
     list.splice(toIndex, 0, moved);
     buffers.value = list;
@@ -344,6 +358,7 @@ const pendingReveal = ref<RevealRequest | null>(null);
     mode,
     autosaveDelayMs,
     openNote,
+    openNoteInNewTab,
     activate,
     closeNote,
     closeAll,

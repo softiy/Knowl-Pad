@@ -362,3 +362,17 @@ describe('EditorView：阅读态的点击路由（FR-EDITOR-25/27、FR-TAG-05）
     expect(createNote).toHaveBeenCalledWith('缺笔记.md');
   });
 });
+
+  it('FR-SEARCH-30/31：Ctrl/Cmd+F 打开查找、Ctrl/Cmd+H 打开替换（含替换输入框）', async () => {
+    const { wrapper, store } = await mountView();
+    await store.openNote('a.md');
+    await flushPromises();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true }));
+    await flushPromises();
+    expect(wrapper.find('[data-testid="find-panel"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="find-replacement"]').exists()).toBe(false);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', ctrlKey: true }));
+    await flushPromises();
+    expect(wrapper.find('[data-testid="find-replacement"]').exists()).toBe(true);
+    wrapper.unmount();
+  });

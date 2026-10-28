@@ -13,6 +13,7 @@
 /** 一次点击的意图（由组件把 DOM/事件收敛成它）。 */
 export type ClickIntent =
   | { kind: 'link'; target: string }
+  | { kind: 'link-new-tab'; target: string }
   | { kind: 'create'; name: string }
   | { kind: 'none' };
 
@@ -42,12 +43,14 @@ export function suggestNoteName(target: string): string {
  */
 export function clickIntent(
   payload: { target: string; dangling: boolean },
-  event: { ctrlKey?: boolean; metaKey?: boolean },
+  event: { ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean },
 ): ClickIntent {
   if (!payload.target) return { kind: 'none' };
   if (payload.dangling && !hasJumpModifier(event)) {
     const name = suggestNoteName(payload.target);
     return name ? { kind: 'create', name } : { kind: 'none' };
   }
-  return hasJumpModifier(event) ? { kind: 'link', target: payload.target } : { kind: 'none' };
+  if (!hasJumpModifier(event)) return { kind: 'none' };
+  // FR-EDITOR-25：Ctrl/Cmd+Alt+点击 ⇒ 在新标签页打开（与普通跳转区分）
+  return event.altKey === true ? { kind: 'link-new-tab', target: payload.target } : { kind: 'link', target: payload.target };
 }
