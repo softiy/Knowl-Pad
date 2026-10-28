@@ -590,6 +590,93 @@ fn tag_write_semantics_display_first_wins_structure_last_wins() {
     );
 }
 
+/// **chunk 批量写标签的语义补充**：同一批里同一个 norm 以不同大小写出现多次
+/// ⇒ display 必须取**首次**出现的原文（AC-TAG-03 / FR-TAG-09），结构字段仍最后一次胜；
+/// 且 `file_tag` 的行数必须与收尾 `recount_tags` 得到的 `ref_count` 一致。
+#[test]
+fn chunk_tag_batch_keeps_first_display_and_ref_count() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path();
+    // 三篇都在同一个 BATCH_SIZE=200 的批内；a.md 自己就重复写了三种大小写。
+    write_note(root, "a.md", "#Work 与 #work 与 #WORK\n");
+    write_note(root, "b.md", "#wOrK 乙\n");
+    write_note(root, "c.md", "#WORK/子\n");
+    let pool = open(root).expect("建索引库");
+    full_index(&pool, root, |_, _| {}).expect("全量索引");
+
+    let tag = |norm: &str| -> (String, i64, i64, i64) {
+        pool.with_reader(|conn| {
+            conn.query_row(
+                "SELECT display, depth, is_leaf, ref_count FROM tag WHERE norm = ?1",
+                rusqlite::params![norm],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .map_err(|e| kp_domain::error::AppError::db_with("读 tag", &e))
+        })
+        .unwrap_or_else(|e| panic!("读 tag({norm}) 失败：{e}"))
+    };
+    let (display, depth, is_leaf, ref_count) = tag("work");
+    assert_eq!(
+        display, "Work",
+        "display 必须是本 chunk 首次出现的原文（a.md 的 #Work）"
+    );
+    assert_eq!(depth, 1, "work 的层级由 norm 决定");
+    assert_eq!(
+        is_leaf, 0,
+        "结构字段最后一次胜：c.md 的 #WORK/子 让 work 成为祖先"
+    );
+    let file_tag_rows = count(
+        &pool,
+        "SELECT count(*) FROM file_tag ft JOIN tag t ON t.id = ft.tag_id WHERE t.norm = 'work'",
+    );
+    assert_eq!(file_tag_rows, 5, "a.md 3 次 + b.md 1 次 + c.md 祖先行 1 次");
+    assert_eq!(
+        ref_count, file_tag_rows,
+        "ref_count 必须与 file_tag 的实际行数一致"
+    );
+    assert_eq!(tag("work/子").0, "WORK/子", "祖先链 display 同样取首次");
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM file_tag ft JOIN tag t ON t.id = ft.tag_id WHERE t.norm = 'work/子'"
+        ),
+        1
+    );
+    assert_eq!(tag("work/子").3, 1, "work/子 的 ref_count 应与行数一致");
+}
+
+/// **跨 chunk 的结构字段仍最后一次胜**：第一批发 `#work`（叶子），第二批发 `#work/子`
+/// 让 work 变成祖先。批量实现若只 upsert "未见过" 的 norm 而不更新已存在行的 is_leaf，
+/// 这里会停在 1 —— 该用例把这条边界钉住。
+#[test]
+fn chunk_boundary_still_updates_seen_tag_structure() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path();
+    for i in 0..200 {
+        write_note(root, &format!("f{i:03}.md"), "#work\n");
+    }
+    write_note(root, "z.md", "#work/子\n");
+    let pool = open(root).expect("建索引库");
+    full_index(&pool, root, |_, _| {}).expect("全量索引");
+
+    let (display, is_leaf, ref_count): (String, i64, i64) = pool
+        .with_reader(|conn| {
+            conn.query_row(
+                "SELECT display, is_leaf, ref_count FROM tag WHERE norm = 'work'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(|e| kp_domain::error::AppError::db_with("读 tag", &e))
+        })
+        .expect("读 work");
+    assert_eq!(display, "work", "display 仍是首次出现的原文");
+    assert_eq!(
+        is_leaf, 0,
+        "第二批的 #work/子 必须把已存在 work 的 is_leaf 改成 0"
+    );
+    assert_eq!(ref_count, 201, "work 有 200 次正文标签 + 1 次祖先行");
+}
+
 /// **D-41：重建收尾清理孤儿 tag 行**（没有任何 `file_tag` 引用的 `tag` 行）。
 ///
 /// 依据两条：AC-TAG-02 末句「`#old` 若无其他子孙则从标签表中消失」＋ AC-REL-03 的"重建与一次性索引逐表一致"
