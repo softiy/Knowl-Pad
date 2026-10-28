@@ -23,7 +23,7 @@ import { clickIntent } from '../logic/linkRouting';
 export interface ClickRoutingOptions {
   /** 缺省跳转（通常是 `editor.reveal`）；缺省时不动作。 */
   fallbackOpen?: (() => ((target: string) => void) | undefined) | undefined;
-  openLink?: (() => ((target: string) => void) | undefined) | undefined;
+  openLink?: (() => ((target: string, event?: MouseEvent) => void) | undefined) | undefined;
   createNote?: (() => ((name: string) => void) | undefined) | undefined;
   openTag?: (() => ((tag: string) => void) | undefined) | undefined;
   /** 没人处理创建时的出口（组件 emit）。 */
@@ -50,8 +50,13 @@ export function createClickRouting(options: ClickRoutingOptions): ClickRouting {
       return;
     }
     const open = options.openLink?.();
-    if (open) open(intent.target);
-    else options.fallbackOpen?.()?.(intent.target);
+    if (open === undefined) {
+      options.fallbackOpen?.()?.(intent.target);
+      return;
+    }
+    // 只有「新标签页」意图才需要事件（Alt 分流）；普通跳转保持旧签名
+    if (intent.kind === 'link-new-tab') open(intent.target, event);
+    else open(intent.target);
   }
 
   function onTag(tag: string): void {

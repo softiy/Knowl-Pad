@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { bindShortcuts } from '@core/shortcut';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { createEditorAdapter, type KpEditorAdapter } from '../adapter';
 import { consumeReveal } from '../adapter/consumeReveal';
 import { createClickRouting } from '../composables/useClickRouting';
 import { AUTOSAVE_DEFAULT_MS, useEditorStore, type ConflictChoice, type EditorMode } from '../stores/editor';
 import ConflictDialog from './ConflictDialog.vue';
 import FindReplacePanel from './FindReplacePanel.vue';
+import { useFindPanel } from '../composables/useFindPanel';
+import { useEditorBufferSync } from '../composables/useEditorBufferSync';
+import { bindEditorShortcuts } from '../composables/useEditorShortcuts';
 import EditorTabs from './EditorTabs.vue';
 import MarkdownView from './MarkdownView.vue';
 
@@ -19,7 +21,7 @@ import MarkdownView from './MarkdownView.vue';
  */
 /** 阅读态的跳转出口（可选注入；缺省只做编辑器自己会做的事，见 composables/useClickRouting.ts）。 */
 const props = defineProps<{
-  openLink?: ((target: string) => void) | undefined;
+  openLink?: ((target: string, event?: MouseEvent) => void) | undefined;
   openTag?: ((tag: string) => void) | undefined;
   createNote?: ((name: string) => void) | undefined;
 }>();
@@ -37,12 +39,8 @@ const modes: { value: EditorMode; label: string }[] = [
 ];
 const autosaveOptions = [500, AUTOSAVE_DEFAULT_MS, 2000, 3000, 5000];
 
-const findOpen = ref(false);
-
-function toggleFind(): void {
-  findOpen.value = !findOpen.value;
-}
-
+const { findOpen, findMode, findPanel, openFind, toggleFind, closeFind } = useFindPanel(hostRef);
+void findPanel; // 模板 ref 由组件绑定，脚本侧仅需保留引用（类型检查用）
 consumeReveal({ current: () => store.pendingReveal, active: () => store.activeRelPath, clear: () => store.clearReveal(), adapter: () => adapter });
 
 onMounted(() => {
@@ -58,31 +56,21 @@ onMounted(() => {
   adapter.on('save', () => {
     if (store.activeRelPath) void store.save(store.activeRelPath);
   });
-  disposeShortcuts = bindShortcuts(window, [
-    {
-      spec: 'Mod+S',
-      handler: () => {
-        if (store.activeRelPath) void store.save(store.activeRelPath);
-      },
+  disposeShortcuts = bindEditorShortcuts({
+    save: () => {
+      if (store.activeRelPath) void store.save(store.activeRelPath);
     },
-  ]);
+    openFind,
+  });
 });
 
-// 切换标签：把该缓冲区内容灌进内核（程序化写入不触发 change，不会误标脏）
-watch(
-  () => store.activeRelPath,
-  () => {
-    adapter?.setValue(active.value?.content ?? '');
-  },
-);
-// **只在 store 侧整体替换**时回灌内核（如「加载外部版本」）。
-// 刻意不监听 content：内核自身产生的编辑也会改变 content，回灌会清空内核的撤销栈（AC-EDITOR-06）。
-watch(
-  () => active.value?.replacedAt,
-  () => {
-    adapter?.setValue(active.value?.content ?? '');
-  },
-);
+// 切换标签 / 「加载外部版本」时把缓冲区灌进内核（细节与 AC-EDITOR-06 的边界见组合式）。
+useEditorBufferSync({
+  relPath: () => store.activeRelPath,
+  replacedAt: () => active.value?.replacedAt,
+  content: () => active.value?.content ?? '',
+  adapter: () => adapter,
+});
 
 onBeforeUnmount(() => {
   disposeShortcuts?.();
@@ -145,7 +133,13 @@ const routing = createClickRouting({
 
     <EditorTabs />
 
-    <FindReplacePanel v-if="findOpen" :adapter="adapter" />
+    <FindReplacePanel
+      v-if="findOpen" ref="findPanel"
+      :adapter="adapter"
+      :content="active?.content ?? ''"
+      :mode="findMode"
+      @close="closeFind"
+    />
 
     <ConflictDialog
       v-if="active?.conflict"

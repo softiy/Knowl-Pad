@@ -53,3 +53,9 @@ describe('点击路由：意图判定（FR-EDITOR-25 / FR-EDITOR-27）', () => {
     expect(clickIntent({ target: '', dangling: true }, { ctrlKey: true })).toEqual({ kind: 'none' });
   });
 });
+
+  it('FR-EDITOR-25：Ctrl/Cmd+Alt+点击 ⇒ 新标签页意图（与普通跳转区分）', () => {
+    expect(clickIntent({ target: 'x', dangling: false }, { ctrlKey: true, altKey: true })).toEqual({ kind: 'link-new-tab', target: 'x' });
+    expect(clickIntent({ target: 'x', dangling: false }, { metaKey: true, altKey: true })).toEqual({ kind: 'link-new-tab', target: 'x' });
+    expect(clickIntent({ target: 'x', dangling: false }, { ctrlKey: true })).toEqual({ kind: 'link', target: 'x' });
+  });
