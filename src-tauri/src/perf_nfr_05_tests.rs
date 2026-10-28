@@ -48,13 +48,16 @@ fn state_for(root: &Path) -> (tempfile::TempDir, AppState) {
     (db_dir, state)
 }
 
-fn median_ms(state: &AppState, query: &str) -> u128 {
+fn cold_and_median_ms(state: &AppState, query: &str) -> (u128, u128) {
     let args = || QuickOpenArgs {
         query: query.to_string(),
         limit: Some(20),
     };
-    // 热身：排除一次性初始化（与 d25_nfr_perf_04_search 同口径）
-    let _ = search_quick_open_impl(state, args()).expect("快速打开热身");
+    // 冷启动（缓存未命中）与热路径（候选缓存命中）分开记录
+    let cold_started = Instant::now();
+    let items = search_quick_open_impl(state, args()).expect("快速打开冷启动");
+    let cold_ms = cold_started.elapsed().as_millis();
+    assert!(!items.is_empty(), "查询 note 在夹具上必须命中");
     let mut samples: Vec<u128> = Vec::with_capacity(ITERATIONS);
     for _ in 0..ITERATIONS {
         let started = Instant::now();
@@ -63,16 +66,16 @@ fn median_ms(state: &AppState, query: &str) -> u128 {
         assert!(!items.is_empty(), "查询 note 在夹具上必须命中");
     }
     samples.sort_unstable();
-    samples[ITERATIONS / 2] / 1000
+    (cold_ms, samples[ITERATIONS / 2] / 1000)
 }
 
 fn run_tier(tier: usize, budget_ms: u128) {
     let (guard, root) = vault(tier);
     let (db_guard, state) = state_for(&root);
-    let ms = median_ms(&state, "note");
+    let (cold_ms, ms) = cold_and_median_ms(&state, "note");
     let verdict = if ms < budget_ms { "PASS" } else { "FAIL" };
     println!(
-        "D25 NFR-PERF-05-quick-open tier={tier} ms={ms} budget_ms={budget_ms} verdict={verdict} notes={tier} iters={ITERATIONS} scope=backend path=command query=note"
+        "D25 NFR-PERF-05-quick-open tier={tier} ms={ms} cold_ms={cold_ms} budget_ms={budget_ms} verdict={verdict} notes={tier} iters={ITERATIONS} scope=backend path=command query=note"
     );
     let _ = (&guard, &db_guard);
 }
