@@ -21,6 +21,24 @@ export const useSettingsStore = defineStore('settings', () => {
   const fontSize = ref(16);
   const zoom = ref(100);
   const autosaveDelayMs = ref(AUTOSAVE_DEFAULT_MS);
+  /** Vault 级设置（AC-SET-02）：由布局层注入「读/写当前 Vault 的 ui.showHiddenFiles」，store 不认识 vault_state。 */
+  const showHidden = ref(false);
+  let vaultScope: { read(): Promise<boolean>; write(value: boolean): Promise<void> } | null = null;
+
+  function configureVaultScope(deps: { read(): Promise<boolean>; write(value: boolean): Promise<void> }): void {
+    vaultScope = deps;
+  }
+
+  /** 读取当前 Vault 的作用域设置（切 Vault 后必须重新调用；不缓存跨 Vault 的值）。 */
+  async function loadVaultScope(): Promise<void> {
+    showHidden.value = vaultScope === null ? false : await vaultScope.read();
+  }
+
+  /** 写 Vault 级设置：走注入的 vault_state 通路（**不能**写 preference，否则会串 Vault）。 */
+  async function setShowHidden(next: boolean): Promise<void> {
+    showHidden.value = next;
+    if (vaultScope !== null) await vaultScope.write(next);
+  }
 
   function open(): void { isOpen.value = true; }
   function close(): void { isOpen.value = false; }
@@ -74,5 +92,9 @@ export const useSettingsStore = defineStore('settings', () => {
     persistAutosaveDelay(next);
   }
 
-  return { isOpen, theme, fontSize, zoom, autosaveDelayMs, open, close, init, setTheme, toggleTheme, setFontSize, setZoom, setAutosaveDelay };
+  return {
+    isOpen, theme, fontSize, zoom, autosaveDelayMs, showHidden,
+    configureVaultScope, loadVaultScope, setShowHidden,
+    open, close, init, setTheme, toggleTheme, setFontSize, setZoom, setAutosaveDelay,
+  };
 });

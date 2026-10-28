@@ -12,7 +12,7 @@ export interface SettingItem {
   label: string;
   defaultText: string;
   scope: SettingScope;
-  wired?: 'theme' | 'autosaveDelayMs' | 'editorFontSize' | 'zoomPercent';
+  wired?: 'theme' | 'autosaveDelayMs' | 'editorFontSize' | 'zoomPercent' | 'showHidden';
 }
 
 export const SETTING_CATEGORIES: readonly string[] = [
@@ -38,7 +38,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: 'files.attachmentPolicy', category: '文件与链接', label: '附件存储策略', defaultText: '与笔记同目录', scope: 'vault' },
   { id: 'files.linkRewriteMode', category: '文件与链接', label: '链接改写模式（预览确认/自动）', defaultText: '预览确认', scope: 'vault' },
   { id: 'files.linkFormat', category: '文件与链接', label: '新建链接默认格式（最短路径/完整路径）', defaultText: '最短路径', scope: 'vault' },
-  { id: 'files.showHidden', category: '文件与链接', label: '显示隐藏文件', defaultText: '关', scope: 'vault' },
+  { id: 'files.showHidden', category: '文件与链接', label: '显示隐藏文件', defaultText: '关', scope: 'vault', wired: 'showHidden' },
 
   { id: 'search.debounceMs', category: '搜索', label: '搜索防抖', defaultText: '200ms', scope: 'global' },
   { id: 'search.matchMode', category: '搜索', label: '默认匹配模式（AND/OR）', defaultText: 'AND', scope: 'global' },

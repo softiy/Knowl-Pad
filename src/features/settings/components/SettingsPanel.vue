@@ -12,7 +12,7 @@ import { SETTING_CATEGORIES, itemsOf } from '../catalog';
 import { useSettingsStore } from '../store';
 
 const settings = useSettingsStore();
-const { isOpen, theme, fontSize, zoom, autosaveDelayMs } = storeToRefs(settings);
+const { isOpen, theme, fontSize, zoom, autosaveDelayMs, showHidden } = storeToRefs(settings);
 
 const categories = computed(() => SETTING_CATEGORIES.map((name) => ({ name, items: itemsOf(name) })));
 
@@ -25,6 +25,9 @@ function onFontSize(event: Event): void {
 }
 function onZoom(event: Event): void {
   settings.setZoom(Number((event.target as HTMLInputElement).value));
+}
+function onShowHidden(event: Event): void {
+  void settings.setShowHidden((event.target as HTMLInputElement).checked);
 }
 function onAutosave(event: Event): void {
   settings.setAutosaveDelay(Number((event.target as HTMLInputElement).value));
@@ -60,6 +63,9 @@ function onAutosave(event: Event): void {
             <template v-else-if="item.wired === 'zoomPercent'">
               <input class="kp-settings__control" data-testid="settings-zoom" type="number" min="80" max="150" step="5" :value="zoom" @change="onZoom">
               <span class="kp-settings__unit">%</span>
+            </template>
+            <template v-else-if="item.wired === 'showHidden'">
+              <input class="kp-settings__control" data-testid="settings-show-hidden" type="checkbox" :checked="showHidden" @change="onShowHidden">
             </template>
             <template v-else-if="item.wired === 'autosaveDelayMs'">
               <input class="kp-settings__control" data-testid="settings-autosave" type="number" min="500" max="5000" step="100" :value="autosaveDelayMs" @change="onAutosave">
