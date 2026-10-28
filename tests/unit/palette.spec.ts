@@ -37,6 +37,8 @@ function stubActions(over: Partial<PaletteActions> = {}): PaletteActions {
     toggleHidden: vi.fn(),
     openSettings: vi.fn(),
     toggleTheme: vi.fn(),
+    toggleSidebar: vi.fn(),
+    toggleRightPanel: vi.fn(),
     ...over,
   };
 }
