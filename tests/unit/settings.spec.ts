@@ -41,7 +41,7 @@ describe('设置页分类（FR-SET-01/02，逐条对照 PRD §4.11.3）', () => 
     expect(font.defaultText).toBe('16px');
     // 本轮真正接上的四项
     expect(SETTING_ITEMS.filter((i) => i.wired !== undefined).map((i) => i.wired)).toEqual([
-      'autosaveDelayMs', 'theme', 'editorFontSize', 'zoomPercent',
+      'autosaveDelayMs', 'theme', 'editorFontSize', 'zoomPercent', 'showHidden',
     ]);
   });
 });
@@ -160,5 +160,66 @@ describe('命令面板新增两条命令（批次 8）', () => {
     await settings.run({ openSettings: () => { calls.push('settings'); } } as never);
     await theme.run({ toggleTheme: () => { calls.push('theme'); } } as never);
     expect(calls).toEqual(['settings', 'theme']);
+  });
+});
+
+
+describe('AC-SET-02：Vault 级设置隔离（vault_state，不是 preference）', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('作用域标记与实际写入路径一致：files.showHidden 标 Vault 且接线为 showHidden', () => {
+    const item = SETTING_ITEMS.find((i) => i.id === 'files.showHidden')!;
+    expect(item.scope).toBe('vault');
+    expect(item.wired).toBe('showHidden');
+    // 全局项不得被标成 vault（反之亦然）
+    for (const global of SETTING_ITEMS.filter((i) => i.scope === 'global')) {
+      expect(['theme', 'autosaveDelayMs', 'editorFontSize', 'zoomPercent', undefined]).toContain(global.wired);
+    }
+  });
+
+  it('Vault A 打开隐藏文件、切到 B 为关、切回 A 仍为开（不串）', async () => {
+    const store = useSettingsStore();
+    // 用一个「按 Vault 分桶」的假 vault_state 模拟后端（键与生产一致：ui.showHiddenFiles）
+    const perVault = new Map<string, boolean>();
+    let currentVault = 'A';
+    store.configureVaultScope({
+      read: async () => perVault.get(currentVault) ?? false,
+      write: async (value) => {
+        perVault.set(currentVault, value);
+      },
+    });
+
+    await store.loadVaultScope();
+    expect(store.showHidden).toBe(false);
+    await store.setShowHidden(true);
+    expect(perVault.get('A')).toBe(true);
+    expect(store.showHidden).toBe(true);
+
+    currentVault = 'B';
+    await store.loadVaultScope();
+    expect(store.showHidden, '切到 B 不得看到 A 的值').toBe(false);
+    await store.setShowHidden(false);
+
+    currentVault = 'A';
+    await store.loadVaultScope();
+    expect(store.showHidden, '切回 A 仍保留 A 的值').toBe(true);
+  });
+
+  it('同一时刻只写当前 Vault 的桶（不写全局 preference）', async () => {
+    const { schedulePreferenceSet } = await import('@core/ipc/preferences');
+    vi.mocked(schedulePreferenceSet).mockClear();
+    const store = useSettingsStore();
+    const perVault = new Map<string, boolean>();
+    store.configureVaultScope({
+      read: async () => perVault.get('A') ?? false,
+      write: async (value) => {
+        perVault.set('A', value);
+      },
+    });
+    await store.setShowHidden(true);
+    expect(perVault.get('A')).toBe(true);
+    expect(schedulePreferenceSet, 'Vault 级设置不得走全局偏好').not.toHaveBeenCalledWith(
+      expect.objectContaining({ 'files.showHidden': true }),
+    );
   });
 });

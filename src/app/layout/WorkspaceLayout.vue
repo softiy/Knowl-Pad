@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { systemInfo } from '@core/ipc/commands';
 import { bindShortcuts } from '@core/shortcut';
 import { useVaultStore } from '@features/vault';
@@ -62,6 +62,24 @@ async function checkGlobalRecovery(): Promise<void> {
 // 快捷键统一走 core/shortcut（ED-04：组件不自行绑 keydown），卸载时必须注销（ED-01）。
 // 命令面板（FR-PALETTE-01/03/07）：执行体在这一层注入（跨 feature 的编排只允许在 layout 层，FE-02）。
 // 命令只调用**既有**通路，不新增写路径；不可用命令由 registry 的 needs/reason 判定（FR-PALETTE-08 的机制面）。
+// AC-SET-02：Vault 级设置只认「当前 Vault」——读写都走 file-tree 的 vault_state 通路
+// （ui.showHiddenFiles 已是 vault_state 作用域，见 fileTree.ts 的 restoreState/setIncludeHidden）。
+settings.configureVaultScope({
+  read: async () => {
+    await fileTree.restoreState();
+    return fileTree.includeHidden;
+  },
+  write: async (value) => {
+    await fileTree.setIncludeHidden(value);
+  },
+});
+watch(
+  () => vaultStore.current?.vaultId ?? null,
+  () => {
+    void settings.loadVaultScope();
+  },
+);
+
 palette.configure({
   newNote: () => ops.openNewNote(''),
   quickOpen: () => {
