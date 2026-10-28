@@ -1,0 +1,204 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Knowl Pad 应用图标</title>
+  <desc id="desc">一本摊开的象牙色笔记，中央生长出刻有知识图谱的青绿色水晶簇，外框为深青色圆角方形。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0.08" y1="0" x2="0.92" y2="1">
+      <stop offset="0" stop-color="#0E2A3A"/>
+      <stop offset="0.46" stop-color="#092230"/>
+      <stop offset="1" stop-color="#061B1B"/>
+    </linearGradient>
+    <radialGradient id="bgGlow" cx="0.5" cy="0.4" r="0.62">
+      <stop offset="0" stop-color="#2DD4BF" stop-opacity="0.28"/>
+      <stop offset="0.52" stop-color="#2DD4BF" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#2DD4BF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bgWarm" cx="0.72" cy="0.18" r="0.5">
+      <stop offset="0" stop-color="#7DD3FC" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#7DD3FC" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gemLeft" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#2ED3BE"/>
+      <stop offset="0.5" stop-color="#12998D"/>
+      <stop offset="1" stop-color="#0A625C"/>
+    </linearGradient>
+    <linearGradient id="gemRight" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#B6FFF0"/>
+      <stop offset="0.24" stop-color="#5EEAD4"/>
+      <stop offset="0.62" stop-color="#1DB3A2"/>
+      <stop offset="1" stop-color="#0E746C"/>
+    </linearGradient>
+    <linearGradient id="gemSideLeft" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#0E6C64"/>
+      <stop offset="1" stop-color="#063B39"/>
+    </linearGradient>
+    <linearGradient id="gemSideRight" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#138C80"/>
+      <stop offset="1" stop-color="#08443F"/>
+    </linearGradient>
+    <linearGradient id="shardLeft" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1B9E8E"/>
+      <stop offset="1" stop-color="#063B39"/>
+    </linearGradient>
+    <linearGradient id="shardRight" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4FD8C2"/>
+      <stop offset="1" stop-color="#07504B"/>
+    </linearGradient>
+    <linearGradient id="page" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#FBF4E4"/>
+      <stop offset="0.55" stop-color="#F0E2C7"/>
+      <stop offset="1" stop-color="#DFCBA7"/>
+    </linearGradient>
+    <linearGradient id="pageRight" x1="0.7" y1="0" x2="0.1" y2="1">
+      <stop offset="0" stop-color="#FBF4E4"/>
+      <stop offset="0.55" stop-color="#EDDEC2"/>
+      <stop offset="1" stop-color="#DAC49D"/>
+    </linearGradient>
+    <linearGradient id="pageEdge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E6D6B6"/>
+      <stop offset="1" stop-color="#C9B18A"/>
+    </linearGradient>
+    <linearGradient id="cover" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0E4A46"/>
+      <stop offset="1" stop-color="#062825"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFEFC2"/>
+      <stop offset="0.5" stop-color="#F2C879"/>
+      <stop offset="1" stop-color="#C9903F"/>
+    </linearGradient>
+    <radialGradient id="nodeGlow">
+      <stop offset="0" stop-color="#B8FFF0" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#B8FFF0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gemAura" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5EEAD4" stop-opacity="0.26"/>
+      <stop offset="0.55" stop-color="#2DD4BF" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#2DD4BF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="groundShadow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#02110F" stop-opacity="0.55"/>
+      <stop offset="0.7" stop-color="#02110F" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#02110F" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="tile">
+      <rect x="56" y="48" width="912" height="912" rx="208"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#tile)">
+    <rect x="56" y="48" width="912" height="912" fill="url(#bg)"/>
+    <rect x="56" y="48" width="912" height="912" fill="url(#bgGlow)"/>
+    <rect x="56" y="48" width="912" height="912" fill="url(#bgWarm)"/>
+
+    <!-- 隐约的矿物晶格：六边形轮廓与知识星座 -->
+    <g fill="none" stroke="#7FF3DF" stroke-opacity="0.05">
+      <path d="M512 150 L792 312 L792 636 L512 798 L232 636 L232 312 Z" stroke-width="3"/>
+      <path d="M512 212 L740 344 L740 604 L512 736 L284 604 L284 344 Z" stroke-width="2"/>
+    </g>
+    <g fill="none" stroke="#B8FFF0" stroke-opacity="0.07" stroke-width="3">
+      <path d="M270 372 L338 566 L512 648 L702 560 L748 356"/>
+      <path d="M338 566 L748 356"/>
+      <path d="M270 372 L512 648"/>
+    </g>
+    <g fill="#CFFFF4" fill-opacity="0.16">
+      <circle cx="270" cy="372" r="7"/>
+      <circle cx="338" cy="566" r="6"/>
+      <circle cx="748" cy="356" r="7"/>
+      <circle cx="702" cy="560" r="6"/>
+    </g>
+
+    <!-- 水晶体外光 -->
+    <ellipse cx="512" cy="430" rx="300" ry="330" fill="url(#gemAura)"/>
+
+    <!-- 侧边晶柱 -->
+    <g>
+      <path d="M322 366 L376 492 L360 690 L254 690 L238 510 Z" fill="url(#shardLeft)" stroke="#063B39" stroke-width="2"/>
+      <path d="M322 366 L314 690 L254 690 L238 510 Z" fill="#0A5753" opacity="0.6"/>
+      <path d="M322 366 L338 506 L360 690" fill="none" stroke="#8FFFF0" stroke-opacity="0.18" stroke-width="3"/>
+      <path d="M716 414 L784 690 L672 690 L654 520 Z" fill="url(#shardRight)" stroke="#05413C" stroke-width="2"/>
+      <path d="M716 414 L700 690 L672 690 L654 520 Z" fill="#0A5753" opacity="0.48"/>
+      <path d="M716 414 L694 530 L700 690" fill="none" stroke="#CFFFF4" stroke-opacity="0.2" stroke-width="3"/>
+    </g>
+
+    <!-- 主水晶：左右晶面 + 侧棱 -->
+    <g>
+      <path d="M512 128 L636 312 L680 368 L646 676 L600 690 L512 712 L424 690 L378 676 L344 368 L388 312 Z" fill="#083B38"/>
+      <path d="M512 128 L388 312 L344 368 L378 676 L424 690 L512 712 Z" fill="url(#gemLeft)"/>
+      <path d="M512 128 L636 312 L680 368 L646 676 L600 690 L512 712 Z" fill="url(#gemRight)"/>
+      <path d="M388 312 L344 368 L378 676 L424 690 Z" fill="url(#gemSideLeft)"/>
+      <path d="M636 312 L680 368 L646 676 L600 690 Z" fill="url(#gemSideRight)"/>
+      <path d="M512 128 L388 312 L424 690 L512 712 L600 690 L636 312 Z" fill="none" stroke="#D9FFF7" stroke-opacity="0.16" stroke-width="2"/>
+      <path d="M512 128 L512 712" stroke="#E7FFFA" stroke-opacity="0.24" stroke-width="2"/>
+      <path d="M512 128 L470 234 L552 234 Z" fill="#E7FFFA" opacity="0.22"/>
+      <path d="M424 690 L446 560 L470 420" fill="none" stroke="#D9FFF7" stroke-opacity="0.12" stroke-width="2"/>
+      <path d="M600 690 L578 560 L554 420" fill="none" stroke="#042F2D" stroke-opacity="0.18" stroke-width="2"/>
+    </g>
+
+    <!-- 晶面上的知识图谱 -->
+    <g stroke-linecap="round" stroke-linejoin="round">
+      <g fill="none" stroke="#B8FFF0" stroke-opacity="0.18" stroke-width="24">
+        <path d="M512 366 L444 474 L504 580 L584 486 L512 366"/>
+        <path d="M444 474 L584 486"/>
+      </g>
+      <g fill="none" stroke="#D8FFF6" stroke-opacity="0.92" stroke-width="11">
+        <path d="M512 366 L444 474 L504 580 L584 486 L512 366"/>
+        <path d="M444 474 L584 486"/>
+      </g>
+      <g>
+        <circle cx="512" cy="366" r="36" fill="url(#nodeGlow)"/>
+        <circle cx="444" cy="474" r="38" fill="url(#nodeGlow)"/>
+        <circle cx="584" cy="486" r="38" fill="url(#nodeGlow)"/>
+        <circle cx="504" cy="580" r="34" fill="url(#nodeGlow)"/>
+        <circle cx="512" cy="366" r="23" fill="url(#gold)"/>
+        <circle cx="444" cy="474" r="19" fill="#F4FFFC"/>
+        <circle cx="584" cy="486" r="19" fill="#F4FFFC"/>
+        <circle cx="504" cy="580" r="20" fill="#D8FFF6"/>
+        <circle cx="512" cy="361" r="7" fill="#FFF8E3" opacity="0.85"/>
+      </g>
+    </g>
+
+    <ellipse cx="512" cy="846" rx="354" ry="34" fill="url(#groundShadow)"/>
+
+    <!-- 翻开的手账：封面、纸页厚度、纸面 -->
+    <g>
+      <path d="M512 710 C430 696 300 674 190 654 L190 802 L512 814 Z" fill="url(#page)"/>
+      <path d="M512 710 C594 696 724 674 834 654 L834 802 L512 814 Z" fill="url(#pageRight)"/>
+      <path d="M190 802 L512 814 L834 802 L834 818 L512 830 L190 818 Z" fill="url(#pageEdge)"/>
+      <path d="M180 816 L512 830 L844 816 L844 836 C700 848 560 856 512 860 C464 856 324 848 180 836 Z" fill="url(#cover)"/>
+      <path d="M512 710 C430 696 300 674 190 654" fill="none" stroke="#FFFDF6" stroke-opacity="0.9" stroke-width="4" stroke-linecap="round"/>
+      <path d="M512 710 C594 696 724 674 834 654" fill="none" stroke="#FFFDF6" stroke-opacity="0.72" stroke-width="4" stroke-linecap="round"/>
+      <path d="M180 816 L512 830 L844 816" fill="none" stroke="#F2C879" stroke-opacity="0.5" stroke-width="3"/>
+      <path d="M512 708 L512 828" stroke="#A98D64" stroke-opacity="0.6" stroke-width="5" stroke-linecap="round"/>
+      <path d="M512 708 C430 694 300 672 190 654" fill="none" stroke="#C9B18A" stroke-opacity="0.3" stroke-width="9"/>
+      <path d="M512 708 C594 694 724 672 834 654" fill="none" stroke="#C9B18A" stroke-opacity="0.3" stroke-width="9"/>
+      <g stroke="#BEAA86" stroke-opacity="0.55" stroke-width="5" stroke-linecap="round" fill="none">
+        <path d="M248 748 C324 738 408 732 472 734"/>
+        <path d="M248 776 C324 766 408 760 472 762"/>
+        <path d="M552 734 C616 732 700 738 776 748"/>
+        <path d="M552 762 C616 760 700 766 776 776"/>
+      </g>
+      <g fill="#D8C39D" opacity="0.7">
+        <circle cx="232" cy="750" r="4"/>
+        <circle cx="232" cy="778" r="4"/>
+        <circle cx="792" cy="750" r="4"/>
+        <circle cx="792" cy="778" r="4"/>
+      </g>
+    </g>
+
+    <!-- 金色矿脉碎光 -->
+    <g fill="url(#gold)">
+      <path d="M728 216 L734 233 L751 239 L734 245 L728 262 L722 245 L705 239 L722 233 Z" opacity="0.9"/>
+      <path d="M318 268 L323 281 L336 286 L323 291 L318 304 L313 291 L300 286 L313 281 Z" opacity="0.7"/>
+      <path d="M782 548 L786 558 L796 562 L786 566 L782 576 L778 566 L768 562 L778 558 Z" opacity="0.45"/>
+    </g>
+    <g fill="#CFFFF4">
+      <circle cx="812" cy="300" r="3" opacity="0.5"/>
+      <circle cx="196" cy="356" r="2.5" opacity="0.45"/>
+      <circle cx="858" cy="654" r="3" opacity="0.35"/>
+      <circle cx="234" cy="606" r="2" opacity="0.4"/>
+    </g>
+  </g>
+
+  <rect x="56.5" y="48.5" width="911" height="911" rx="207.5" fill="none" stroke="#CFFFF4" stroke-opacity="0.10" stroke-width="3"/>
+  <rect x="74" y="66" width="876" height="876" rx="192" fill="none" stroke="#FFFFFF" stroke-opacity="0.045" stroke-width="2"/>
+</svg>
