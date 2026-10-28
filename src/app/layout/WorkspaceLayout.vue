@@ -8,6 +8,8 @@ import { FileOpsDialog, FileTree, useFileOpsStore, type MenuAction } from '@feat
 import { LinksPanel } from '@features/links';
 import { QuickOpen, SearchPanel, useSearchStore } from '@features/search';
 import { TagPanel, useTagsStore } from '@features/tags';
+import { CommandPalette, usePaletteStore } from '@features/palette';
+import { useFileTreeStore } from '@features/file-tree/stores/fileTree';
 import VaultList from '@features/vault/components/VaultList.vue';
 import StatusBar from './StatusBar.vue';
 
@@ -26,6 +28,8 @@ const ops = useFileOpsStore();
 const editor = useEditorStore();
 const search = useSearchStore();
 const tags = useTagsStore();
+const palette = usePaletteStore();
+const fileTree = useFileTreeStore();
 const searchPanel = ref<InstanceType<typeof SearchPanel> | null>(null);
 const quickOpen = ref<InstanceType<typeof QuickOpen> | null>(null);
 const tagPanel = ref<InstanceType<typeof TagPanel> | null>(null);
@@ -54,6 +58,45 @@ async function checkGlobalRecovery(): Promise<void> {
 // 状态栏的 watch 因此真正生效（M1/M2 复核：此前只在挂载时取一次）。
 // 顺带绑定搜索入口（FR-SEARCH-01 的 Mod+Shift+F 与 FR-SEARCH-40 的 Mod+O）——
 // 快捷键统一走 core/shortcut（ED-04：组件不自行绑 keydown），卸载时必须注销（ED-01）。
+// 命令面板（FR-PALETTE-01/03/07）：执行体在这一层注入（跨 feature 的编排只允许在 layout 层，FE-02）。
+// 命令只调用**既有**通路，不新增写路径；不可用命令由 registry 的 needs/reason 判定（FR-PALETTE-08 的机制面）。
+palette.configure({
+  newNote: () => ops.openNewNote(''),
+  quickOpen: () => {
+    search.openQuickOpen();
+    void nextTick(() => {
+      quickOpen.value?.focusInput();
+    });
+  },
+  search: () => {
+    search.openPanel();
+    void nextTick(() => {
+      searchPanel.value?.focusInput();
+    });
+  },
+  tags: () => {
+    tags.openPanel();
+    void nextTick(() => {
+      tagPanel.value?.focusFilter();
+    });
+  },
+  saveNote: () => {
+    const relPath = editor.activeRelPath;
+    if (relPath !== null) return editor.save(relPath);
+  },
+  saveAll: () => { void editor.saveAll(); },
+  closeNote: () => {
+    const relPath = editor.activeRelPath;
+    if (relPath !== null) editor.closeNote(relPath);
+  },
+  toggleMode: () => {
+    editor.mode = editor.mode === 'edit' ? 'read' : 'edit';
+  },
+  switchVault: () => { void onSwitchVault(); },
+  refreshTree: () => { void fileTree.refresh(); },
+  toggleHidden: () => { void fileTree.setIncludeHidden(!fileTree.includeHidden); },
+});
+
 onMounted(() => {
   void vaultStore.init();
   void checkGlobalRecovery();
@@ -76,6 +119,18 @@ onMounted(() => {
         });
       },
     },
+      {
+        // 命令面板（FR-PALETTE-01）：打开时刷新上下文（编辑器/焦点/隐藏文件），置灰判定按当前状态算。
+        spec: 'Mod+P',
+        handler: () => {
+          palette.open({
+            hasActiveNote: editor.activeRelPath !== null,
+            hasVault: vaultStore.current !== null,
+            mode: editor.mode === 'read' ? 'read' : 'edit',
+            includeHidden: fileTree.includeHidden,
+          });
+        },
+      },
     {
       // 标签面板（FR-TAG-01 的入口）：与搜索同一形态 —— 先开面板，再聚焦过滤框。
       // 键位选 Mod+Shift+T：Mod+Shift+F 已给搜索、Mod+O 给快速打开，避开二者。
@@ -249,6 +304,7 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
       @close="search.closeQuickOpen()"
     />
     <FileOpsDialog />
+    <CommandPalette />
     <p v-if="ops.notice" class="kp-workspace__notice" data-testid="workspace-notice">
       {{ ops.notice }}
     </p>
