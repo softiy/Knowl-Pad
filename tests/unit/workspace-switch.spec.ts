@@ -120,7 +120,7 @@ vi.mock('@features/file-tree', () => ({
   useFileOpsStore: () => ({ notice: null, openNewNote: vi.fn(), openNewFolder: vi.fn(), openRename: vi.fn(), openDelete: vi.fn() }),
 }));
 vi.mock('@features/vault/components/VaultList.vue', () => ({ default: { template: '<div data-testid="vault-list" />' } }));
-vi.mock('@core/ipc/commands', () => ({ indexStatus: vi.fn(async () => ({ ready: true })), fileTree: vi.fn(async () => []), preferenceGet: vi.fn(async () => ({ values: {} })), preferenceSet: vi.fn() }));
+vi.mock('@core/ipc/commands', () => ({ vaultStateGet: vi.fn(async () => ({ values: {} })), vaultStateSet: vi.fn(async () => {}), indexStatus: vi.fn(async () => ({ ready: true })), fileTree: vi.fn(async () => []), preferenceGet: vi.fn(async () => ({ values: {} })), preferenceSet: vi.fn() }));
 vi.mock('@core/ipc/events', () => ({ onIndexProgress: vi.fn(async () => () => {}), onIndexCompleted: vi.fn(async () => () => {}), onIndexFailed: vi.fn(async () => () => {}) }));
 
 
