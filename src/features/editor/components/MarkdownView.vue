@@ -121,29 +121,29 @@ function onKeydown(event: KeyboardEvent): void {
 <style scoped>
 .kp-markdown { line-height: 1.7; word-break: break-word; }
 .kp-markdown :deep(.kp-remote-image) { display: inline-block; padding: 2px 8px; border: 1px dashed currentcolor; border-radius: 4px; cursor: pointer; opacity: 0.8; }
-.kp-markdown :deep(.kp-link) { color: #1565c0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-.kp-markdown :deep(.kp-link[data-kp-kind='embed']) { color: #6a1b9a; }
+.kp-markdown :deep(.kp-link) { color: var(--kp-hl-link); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.kp-markdown :deep(.kp-link[data-kp-kind='embed']) { color: var(--kp-hl-keyword); }
 /* FR-EDITOR-27：悬空用虚线下划线 + 降饱和，与正常链接一眼可分 */
-.kp-markdown :deep(.kp-link--dangling) { color: #9e9e9e; text-decoration-style: dashed; }
-.kp-markdown :deep(.kp-link--ambiguous) { color: #b26a00; text-decoration-style: dotted; }
+.kp-markdown :deep(.kp-link--dangling) { color: var(--kp-muted); text-decoration-style: dashed; }
+.kp-markdown :deep(.kp-link--ambiguous) { color: var(--kp-hl-number); text-decoration-style: dotted; }
 .kp-markdown :deep(.kp-link--dangling)::after { content: ' ⚠'; font-size: 0.8em; }
-.kp-markdown :deep(.kp-tag) { color: #00695c; background: #e0f2f1; border-radius: 3px; padding: 0 4px; cursor: pointer; }
+.kp-markdown :deep(.kp-tag) { color: var(--kp-hl-string); background: var(--kp-accent-weak); border-radius: 3px; padding: 0 4px; cursor: pointer; }
 
 /* ── 代码块高亮（FR-EDITOR-44 / DEBT-18）：class 全部是 kp-hl-*，沿用上面的浅色主题 ── */
-.kp-markdown :deep(pre.kp-pre) { background: #f6f8fa; border: 1px solid var(--kp-border, #eee); border-radius: 4px; padding: 8px 10px; overflow: auto; }
-.kp-markdown :deep(code.kp-hl) { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5; }
-.kp-markdown :deep(.kp-hl-keyword) { color: #a626a4; font-weight: 600; }
-.kp-markdown :deep(.kp-hl-string) { color: #50a14f; }
-.kp-markdown :deep(.kp-hl-comment) { color: #a0a1a7; font-style: italic; }
-.kp-markdown :deep(.kp-hl-number) { color: #986801; }
-.kp-markdown :deep(.kp-hl-literal) { color: #0184bc; }
-.kp-markdown :deep(.kp-hl-var) { color: #e45649; }
-.kp-markdown :deep(.kp-hl-heading) { color: #0b5394; font-weight: 600; }
-.kp-markdown :deep(.kp-hl-quote) { color: #6a737d; font-style: italic; }
-.kp-markdown :deep(.kp-hl-list) { color: #a626a4; }
-.kp-markdown :deep(.kp-hl-code) { color: #c7254e; }
-.kp-markdown :deep(.kp-hl-link) { color: #1565c0; }
-.kp-markdown :deep(.kp-hl-url) { color: #6c757d; text-decoration: underline; }
+.kp-markdown :deep(pre.kp-pre) { background: var(--kp-code-bg); color: var(--kp-fg); border: 1px solid var(--kp-border, #eee); border-radius: 4px; padding: 8px 10px; overflow: auto; }
+.kp-markdown :deep(code.kp-hl) { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--kp-editor-font-size, 13px); line-height: var(--kp-editor-line-height, 1.5); }
+.kp-markdown :deep(.kp-hl-keyword) { color: var(--kp-hl-keyword); font-weight: 600; }
+.kp-markdown :deep(.kp-hl-string) { color: var(--kp-hl-string); }
+.kp-markdown :deep(.kp-hl-comment) { color: var(--kp-hl-comment); font-style: italic; }
+.kp-markdown :deep(.kp-hl-number) { color: var(--kp-hl-number); }
+.kp-markdown :deep(.kp-hl-literal) { color: var(--kp-hl-literal); }
+.kp-markdown :deep(.kp-hl-var) { color: var(--kp-hl-var); }
+.kp-markdown :deep(.kp-hl-heading) { color: var(--kp-hl-heading); font-weight: 600; }
+.kp-markdown :deep(.kp-hl-quote) { color: var(--kp-hl-comment); font-style: italic; }
+.kp-markdown :deep(.kp-hl-list) { color: var(--kp-hl-keyword); }
+.kp-markdown :deep(.kp-hl-code) { color: var(--kp-hl-code); }
+.kp-markdown :deep(.kp-hl-link) { color: var(--kp-hl-link); }
+.kp-markdown :deep(.kp-hl-url) { color: var(--kp-hl-url); text-decoration: underline; }
 .kp-markdown :deep(.kp-hl-strong) { font-weight: 700; }
 .kp-markdown :deep(.kp-hl-em) { font-style: italic; }
 </style>

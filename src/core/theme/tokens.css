@@ -1,0 +1,70 @@
+/**
+ * 主题设计令牌（FR-SET-20/21；技术方案 §2.2 的 core/theme）。
+ *
+ * 为什么是 CSS 变量而不是 JS 里拼颜色：
+ * - FR-SET-21 要求「切换无需重载页面」—— 变量替换由样式引擎完成，JS 只改 data-theme；
+ * - HL-05/HL-08：阅读态（`kp-hl-*` class）与编辑态必须共用同一套变量，禁止内联样式；
+ * - 深色模式只需覆盖同名变量，组件样式不必写第二份。
+ *
+ * 对比度：正文/次要文本/全部代码高亮色都对各自的背景 ≥ 4.5:1（WCAG AA 正文档），
+ * 由 `src/core/theme/index.ts` 的 `contrastRatio` 提供可计算断言（见 tests/unit/settings.spec.ts）。
+ */
+:root {
+  color-scheme: light;
+  --kp-bg: #ffffff;
+  --kp-fg: #1f2328;
+  --kp-muted: #57606a;
+  --kp-border: #e1e4e8;
+  --kp-accent: #1565c0;
+  --kp-accent-weak: #e8f0fe;
+  --kp-code-bg: #f6f8fa;
+
+  --kp-hl-keyword: #a626a4;
+  --kp-hl-string: #3a7d32;
+  --kp-hl-comment: #57606a;
+  --kp-hl-number: #7a5200;
+  --kp-hl-literal: #0550ae;
+  --kp-hl-var: #b3261e;
+  --kp-hl-heading: #0b5394;
+  --kp-hl-code: #a61b3c;
+  --kp-hl-link: #1565c0;
+  --kp-hl-url: #57606a;
+
+  --kp-editor-font-size: 16px;
+  --kp-editor-line-height: 1.6;
+  --kp-editor-max-width: 720px;
+  --kp-zoom: 1;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --kp-bg: #0d1117;
+  --kp-fg: #e6edf3;
+  --kp-muted: #8b949e;
+  --kp-border: #30363d;
+  --kp-accent: #58a6ff;
+  --kp-accent-weak: #1f2d3d;
+  --kp-code-bg: #161b22;
+
+  --kp-hl-keyword: #ff7b72;
+  --kp-hl-string: #a5d6ff;
+  --kp-hl-comment: #8b949e;
+  --kp-hl-number: #79c0ff;
+  --kp-hl-literal: #79c0ff;
+  --kp-hl-var: #ffa657;
+  --kp-hl-heading: #79c0ff;
+  --kp-hl-code: #ffa657;
+  --kp-hl-link: #58a6ff;
+  --kp-hl-url: #8b949e;
+}
+
+html,
+body {
+  background: var(--kp-bg);
+  color: var(--kp-fg);
+}
+
+/* FR-SET-23：界面缩放走 CSS zoom（Chromium/WebView2 支持）；只作用于应用根，不缩放系统对话框。 */
+#app {
+  zoom: var(--kp-zoom);
+}

@@ -1,3 +1,4 @@
+import { currentTheme } from '@core/theme';
 import { revealLineIn } from './revealLine';
 import { createApp, defineComponent, h, ref, watch, type App } from 'vue';
 import { MdEditor } from 'md-editor-v3';
@@ -64,7 +65,7 @@ export class MdEditorV3Adapter implements KpEditorAdapter {
               text.value = next;
             },
             preview: false, // 阅读/分屏的预览走 §7.2 的净化管线，不用内核自带预览
-            theme: opts.theme ?? 'light',
+            theme: opts.theme ?? currentTheme(),
             placeholder: opts.placeholder ?? '',
             readonly: opts.readonly ?? false,
             // 内核自带的 Ctrl+S 也归一到 save 事件；与 core/shortcut 的绑定是同一处理函数，
