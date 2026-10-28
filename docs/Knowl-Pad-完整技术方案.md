@@ -4,7 +4,7 @@
 | --- | --- |
 | 文档版本 | v6.3 |
 | 编写日期 | 2026-09-17（v6.0），2026-09-22（v6.1 修正），2026-09-25（v6.2 开发可用性修订），2026-09-29（v6.3 M0 收尾修订） |
-| 文档状态 | 评审修正版（v6.3：M0 收尾修订，含契约同步决策与门禁 17，见 §8.3/§12.2；历史修订见 §12.1；M0 本地核实见附录 D） |
+| 文档状态 | 评审修正版（v6.3：M0 收尾修订，含契约同步决策与门禁 17，见 §8.3/§12.2；历史修订见 §12.1/§12.2；应用图标补注见 §12.3；M0 本地核实见附录 D） |
 | 配套文档 | 《Knowl-Pad-PRD》v2.3（需求真相源）、《Knowl-Pad-架构图》v2.4 |
 | 上游基线 | 《Knowl_Pad_完整技术方案_v5》依赖锁定矩阵与安全审计结论 |
 | 架构形态 | 模块化单体（Modular Monolith），**无插件系统** |
@@ -254,6 +254,8 @@ knowl-pad/
 ├── tailwind.config.ts
 ├── components.json               # shadcn-vue 配置
 ├── index.html
+├── assets/
+│   └── brand/                    # 应用图标：SVG 设计源 + 1024 导出 + 预览（§10.4）
 ├── README.md                     # 项目说明（指针型，不复制版本矩阵）
 ├── LICENSE-MIT / LICENSE-APACHE  # MIT OR Apache-2.0 双许可（与两个 crate 的 license 字段一致）
 ├── .github/
@@ -263,8 +265,6 @@ knowl-pad/
 │       └── release.yml           # 多平台构建 + 发布 + Gitee 同步（§11.5）
 ├── .gitee/
 │   └── README.md                 # Gitee Go 已迁移说明（DEBT-06）
-├── assets/
-│   └── brand/                  # 图标设计源与预览（§10.4；非运行时资源）
 ├── src/                          # 前端源码（§2.2）
 ├── src-tauri/                    # Rust 后端（§2.3）
 ├── tests/                        # 跨端集成与 E2E
@@ -280,6 +280,7 @@ knowl-pad/
 │       └── syntax-compat/        #   附录 B 扩展语法解析测试集（结构化断言夹具）
 ├── scripts/
 │   ├── gen-fixture-vault.mjs          # 基准数据集生成（三档夹具，附录 B）
+│   ├── gen-icons.mjs                  # 应用图标生成（§10.4；tauri icon，非门禁）
 │   ├── verify-ipc-contract.mjs        # 前后端类型契约校验（§8.3）
 │   ├── bump-version.mjs               # 版本号四处同步（§11.3）
 │   ├── verify-build-integrity.mjs     # Vite 8 chunk 完整性校验（§3.4.2，门禁 9）
@@ -293,7 +294,7 @@ knowl-pad/
     └── AGENTS.md                 # AI 编程工具指令入口（§13.4）
 ```
 
-> **脚本清单完整性**：以上 7 个脚本与 §11.4 CI 配置中引用的脚本**一一对应**，无遗漏。`check-path-encapsulation.sh` 与 `check-naming.sh` 为 shell 脚本（纯文本扫描，无需 Node 依赖），其余为 `.mjs`（ESM Node 脚本）。
+> **脚本清单说明**：其余 7 个脚本（不含 `gen-icons.mjs`）与 §11.4 CI 配置中引用的脚本**一一对应**，无遗漏；`gen-icons.mjs` 是应用图标资产生成脚本（§10.4），不参与门禁。`check-path-encapsulation.sh` 与 `check-naming.sh` 为 shell 脚本（纯文本扫描，无需 Node 依赖），其余为 `.mjs`（ESM Node 脚本）。
 
 ### 2.2 前端结构（对应 PRD FE-01~05）
 
@@ -3129,7 +3130,7 @@ pub fn validate_filename(name: &str) -> Result<()> {
     "active": true,
     "targets": "all",
     "identifier": "com.knowlpad.desktop",
-      "icon": ["icons/32x32.png", "icons/64x64.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
+    "icon": ["icons/32x32.png", "icons/64x64.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
     "shortDescription": "本地优先的笔记与知识管理软件",
     "longDescription": "Knowl Pad 是一款跨平台本地优先的笔记与知识管理软件，数据完全保存在你的电脑上，以纯 Markdown 文件存储。",
     "category": "Productivity",
@@ -3162,18 +3163,18 @@ pub fn validate_filename(name: &str) -> Result<()> {
 
 > **macOS 未签名的诚实披露**（NFR-PLAT-13）：无 Apple 开发者账号时，用户下载后首次打开会被 Gatekeeper 拦截。文档中**必须**说明「右键 → 打开」或 `xattr -d com.apple.quarantine` 的操作方式，并**明确告知这会绕过系统安全检查、仅在信任来源时使用**。禁止隐瞒此限制或暗示软件已签名。
 
-应用图标资源（2026-10-28 落位）
+**应用图标资源（2026-10-28 落位）**
 
-| 文件 | 说明 |
+| 路径 | 作用 |
 | --- | --- |
-| assets/brand/knowl-pad-icon.svg | 1024 viewBox 的可编辑设计源；修改后需重新导出 1024 透明 PNG |
-| assets/brand/knowl-pad-icon-1024.png | 图标生成输入（1024×1024，透明圆角背景） |
-| assets/brand/knowl-pad-icon-preview.png | 尺寸、色板与设计语义预览（非运行时资源） |
-| src-tauri/icons/ | 桌面端产物：.ico（16–256）、.icns（16–1024）、多尺寸 PNG，以及 Windows Store 的 StoreLogo.png/Square*Logo.png 辅助图标；不含移动端资源（本项目不支持移动端） |
+| `assets/brand/knowl-pad-icon.svg` | 1024 viewBox 的可编辑设计源；修改后需重新导出 1024 透明 PNG |
+| `assets/brand/knowl-pad-icon-1024.png` | 图标生成输入（1024×1024，透明圆角背景） |
+| `assets/brand/knowl-pad-icon-preview.png` | 尺寸、色板与设计语义预览（非运行时资源） |
+| `src-tauri/icons/` | 桌面端产物：`.ico`（16–256）、`.icns`（16–1024）、多尺寸 PNG，以及 Windows Store 的 `StoreLogo.png`/`Square*Logo.png` 辅助图标；**不含移动端资源**（本项目不支持移动端） |
 
-图标语义：摊开的象牙色手账 = Markdown 本地笔记 / Pad；青绿晶簇 = 宝石/矿物元素与“笔记结晶为知识”；晶面节点连线 = 双向链接与知识图谱（金色节点代表当前笔记）。
+> **图标语义**：摊开的象牙色手账 = Markdown 本地笔记 / Pad；青绿晶簇 = 宝石/矿物元素与“笔记结晶为知识”；晶面节点连线 = 双向链接与知识图谱（金色节点代表当前笔记）。
 
-修改图标后运行 node scripts/gen-icons.mjs：脚本调用 tauri icon 生成各平台资源，只把桌面端文件复制到 src-tauri/icons/；复制结果包含 bundle.icon 所列的全部尺寸。该脚本是资产生成工具，不参与 17 项质量门禁。
+修改图标后运行 `node scripts/gen-icons.mjs`：脚本调用 `tauri icon` 生成各平台资源，只把桌面端文件复制到 `src-tauri/icons/`；复制结果包含 `bundle.icon` 所列的全部尺寸。该脚本是资产生成工具，**不参与 17 项质量门禁**。
 
 ---
 
@@ -4128,11 +4129,11 @@ echo "✅ 路径封装检查通过"
 
 本次只补应用图标资产与打包配置的事实，不改变 v6.3 的其余口径：
 
-- §2.1 仓库布局增加 assets/brand/，§2.3 标注 src-tauri/icons/；
-- §10.4 的 bundle.icon 同步为实际 7 项，并补设计源、桌面端产物、再生成命令与图标语义；
-- scripts/gen-icons.mjs 为资产生成脚本，不参与 17 项质量门禁；图标尺寸/格式由 tauri icon 维护。
+- §2.1 仓库布局增加 `assets/brand/`，§2.3 标注 `src-tauri/icons/`；
+- §10.4 的 `bundle.icon` 同步为实际 7 项，并补设计源、桌面端产物、再生成命令与图标语义；
+- `scripts/gen-icons.mjs` 为资产生成脚本，不参与 17 项质量门禁；图标尺寸/格式由 `tauri icon` 维护。
 
-> 设计源与预览见 assets/brand/；本次未改 PRD（PRD 无应用图标需求条目），未改历史记录。
+> 设计源与预览见 `assets/brand/`；本次未改 PRD（PRD 无应用图标需求条目），未改历史记录。
 
 ## 13. 实施路线与技术债
 
