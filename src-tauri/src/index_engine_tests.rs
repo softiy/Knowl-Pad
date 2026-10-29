@@ -282,9 +282,18 @@ fn pathological_note_is_indexed_within_budget() {
         "不该有 skip-timeout：{:?}",
         outcome.warnings
     );
+    // 预算说明：本机实测 ~1.7 s，故本地用 10 s；共享 CI runner（Windows 2 vCPU）
+    // 实测 16.6 s（同一提交、同一夹具），因此仅在 CI 环境放宽到 40 s。
+    // 本用例的契约是「**必须有限、绝不无限**」（DEBT-32 / DEBT-42 的现场症状是永远不结束），
+    // 10 s 只是本机余量，不是产品 NFR；放宽只作用于 CI，且会把实际预算打印出来。
+    let budget_secs: u64 = if std::env::var_os("CI").is_some() {
+        40
+    } else {
+        10
+    };
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "索引必须在 10 s 预算内结束（现场症状是永远不结束），实测 {elapsed:?}"
+        elapsed < std::time::Duration::from_secs(budget_secs),
+        "索引必须在 {budget_secs} s 预算内结束（CI 环境自动放宽；契约是「必须有限」），实测 {elapsed:?}"
     );
     let links: i64 = pool
         .with_reader(|conn| {
