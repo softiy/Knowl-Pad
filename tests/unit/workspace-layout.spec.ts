@@ -18,7 +18,7 @@ vi.mock('@core/ipc/events', () => ({
 }));
 import { defineComponent } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@core/ipc/commands', () => ({
   vaultCurrent: vi.fn(),
@@ -47,6 +47,12 @@ vi.mock('@core/ipc/commands', () => ({
 
 vi.mock('@core/ipc/linkCommands', () => ({ linkOutgoing: vi.fn(async () => []) }));
 
+/** E1 接线级替身：布局注入的 resolveAsset 必须带「vault root + 当前笔记 relPath」调用它。 */
+const assetHoisted = vi.hoisted(() => ({
+  assetUrlFor: vi.fn((root: string, note: string, src: string) => `asset://test/${root}/${note}/${src}`),
+}));
+vi.mock('@core/ipc/assetCommands', () => ({ assetUrlFor: assetHoisted.assetUrlFor }));
+
 /**
  * 标签域替身：**只替 store 的对外面**（selectTag / panelOpen），面板本身替掉 ——
  * 这样"正文点标签 ⇒ 打开面板并选中"这条跨 feature 的编排能被直接断言。
@@ -54,10 +60,13 @@ vi.mock('@core/ipc/linkCommands', () => ({ linkOutgoing: vi.fn(async () => []) }
 const tagsHoisted = vi.hoisted(() => ({ selectTag: vi.fn() }));
 vi.mock('@features/tags', async () => {
   const { reactive, defineComponent } = await import('vue');
+  // openPanel/closePanel 用普通函数（不是 vi.fn）：`vi.resetAllMocks()` 不会清掉实现，
+  // 面板开关行为在后续用例里仍然真实（互斥断言依赖它）。
   const store = reactive({
     panelOpen: false,
     selectTag: tagsHoisted.selectTag,
-    closePanel: vi.fn(),
+    openPanel: () => { store.panelOpen = true; },
+    closePanel: () => { store.panelOpen = false; },
   });
   const TagPanel = defineComponent({
     name: 'TagPanel',
@@ -80,12 +89,23 @@ const FileTreeStub = defineComponent({
   template: '<div data-testid="tree-stub" />',
 });
 
+/**
+ * 本 spec 会挂真实 EditorView（CodeMirror）；jsdom 里它的 rAF 测量会在用例结束后抛
+ * `getClientRects is not a function`。用例显式卸载，避免遗留实例把整套测试变成 unhandled error。
+ */
+const openedWrappers: { unmount(): void }[] = [];
+afterEach(() => {
+  for (const wrapper of openedWrappers.splice(0)) wrapper.unmount();
+});
+
 function mountLayout() {
   const pinia = createPinia();
   setActivePinia(pinia);
-  return mount(WorkspaceLayout, {
+  const wrapper = mount(WorkspaceLayout, {
     global: { plugins: [pinia], stubs: { FileTree: FileTreeStub, EditorView: true, VaultList: true } },
   });
+  openedWrappers.push(wrapper);
+  return wrapper;
 }
 
 describe('WorkspaceLayout（M2 接线）', () => {
@@ -189,6 +209,7 @@ describe('WorkspaceLayout：阅读态的点击路由接线（FR-EDITOR-25/27、F
     const wrapper = mount(WorkspaceLayout, {
       global: { plugins: [pinia], stubs: { FileTree: FileTreeStub, VaultList: true } },
     });
+    openedWrappers.push(wrapper);
     await flushPromises();
     const { useEditorStore } = await import('@features/editor');
     await useEditorStore().openNote('a.md');
@@ -215,8 +236,15 @@ describe('WorkspaceLayout：阅读态的点击路由接线（FR-EDITOR-25/27、F
     vi.mocked(noteRead).mockClear();
     await wrapper.find('[data-kp-link]').trigger('click', { ctrlKey: true });
     await flushPromises();
-    // reveal 会去读目标笔记（= 跳转真的发生了），而不是停在原地
-    expect(vi.mocked(noteRead)).toHaveBeenCalledWith('笔记A');
+    // reveal 会去读目标笔记（= 跳转真的发生了），而不是停在原地。
+    // 2026-11 修复 D2/10.7：已裁决链接交给 reveal 的是**真实 relPath**（此前误传显示名 ⇒ 真机「文件不存在」）。
+    expect(vi.mocked(noteRead)).toHaveBeenCalledWith('笔记A.md');
+  });
+
+  it('E1：本地图片经布局注入的 resolveAsset 渲染为 asset URL（FR-EDITOR-43）', async () => {
+    const wrapper = await mountReading('![图](../assets/x.png)');
+    expect(assetHoisted.assetUrlFor).toHaveBeenCalledWith('C:/v', 'a.md', '../assets/x.png');
+    expect(wrapper.find('img').attributes('src')).toContain('asset://test/');
   });
 
   it('普通点击悬空链接 ⇒ 打开既有"新建笔记"对话框并预填建议名（FR-EDITOR-27，新增能力）', async () => {
@@ -229,5 +257,165 @@ describe('WorkspaceLayout：阅读态的点击路由接线（FR-EDITOR-25/27、F
     await flushPromises();
     expect(wrapper.find('[data-testid="fileops-dialog"]').exists()).toBe(true);
     expect((wrapper.find('[data-testid="fileops-name"]').element as HTMLInputElement).value).toBe('缺笔记.md');
+  });
+});
+
+/**
+ * 9.6：单一右栏 dock 与 Ribbon 开关。
+ *
+ * 真机反馈：搜索与标签会并排打开、再叠上反链，三个栏一起压在编辑区上；
+ * Ribbon 的搜索/标签只能打开不能关闭。这三条在这里用真实 store + 真实面板做回归。
+ */
+describe('WorkspaceLayout：单一右栏 dock 与 Ribbon 开关（9.6）', () => {
+  const VAULT = { root: 'C:/v', displayName: '库', vaultId: 1, caseInsensitiveFs: true } as never;
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    // vault 状态通路的默认实现（resetAllMocks 会清掉工厂里的实现）
+    const commands = await import('@core/ipc/commands');
+    vi.mocked(commands.vaultCurrent).mockResolvedValue(VAULT);
+    vi.mocked(commands.vaultStateGet).mockResolvedValue({ values: {} } as never);
+    const { useTagsStore } = await import('@features/tags');
+    useTagsStore().panelOpen = false;
+    const { useSearchStore } = await import('@features/search');
+    useSearchStore().panelOpen = false;
+    const { useLayoutStore } = await import('@features/layout');
+    useLayoutStore().reset();
+  });
+
+  async function mountWithVault() {
+    const wrapper = mountLayout();
+    await flushPromises();
+    return wrapper;
+  }
+
+  it('右侧面板默认关闭：不渲染 dock，也不渲染反链', async () => {
+    const wrapper = await mountWithVault();
+    expect(wrapper.find('[data-testid="workspace-right-dock"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="search-panel"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('Ribbon 搜索是开关：点一次打开、再点一次关闭', async () => {
+    const wrapper = await mountWithVault();
+    await wrapper.get('[data-testid="ribbon-search"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="workspace-right-dock"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="search-panel"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="ribbon-search"]').attributes('aria-pressed')).toBe('true');
+
+    await wrapper.get('[data-testid="ribbon-search"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="workspace-right-dock"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="ribbon-search"]').attributes('aria-pressed')).toBe('false');
+    wrapper.unmount();
+  });
+
+  it('搜索与标签互斥：打开标签会关闭搜索，右栏始终只有一个面板', async () => {
+    const wrapper = await mountWithVault();
+    await wrapper.get('[data-testid="ribbon-search"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="search-panel"]').exists()).toBe(true);
+
+    await wrapper.get('[data-testid="ribbon-tags"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="workspace-tag-panel"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="search-panel"]').exists()).toBe(false);
+    expect(wrapper.findAll('[data-testid="workspace-right-dock"]')).toHaveLength(1);
+
+    // 再点标签 → 关闭（同样是开关）
+    await wrapper.get('[data-testid="ribbon-tags"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="workspace-right-dock"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('Ribbon ▥：显示反链并隐藏搜索/标签；反链可见时再点全部隐藏（持久化 hidden）', async () => {
+    const commands = await import('@core/ipc/commands');
+    const { STATE_KEY_RIGHT_PANEL } = await import('@features/layout');
+    const wrapper = await mountWithVault();
+
+    // 先打开搜索 → 再点 ▥：关闭搜索并显示反链
+    await wrapper.get('[data-testid="ribbon-search"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-testid="ribbon-right"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('[data-testid="workspace-right-dock"]').text()).toContain('反链');
+    expect(wrapper.find('[data-testid="search-panel"]').exists()).toBe(false);
+
+    // 反链可见时再点 ▥ → 全部隐藏，并把 hidden 落盘（重启/切库后不会自己又打开）
+    await wrapper.get('[data-testid="ribbon-right"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="workspace-right-dock"]').exists()).toBe(false);
+    expect(vi.mocked(commands.vaultStateSet)).toHaveBeenCalledWith({ [STATE_KEY_RIGHT_PANEL]: 'hidden' });
+    wrapper.unmount();
+  });
+
+  it('状态异常（搜索与标签同为 true）时也只渲染一个面板，不重叠', async () => {
+    const wrapper = await mountWithVault();
+    const { useSearchStore } = await import('@features/search');
+    const { useTagsStore } = await import('@features/tags');
+    useSearchStore().panelOpen = true;
+    useTagsStore().panelOpen = true;
+    await flushPromises();
+    expect(wrapper.findAll('[data-testid="workspace-right-dock"]')).toHaveLength(1);
+    expect(wrapper.find('[data-testid="search-panel"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="workspace-tag-panel"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+/**
+ * 7.5：命令面板「保存当前笔记」失败时必须保持打开并显示错误。
+ *
+ * 根因（真机）：`editor.save` 把错误收进 buffer.error 后正常 resolve，旧执行体
+ * `if (relPath) return editor.save(relPath)` 于是被 palette.execute 当成成功 → 关闭面板、零提示。
+ */
+describe('WorkspaceLayout：7.5 保存失败时命令面板保持打开并显示错误', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const commands = await import('@core/ipc/commands');
+    vi.mocked(commands.vaultCurrent).mockResolvedValue({
+      root: 'C:/v', displayName: '库', vaultId: 1, caseInsensitiveFs: true,
+    } as never);
+    vi.mocked(commands.vaultStateGet).mockResolvedValue({ values: {} } as never);
+    vi.mocked(commands.systemInfo).mockResolvedValue({
+      platform: 'windows', arch: 'x86_64', version: '0.1.0', globalDbRebuilt: false,
+    } as never);
+    const { useSearchStore } = await import('@features/search');
+    useSearchStore().panelOpen = false;
+    const { useTagsStore } = await import('@features/tags');
+    useTagsStore().panelOpen = false;
+  });
+
+  it('外部删除后保存：面板不关闭，红字显示错误，buffer.error 有原因', async () => {
+    const commands = await import('@core/ipc/commands');
+    const { noteRead, noteWrite } = commands;
+    vi.mocked(noteRead).mockResolvedValue({ relPath: 'a.md', content: '旧内容', mtimeMs: 1, sizeBytes: 6 } as never);
+    vi.mocked(noteWrite).mockRejectedValue({ code: 'E_NOTE_NOT_FOUND', message: '文件不存在：a.md' });
+
+    const wrapper = mountLayout();
+    await flushPromises();
+    const { useEditorStore } = await import('@features/editor');
+    const editor = useEditorStore();
+    await editor.openNote('a.md');
+    editor.updateContent('a.md', '改过的内容');
+    await flushPromises();
+
+    const { usePaletteStore } = await import('@features/palette');
+    const palette = usePaletteStore();
+    palette.open({ hasActiveNote: true, hasVault: true, mode: 'edit', includeHidden: false });
+    palette.setQuery('保存当前笔记');
+    const index = palette.results.findIndex((command) => command.id === 'palette.save-note');
+    expect(index).toBeGreaterThanOrEqual(0);
+
+    const ok = await palette.execute(index);
+    await flushPromises();
+
+    expect(ok).toBe(false);
+    expect(palette.isOpen).toBe(true); // 面板保持打开
+    expect(palette.error).toContain('文件不存在');
+    expect(wrapper.find('[data-testid="palette-error"]').text()).toContain('文件不存在'); // 底部红字
+    expect(editor.buffers.find((buffer) => buffer.relPath === 'a.md')?.error).toBeTruthy();
+    wrapper.unmount();
   });
 });

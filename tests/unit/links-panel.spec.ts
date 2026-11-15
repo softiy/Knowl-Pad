@@ -321,3 +321,37 @@ describe('改名 + 改写：一次原子可回滚操作（FR-FILE-22 / 审计 H3
     expect(hoisted.apply).toHaveBeenLastCalledWith('p9', { from: 'A.md', to: 'B.md' });
   });
 });
+
+/**
+ * 9.6 串状态回归：编辑区切换/关闭当前笔记时，反链面板必须跟着换目标。
+ * 修复前只在 onMounted 取一次 activeRelPath ⇒ 打开另一篇笔记后面板仍显示上一篇的反链。
+ */
+describe('反链跟随当前笔记（9.6）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    hoisted.backlinks.mockReset().mockResolvedValue([
+      { srcRelPath: 'a.md', srcName: 'a.md', linkCount: 1, embedCount: 0, items: [{ line: 1, col: 1, linkKind: 'wikilink', snippet: null }] },
+    ]);
+    hoisted.dangling.mockReset().mockResolvedValue({ items: [], total: 0 });
+    hoisted.ambiguous.mockReset().mockResolvedValue({ items: [], total: 0 });
+    hoisted.orphans.mockReset().mockResolvedValue({ items: [], total: 0 });
+  });
+
+  it('prop 变化即按新笔记重查；关闭笔记后清空并显示提示', async () => {
+    const w = mount(LinksPanel, { props: { activeRelPath: 'b.md' } });
+    await flushPromises();
+    expect(hoisted.backlinks).toHaveBeenCalledWith('b.md');
+    expect(w.find('[data-testid="backlink-group"]').exists()).toBe(true);
+
+    hoisted.backlinks.mockClear();
+    hoisted.backlinks.mockResolvedValue([]);
+    await w.setProps({ activeRelPath: 'c.md' });
+    await flushPromises();
+    expect(hoisted.backlinks).toHaveBeenCalledWith('c.md');
+
+    await w.setProps({ activeRelPath: null });
+    await flushPromises();
+    expect(w.find('[data-testid="links-no-note"]').exists()).toBe(true); // 不再显示上一篇的反链
+    expect(w.find('[data-testid="backlink-group"]').exists()).toBe(false);
+  });
+});
