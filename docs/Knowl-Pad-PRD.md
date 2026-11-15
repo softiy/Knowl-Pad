@@ -671,7 +671,7 @@ FTS5 默认 `unicode61` 分词器按 Unicode 词边界切分，**对中文不分
 | 规则 ID | 规则 |
 | --- | --- |
 | `FTS-01` | 索引时：`plain_text` = jieba 分词后以单空格连接的文本 |
-| `FTS-02` | 查询时：用户输入经 jieba 分词 → 各词以 `AND`（默认）或 `OR`（可选）连接 → 构造 FTS5 MATCH |
+| `FTS-02` | 查询时：用户输入经 jieba 分词 → 各词以 `AND`（默认）或 `OR`（可选）连接 → 构造 FTS5 MATCH。**行内 OR 口径**（2026-11-15 M5 冒烟 A7 澄清）：查询串中出现**独立的大写 token `OR`** 等价于把整条查询切到 OR 模式；引号短语内的 `OR` 不算、小写 `or` 按普通词处理；`-词` 排除项在两种模式下都生效，且其优先级高于 OR（构造为 `(a OR b) NOT c`，不得写成 `a OR b NOT c`） |
 | `FTS-03` | 英文、数字保持原样（jieba 对连续英文数字不切分）；混合中英文文本正常处理 |
 | `FTS-04` | 搜索结果的高亮片段（snippet）需**还原**为原文——通过 FTS5 的 `snippet()` 配合原始文本偏移，或在 Rust 侧对命中的原文重新截取上下文窗口 |
 | `FTS-05` | 分词器版本纳入索引签名（§3.5）。jieba 词典升级导致分词结果变化时，签名变更触发全量重建 |
@@ -1201,8 +1201,8 @@ FTS5 默认 `unicode61` 分词器按 Unicode 词边界切分，**对中文不分
 | --- | --- | --- |
 | `FR-TAG-01` | 标签面板：树形展示全部标签及其层级，每个标签显示引用计数 | P0 |
 | `FR-TAG-02` | 层级标签按 `/` 展开为树（`#a/b/c` 显示为 a → b → c 三级嵌套） | P0 |
-| `FR-TAG-03` | 点击标签展示该标签（含全部子标签，可切换是否含子级）下的笔记列表 | P0 |
-| `FR-TAG-04` | 标签列表支持按引用计数、按名称排序；支持在标签面板内过滤 | P1 |
+| `FR-TAG-03` | 点击标签展示该标签（含全部子标签，可切换是否含子级）下的笔记列表。**面板 UI 的「含子级」开关默认勾选**（对应原文「含全部子标签」为主句；IPC `tag_notes` 的 `include_children` 契约缺省仍为 `false`，见 §5.3.6.2，UI 显式传 `true`） | P0 |
+| `FR-TAG-04` | 标签列表支持按引用计数、按名称排序；支持在标签面板内过滤。**过滤口径**（2026-11-15 M5 冒烟 B7 澄清）：按标签**显示名子串**匹配（大小写不敏感，按 `display` 而非全路径 `norm`，避免输入 `alpha` 时把 `项目/alpha/前端` 的整棵子树都算命中）；命中节点的**祖先保留**，其后代与非命中分支裁剪；无命中时显示「没有匹配「<输入>」的标签」 | P1 |
 | `FR-TAG-05` | 笔记内的标签可点击，点击后跳转到该标签的笔记列表视图 | P0 |
 | `FR-TAG-06` | 编辑器内 `#` 触发标签自动补全（复用 FR-EDITOR-24），补全含层级路径 | P0 |
 | `FR-TAG-07` | 标签重命名：将 Vault 内某标签的全部出现改写为新名称（含层级子标签的前缀更新），**必须**走预览 + 备份 + 原子改写流程（复用 FR-FILE-21/22） | P1 |
@@ -1581,7 +1581,7 @@ interface KpError {
 
 ### 5.3 Command 清单
 
-共 **60** 个 Command，按域分组。标注 ⚠️ 的为**写操作**，需施加额外的确认与审计（见 SEC-05）。
+共 **63** 个 Command，按域分组。标注 ⚠️ 的为**写操作**，需施加额外的确认与审计（见 SEC-05）。
 
 #### 5.3.1 Vault 域（9）
 
@@ -1863,12 +1863,12 @@ interface KpError {
 
 | 类型 | 字段 | 说明 |
 | --- | --- | --- |
-| `IndexStatus` | `indexDir: string`、`indexDb: string`、`ready: boolean`、`schemaVersion?: number`、`signaturePrefix?: string`、`builtAt?: number` | 索引状态与统计（`ready=false` 时表示尚未建好，UI 显示「索引中」） |
+| `IndexStatus` | `indexDir: string`、`indexDb: string`、`ready: boolean`、`schemaVersion?: number`、`signaturePrefix?: string`、`builtAt?: number`、`warnings: string[]` | 索引状态与统计（`ready=false` 时表示尚未建好，UI 显示「索引中」）。`warnings` 为**最近一次索引的非致命警告**（`skip-timeout:<相对路径>` / `skip-oversize:<相对路径>` / `遍历告警:<原因>`）；**超时/超限被跳过的文件必须可见**（对应 **SEC-03**），打开新 Vault 时清空；勘误 **D-46** |
 | `IndexStats` | `files`、`deletedFiles`、`links`、`tags`、`headings`、`blockIds`、`ftsRows`（均 `number`） | 各表实体计数；`files` 不含软删除项 |
 | `SignatureInfo` | `expected: SignatureParts`、`stored: SignatureParts \| null`、`matched: boolean`、`reason: string \| null` | 诊断用：`stored` 为 null 表示索引库未记录签名（首次打开或未完成），一律按「不可信即重建」处理 |
 | `SignatureParts` | `schemaVersion`、`parserVersion`、`tokenizerVersion`、`tokenizerDictHash`、`vaultRoot`、`digest` | 签名六要素；`digest` 为规范化拼接后的 SHA-256 |
 
-#### 5.3.9 设置与系统域（5）
+#### 5.3.9 设置与系统域（6）
 
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |
@@ -1877,8 +1877,9 @@ interface KpError {
 | `vault_state_get` | `{ keys? }` | `Record<string, unknown>` | 读取**当前 Vault** 的界面状态（文件树展开、滚动位置等；**勘误 D-13 补齐**） |
 | `vault_state_set` ⚠️ | `{ entries }` | `null` | 批量写入当前 Vault 的界面状态（界面防抖后调用） |
 | `system_info` | — | `SystemInfo` | 平台、版本、路径信息（关于页）。**2026-10-21（DEBT-20）**：返回值追加 `globalDbRebuilt` / `globalDbBackup` / `globalDbReason` —— 全局库损坏后**重建**时的一次性告知（正常启动恒 `false`/缺省；见技术方案 §13.2 `DEBT-20`、需求 `FR-GLOBAL-01`） |
+| `open_external` | `{ url }` | `null` | 用**系统浏览器**打开经白名单校验的外部 URL（仅 `http` / `https` / `mailto`；非法 scheme ⇒ `E_*` 拒绝）。**应用内不发起网络请求**（E2 远程图片占位点击；SEC-07 / SEC-08；勘误 **D-47** 补齐契约） |
 
-> **统计核对**：9 + 14 + 4 + 6 + 9 + 5 + 5 + 5 + 5 = **62** 个 Command（`vault_pin` 为勘误 D-10 补齐项，`vault_state_get/set` 为勘误 D-13 补齐项）。其中标注 ⚠️ 的写操作共 **26** 个，分域为：Vault 域 4、文件域 8、链接改写域 3、搜索域 2、链接与图谱域 1、标签域 1、索引域 1、回收站域 4、设置与系统域 2（4+8+3+2+1+1+1+4+2 = 26）。
+> **统计核对**：9 + 14 + 4 + 6 + 9 + 5 + 5 + 5 + 6 = **63** 个 Command（`vault_pin` 为勘误 D-10 补齐项，`vault_state_get/set` 为勘误 D-13 补齐项，`open_external` 为勘误 D-47 补齐项）。其中标注 ⚠️ 的写操作共 **26** 个，分域为：Vault 域 4、文件域 8、链接改写域 3、搜索域 2、链接与图谱域 1、标签域 1、索引域 1、回收站域 4、设置与系统域 2（4+8+3+2+1+1+1+4+2 = 26）。
 
 ### 5.4 事件清单
 
@@ -2296,7 +2297,7 @@ interface KpError {
 | --- | --- | --- | --- |
 | **单元测试** | Rust `domain/` 纯函数（解析器、分词、链接匹配、路径校验）；前端 `core/utils` 纯函数 | `cargo test` + `cargo llvm-cov` / `vitest` | Rust `domain/` 行覆盖率 ≥ 85%（`cargo llvm-cov`，门禁 6 强制，见技术方案 §11.1/DEBT-10）；前端 `core/utils` ≥ 90%（vitest 目录级阈值，见技术方案 §11.7.6） |
 | **组件测试** | Vue 组件渲染与交互 | `@vue/test-utils` + `vitest` | 核心组件（编辑器、文件树、搜索、反链面板）必测 |
-| **集成测试** | IPC Command 端到端（Rust 侧 + 真实临时 Vault） | `cargo test`（集成测试目录） | 全部 62 个 Command 至少 1 个正向 + 1 个错误用例 |
+| **集成测试** | IPC Command 端到端（Rust 侧 + 真实临时 Vault） | `cargo test`（集成测试目录） | 全部 63 个 Command 至少 1 个正向 + 1 个错误用例 |
 | **契约测试** | 前后端类型一致性（TS interface ↔ Rust struct） | 自动生成的类型比对脚本 | 100% Command 覆盖 |
 | **E2E 测试** | 关键用户旅程（打开 Vault → 编辑 → 链接 → 搜索 → 重命名改写 → 回收站恢复） | `tauri-driver` + `WebDriverIO` | §1.3 全部 10 个核心场景 |
 | **安全测试** | §6.3.3 全部 AC-SEC 用例（路径穿越、XSS、签名、零网络请求） | 自动化脚本 + 网络监控 | 100% 通过为发布门禁 |
@@ -2487,6 +2488,9 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M8
 | D-43 | **标签域没有"用户可见的回滚"入口，而链接域有**（2026-10-16 M5 批次 2 的 PR-C 实现时发现）：AC-TAG-02 只要求「**改写过程中任一文件失败 ⇒ 全部回滚且标签表保持原状**」——这一条已由 `link_rewrite_apply::apply_with_prefix` 的**全有或全无**满足（备份前缀 `tag-rename`）；而链接域 UI 上那个"回滚"按钮对应的是 `link_rewrite_rollback`，标签域**没有**对应的 `tag_rename_rollback` 命令（`tag_rewrite.rs` 只注册 `tag_rename_preview` / `tag_rename_apply` 两条）⇒ PR-C 的重命名 UI **不显示回滚按钮**（而不是显示一个注定失败的假按钮），**对称性缺口如实暴露** | **⏳ 待后续批次（本轮不做）**：裁定为**对称性需求而非本批验收项**（AC-TAG-02 的"失败即自动全回滚"已满足）。将来若加用户可见回滚，走 **(b)**：**复用按 `operationId` 工作的既有回滚命令**（`link_rewrite_rollback` 不依赖链接域的任何东西，回滚的是"某次改写的备份目录"）⇒ **不新增命令**；同时把"该命令**与域无关**"写进真源（本轮已写入 §5.3.6 的命令表说明），免得下一个人看到"标签改名却调 link_*"以为是笔误 | `AC-TAG-02`、`FR-TAG-07`、§5.3.6、PR-B 的 `tag_rewrite.rs`、M5 批次 2（PR-C） |
 | D-44 | **`[[笔记#标题]]` 的"跳到锚点"未实现（PR-D 落地时如实登记）**：FR-EDITOR-25 的原文只要求「`Ctrl/Cmd+点击` wikilink **跳转到目标笔记**」，锚点滚动不在该条字面里；而 **MD-WL-01/WL-04 允许目标带锚点**，渲染侧（`kpInline.ts`）已把锚点单列成 `data-kp-anchor`，**点击时只打开笔记、不滚动**（`EditorView.onLink` → `editor.reveal(target, 1)`） | **⏳ 待后续批次**：本批只把锚点**如实带出来**（属性里有、UI 上暂不生效），不假装支持。要落地需要"按标题定位"的通路（`link_headings` 已能给出标题行号 ⇒ 届时"锚点 → 行号"是一次查询的距离），并要覆盖 `^块ID` 形态；归属建议随 **FR-EDITOR-29（嵌入 `![[笔记#标题]]`，P1）** 一并处理，因为它俩共用同一套"锚点解析" | `FR-EDITOR-25`、`MD-WL-01/04`、`kpInline.ts`、M5 批次 2（PR-D） |
 | D-45 | **`NFR-PERF-13` 的 300MB 标准档在 Windows/WebView2 上实测即超**（2026-10-21 D-25 ④⑤ 首次真采样，D-25 裁定按"勘误"而非改口径）：按 §6.1.4（勘误 D-27）的**进程树合计**口径，应用停在 Vault 列表（未打开 Vault、未编辑）时 **416.7–422.9 MB（三次采样 416.7 / 417.5 / 422.9，峰值 423.3）/ 7 个进程**（WebView2 的 renderer/GPU/utility 子进程为主要占用；采样窗口 29.0s；机器：AMD Ryzen 7 8845HS 8C/16T、59.7GB、NVMe SSD、Windows 虚拟化桌面）。**对 PRD 原标准档 300MB 不达标 —— 这是真实的红，不得改写成绿** | **决定（平台分档，不新造数字）**：**Windows/WebView2 平台按 PRD 既有的 `< 500MB`（参考档）判定**；判定输出**必须两个都给**：`Windows 平台档（500MB）：416.7–422.9 ≤ 500 ⇒ 达标` **且** `PRD 原标准档（300MB）：416.7–422.9 > 300 ⇒ 不达标`。**明确禁止**"为让判定变绿改回单进程口径"（那会重新引入 D-27 已否定的错误）；**「编辑 5 篇后的常驻内存」仍是真机项**，本口径只覆盖"启动后停在 Vault 列表"的空闲态。判据：`node scripts/perf-d25-lifecycle.mjs --seconds 30` |
+| D-46 | **`IndexStatus` 没有承载"最近一次索引的非致命警告"的通道 ⇒ SEC-03 的"超时/超限跳过要记录警告"在界面上不可见**（2026-11-15 M5 真机冒烟 T1 发现）：§5.4 的 `kp://index/completed` 载荷按 EVT-03 只含 `stats` / `durationMs`，而启动对账路径把 `outcome.warnings`（`skip-timeout:` / `skip-oversize:` / `遍历告警:`）直接丢弃；手工重建的 `IndexRebuildResult.warnings` 也无人展示 ⇒ 用户看到"约 2 秒就绪"却不知道有文件被跳过且未进索引（违反 SEC-03 的可见性意图，也违反"不把现状说成完成"的纪律）。 | **处置（2026-11-15）**：**不改事件载荷**（§5.4 为准，EVT-03 不得新增 PRD 未定义字段），改为在 §5.3.7 的 `IndexStatus` 形状表**增量**补 `warnings: string[]`（最近一次索引的非致命警告；打开新 Vault / 关闭时清空；`index_rebuild` 完成时同样写入、取消或失败时清空 —— 半索引不得携带旧警告）；`IndexBadge` 在有警告时显示「⚠ N 条索引警告」，悬停明细列出前若干条（含被跳过的文件名），手工重建返回的 `warnings` 同样在按钮旁橙色显示（不静默）；后端把警告存进 `AppState`，启动对账与重建两条路径都写入。判据：Rust `commands::index_tests::index_status_exposes_recent_index_warnings` / `reconcile_publishes_warnings_and_discards_previous_vault_ones` / `clean_reconcile_run_clears_previous_warnings` + `state_tests::index_warnings_are_replaceable_and_clearable` + 前端 `tests/unit/index-badge.spec.ts`。 | `SEC-03`、`§5.3.7`、`§5.4`、`EVT-03`、T1、M5 真机冒烟 |
+| D-47 | **`open_external` 命令已实现/注册却不在契约里**（2026-11-15 M5 真机冒烟 E2 批次；editor-reading 在 `commands/system.rs` 新增并在 `main.rs` 注册）：E2 的远程图片占位（SEC-08 明确不自动加载远程资源）需要一个"用户点击 → 交由系统浏览器打开"的出口，而 §5.3 的 Command 清单里没有该命令 ⇒ 契约与实现漂移，且按清单核对命令集合的门禁 17 会出现"实现有、清单无"。 | **处置**：§5.3.9 新增 `open_external { url: string } → null` 一行并把该域计数 5 → 6；用途写明**仅经 `http` / `https` / `mailto` 白名单校验**后交系统浏览器打开、应用内不发起网络请求（SEC-07 / SEC-08）；命令总数 62 → 63（§5.3 末尾统计已同步，⚠️ 写操作仍为 26）；技术方案不动。 | `§5.3.9`、`SEC-07`、`SEC-08`、E2、门禁 17、M5 真机冒烟 |
+| D-48 | **标签面板两处 UI 口径在 PRD 里未写明，导致真机冒烟被判缺陷**（2026-11-15 M5 真机冒烟 B4/B7/A7）：① FR-TAG-03 主句是「点击标签展示该标签（含全部子标签，可切换是否含子级）」，但面板「含子级」开关此前默认**不勾选** ⇒ 点父标签 `项目/alpha` 下方列表为空、无「共 N 篇」，与主句相反（B4）；② FR-TAG-04 只写「支持在标签面板内过滤」，未定义匹配与树裁剪口径，旧实现用 `norm` 全路径子串匹配 ⇒ 过滤 `alpha` 时 `项目/alpha/前端` 的 norm 也含 alpha，整棵子树被保留（B7）；③ FTS-02 的「`OR`（可选）」未说明查询串里的行内大写 OR，实现未识别 ⇒ `词1 OR 词2` 不命中（A7，已补进 FTS-02 行）。 | **处置（2026-11-15）**：FR-TAG-03 行补「面板含子级开关默认勾选，`tag_notes` 契约缺省仍 false、UI 显式传 true」；FR-TAG-04 行补「按显示名子串匹配（按 display 不按 norm 全路径）+ 祖先保留/非命中分支裁剪 + 无匹配文案」；FTS-02 行补行内大写 `OR` 语义与排除项优先级。判据：`tests/unit/tags-logic.spec.ts`（B7 过滤祖先保留/zzz 无匹配）、`tests/unit/tags-store.spec.ts`（B4 默认含子级）、`crates/kp-domain/src/search_tests.rs`（行内 OR 与 `(a OR b) NOT c`）。 | `FR-TAG-03`、`FR-TAG-04`、`FTS-02`、§5.3.6.2、B4/B7/A7、M5 真机冒烟 |
 
 ---
 
