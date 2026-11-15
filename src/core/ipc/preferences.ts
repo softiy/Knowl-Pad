@@ -10,6 +10,9 @@
  * 失败语义：提交失败时把这一批条目**放回队列**（新值优先），等下一次调度或显式
  * `flushPreferences()` 重试；错误原因留在 `preferenceFlushError()` 里供界面/用例观察 ——
  * 不静默吞掉（R-15 / ERR-01）。
+ *
+ * 落盘时机：除 500ms 窗口外，窗口卸载/页面隐藏前由 `installPreferenceFlushOnUnload()` 强制提交
+ * （否则用户改完设置立刻关窗，队列会随进程一起消失 —— 真机 S2/8.6 的另一半根因）。
  */
 import { preferenceSet } from '@core/ipc/commands';
 import { asKpError } from '@core/ipc/errors';
@@ -70,4 +73,39 @@ export async function flushPreferences(): Promise<void> {
     }
     lastError = asKpError(err).message;
   }
+}
+
+/** 卸载/隐藏钩子是否已注册（重复 install 只注册一次，避免同一事件多份监听）。 */
+let unloadHooksInstalled = false;
+
+/**
+ * 注册「窗口卸载前 / 页面隐藏时」立即提交防抖队列（S2 的另一半根因）。
+ *
+ * 为什么必须有：偏好写入是 500ms 防抖批量提交（FR-SET-03）。用户改完设置立刻关窗时定时器还没到点，
+ * 队列随进程退出一起消失 —— 重启后看起来就是"设置没保存、回到默认值"（真机 8.6/S2）。
+ * `beforeunload` 覆盖关窗路径；`visibilitychange → hidden` 覆盖最小化/切后台后被系统回收的路径。
+ *
+ * 为什么由启动编排显式调用、而不是模块加载时自动注册：单测与 SSR 会 import 本模块，
+ * 自动挂全局监听会污染用例（jsdom 也没有真实卸载语义）；bootstrap 调用一次即可。
+ *
+ * @returns 注销函数（仅测试 / 热更新需要；正式启动不注销）。
+ */
+export function installPreferenceFlushOnUnload(): () => void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return () => undefined;
+  if (unloadHooksInstalled) return () => undefined;
+  unloadHooksInstalled = true;
+  // beforeunload 里不能 await；IPC 发出即可，Tauri 侧会在进程退出前尽量落盘。
+  const flush = (): void => {
+    void flushPreferences();
+  };
+  const onVisibilityChange = (): void => {
+    if (document.visibilityState === 'hidden') flush();
+  };
+  window.addEventListener('beforeunload', flush);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  return () => {
+    window.removeEventListener('beforeunload', flush);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    unloadHooksInstalled = false;
+  };
 }

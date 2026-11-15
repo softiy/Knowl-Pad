@@ -68,3 +68,13 @@ body {
 #app {
   zoom: var(--kp-zoom);
 }
+
+/*
+ * 编辑区字号（FR-SET-22，真机 8.6 的表现之一）：md-editor-v3 把 CodeMirror 字号写死成 14px
+ * （`.md-editor .cm-editor { font-size: 14px }`），不覆盖时设置面板调字号只影响阅读态，编辑态纹丝不动。
+ * 用 `#app` 提权覆盖内核样式；字号值仍由 core/theme 写入的 --kp-editor-font-size 驱动（不是第二个真相源）。
+ */
+#app .cm-editor,
+#app .cm-content {
+  font-size: var(--kp-editor-font-size, 16px);
+}
