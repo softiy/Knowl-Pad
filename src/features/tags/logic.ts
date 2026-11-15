@@ -77,11 +77,20 @@ export function findTagNode(nodes: TagNode[], norm: string): TagNode | null {
   return walkTree(nodes).find((node) => node.norm === norm) ?? null;
 }
 
-/** 节点是否命中过滤串（大小写不敏感；同时匹配**完整规范键**与**显示名**）。 */
+/**
+ * 节点是否命中过滤串（大小写不敏感）。两条口径都不是随手定的：
+ *
+ * ① **主判据是显示名（display）子串**，不是规范键（norm）全路径子串 ——
+ *    norm 是「项目/alpha/前端」这样的完整路径，用子串匹配时输入 alpha 会连
+ *    项目/alpha/前端、项目/alpha/后端 一起命中，过滤后仍显示三层（M5 冒烟 B7 的缺陷）。
+ *    显示名是用户在树上真正看到的那个名字（alpha），按它匹配才符合「过滤标签」的直觉。
+ * ② 规范键只做**精确**匹配：允许用户把完整路径粘进来筛一个分支（项目/alpha），
+ *    同时不会把该分支的全部后代一起带进来（后代有自己的 norm，不等于这个路径）。
+ */
 export function matchesFilter(node: TagNode, needle: string): boolean {
   const q = needle.trim().toLowerCase();
   if (!q) return true;
-  return node.norm.toLowerCase().includes(q) || node.display.toLowerCase().includes(q);
+  return node.display.toLowerCase().includes(q) || node.norm.toLowerCase() === q;
 }
 
 /** 该节点自身或其任一子孙命中（祖先必须留下，否则树会被截断成孤儿子节点）。 */

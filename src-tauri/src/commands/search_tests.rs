@@ -86,6 +86,38 @@ fn fulltext_hits_chinese_phrase_and_highlights_it() {
     }
 }
 
+/// **M5 冒烟 A7（命令入口）**：`苹果 OR 香蕉`（匹配模式缺省 = AND）与「模式切到 any +
+/// 苹果 香蕉」返回**同一批**结果；并且不加 OR 时默认 AND 仍只命中同时含两词的笔记。
+#[test]
+fn a7_inline_or_matches_any_mode_at_the_command_entry() {
+    let (_v, state) = fixture(&[
+        ("apple.md", "苹果\n"),
+        ("banana.md", "香蕉\n"),
+        ("both.md", "苹果 香蕉\n"),
+        ("none.md", "橙子\n"),
+    ]);
+    let inline = search_fulltext_impl(&state, fulltext("苹果 OR 香蕉")).expect("行内 OR");
+    let mut any_args = fulltext("苹果 香蕉");
+    any_args.options.match_mode = Some("any".to_string());
+    let any = search_fulltext_impl(&state, any_args).expect("any 模式");
+
+    let mut inline_paths: Vec<String> = inline.items.iter().map(|i| i.rel_path.clone()).collect();
+    let mut any_paths: Vec<String> = any.items.iter().map(|i| i.rel_path.clone()).collect();
+    inline_paths.sort();
+    any_paths.sort();
+    assert_eq!(inline.total, 3, "苹果 / 香蕉 / 都含 = 3 篇");
+    assert_eq!(
+        inline_paths, any_paths,
+        "A7：行内 OR 与匹配模式切到任一词必须返回同一批结果"
+    );
+    assert_eq!(inline_paths, vec!["apple.md", "banana.md", "both.md"]);
+
+    // 对照：默认 AND 的语义没被 OR 关键字改变（不加 OR 时两词仍是「同时含」）
+    let and = search_fulltext_impl(&state, fulltext("苹果 香蕉")).expect("AND 模式");
+    assert_eq!(and.total, 1, "AND 模式只命中同时含两词的笔记");
+    assert_eq!(and.items[0].rel_path, "both.md");
+}
+
 /// FR-SEARCH-05：同一笔记多处命中合并为**一条**结果，命中次数与片段数都对得上。
 #[test]
 fn fulltext_merges_multiple_hits_in_one_note() {

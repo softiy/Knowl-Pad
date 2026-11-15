@@ -175,16 +175,29 @@ fn walkdir(dir: &std::path::Path) -> Vec<String> {
 }
 
 /// 预览是**一次性**的（第二次用同一个 preview_id 必须失败，且不再改动任何文件）。
+///
+/// **M5 冒烟 C6 的后端判据**：前端把"成功后连点两次确认"的第二次渲染成橙色警示，
+/// 靠的就是这个**专用错误码** —— 必须精确断言 `E_PREVIEW_EXPIRED`（而不是"失败就行"），
+/// 否则前端会把它显示成普通红色"改写失败"（让人以为磁盘坏了）。
 #[test]
 fn preview_is_one_shot() {
     let (_v, state) = fixture(&[("a.md", "#old 甲\n")]);
     let p = tag_rename_preview_impl(&state, "old".into(), "new".into()).expect("预览");
     tag_rename_apply_impl(&state, "old".into(), "new".into(), p.preview_id.clone()).expect("首次");
+    // 首次落地后的磁盘状态（第二次被拒后必须逐字节保持）
+    let after_first = read(&root_of(&state), "a.md");
+
     let err = tag_rename_apply_impl(&state, "old".into(), "new".into(), p.preview_id.clone())
         .expect_err("第二次必须失败");
-    assert!(
-        format!("{err:?}").contains("PreviewExpired"),
-        "实得：{err:?}"
+    assert_eq!(
+        err.0.code(),
+        "E_PREVIEW_EXPIRED",
+        "第二次必须给专用码（前端据此渲染橙色『请重新预览』警示）：{err:?}"
+    );
+    assert_eq!(
+        read(&root_of(&state), "a.md"),
+        after_first,
+        "被拒的第二次确认不得改动磁盘（AC-TAG-02 的原子性）"
     );
 }
 

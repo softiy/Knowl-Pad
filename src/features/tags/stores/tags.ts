@@ -52,9 +52,14 @@ export const useTagsStore = defineStore('tags', () => {
   const notesLoading = ref(false);
   /**
    * FR-TAG-03 的「是否含子级」。**自 2026-10-17（批次 4）起真正生效**（勘误 D-40②）：
-   * `false` ⇒ 只列**显式写了该标签**的笔记（`file_tag.explicit = 1`）；`true` ⇒ 含**全部子孙**。
+   * false ⇒ 只列**显式写了该标签**的笔记（file_tag.explicit = 1）；true ⇒ 含**全部子孙**。
+   *
+   * **缺省勾选**：FR-TAG-03 的主句是「点击标签展示该标签（**含全部子标签**，可切换是否含子级）」——
+   * "含子级"是主行为，取消勾选才是收窄。缺省 false 会让点父标签（如 项目/alpha，其笔记都写在
+   * 子标签 项目/alpha/前端 上）得到空列表（M5 冒烟 B4）。开关本身仍然生效：
+   * 取消勾选 ⇒ 显式传 false ⇒ 只列显式写了该标签的笔记（B8）。
    */
-  const includeChildren = ref(false);
+  const includeChildren = ref(true);
   const loading = ref(false);
   const error = ref<string | null>(null);
   const panelOpen = ref(false);

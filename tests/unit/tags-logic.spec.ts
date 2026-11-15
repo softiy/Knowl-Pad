@@ -117,12 +117,31 @@ describe('标签树纯逻辑：过滤（FR-TAG-04）', () => {
     expect(kept[0]?.children[0]?.children.map((n) => n.norm)).toEqual(['项目/alpha/前端']);
   });
 
-  it('大小写不敏感，且同时匹配规范键与显示名', () => {
+  it('大小写不敏感；按**显示名**子串匹配，规范键只做**精确**匹配', () => {
     const work = node({ norm: 'work', display: 'Work' });
     expect(matchesFilter(work, 'WORK')).toBe(true);
-    expect(matchesFilter(work, 'work')).toBe(true);
-    expect(subtreeMatches(work, 'ork')).toBe(true);
+    expect(matchesFilter(work, 'work')).toBe(true); // 显示名就含 work
+    // 规范键子串**不再**算命中：否则输入 alpha 会把 项目/alpha/前端 也带进来（B7 的三层缺陷）。
+    const deep = node({ norm: '项目/alpha/前端', display: '前端' });
+    expect(matchesFilter(deep, 'alpha')).toBe(false);
+    // 完整路径可以精确筛选一个分支（粘贴路径的场景）
+    expect(matchesFilter(deep, '项目/alpha/前端')).toBe(true);
     expect(matchesFilter(work, 'other')).toBe(false);
+    // 对照：显示名子串仍命中（Work 含 ork），已被裁掉的只是"规范键子串"这一条判据
+    expect(subtreeMatches(work, 'ork')).toBe(true);
+  });
+
+  it('**B7**：过滤 alpha 只剩 项目 → alpha（保留祖先链、裁掉匹配节点的后代与兄弟分支）', () => {
+    const kept = filterTree(acTag01Tree(), 'alpha');
+    expect(kept.map((n) => n.norm)).toEqual(['项目']);
+    expect(kept[0]?.children.map((n) => n.norm)).toEqual(['项目/alpha']);
+    // 命中节点自己的后代（前端/后端）与兄弟分支（项目/beta）都必须裁掉
+    expect(kept[0]?.children[0]?.children).toEqual([]);
+    expect(flattenTree(kept).map((r) => r.node.norm)).toEqual(['项目', '项目/alpha']);
+  });
+
+  it('**B7**：过滤不存在的名字 ⇒ 空数组（面板据此显示"没有匹配「zzz」的标签"）', () => {
+    expect(filterTree(acTag01Tree(), 'zzz')).toEqual([]);
   });
 
   it('完全没命中 ⇒ 空数组（面板据此区分"没有标签"与"过滤没命中"）', () => {

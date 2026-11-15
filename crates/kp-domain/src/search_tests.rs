@@ -162,6 +162,98 @@ fn unclosed_quote_is_a_syntax_error() {
     );
 }
 
+/// **M5 冒烟 A7**：`词1 OR 词2`（匹配模式保持默认 AND）与「同一串词 + 模式 any」
+/// 必须是**同一个 MATCH 表达式** —— 验收原文要求两种入口结果一致。
+///
+/// 一致不是巧合：行内 OR 只做一件事 —— 把 effective mode 切成 Any，MATCH 构造仍只有一条路径。
+#[test]
+fn inline_or_keyword_equals_any_mode() {
+    let inline = expr("词1 OR 词2", MatchMode::All);
+    let any = expr("词1 词2", MatchMode::Any);
+    assert_eq!(inline, any, "行内 OR 与 any 模式必须是同一个表达式");
+    assert!(inline.contains(" OR "), "表达式：{inline}");
+    assert!(
+        !inline.contains(" AND "),
+        "整条查询切到 OR 后不该再有 AND：{inline}"
+    );
+    assert!(
+        !inline.to_lowercase().contains("\"or\""),
+        "OR 是运算符、不是检索词，不得进 MATCH：{inline}"
+    );
+}
+
+/// 行内 OR 只切「正面词」的模式，**过滤条件与排除项**照旧：
+/// 短语整段保留（FR-SEARCH-24 不被拆）、排除项仍是链式 NOT。
+#[test]
+fn inline_or_combines_phrases_and_keeps_exclusions() {
+    let parsed = parse_query("\"季度报告\" OR 草稿 -废弃", MatchMode::All).expect("解析");
+    assert!(
+        parsed.match_expr.contains(&phrase_expr("季度报告")),
+        "短语不得被拆：{}",
+        parsed.match_expr
+    );
+    assert!(
+        parsed.match_expr.contains(&escape_fts("草稿")),
+        "普通词进正面集合：{}",
+        parsed.match_expr
+    );
+    assert!(
+        parsed.match_expr.contains(" NOT "),
+        "排除项照旧链式 NOT：{}",
+        parsed.match_expr
+    );
+    assert!(
+        parsed.highlight.contains(&"季度报告".to_string()),
+        "高亮词不含运算符：{:?}",
+        parsed.highlight
+    );
+    assert!(
+        !parsed.highlight.iter().any(|t| t == "OR"),
+        "OR 不是高亮词：{:?}",
+        parsed.highlight
+    );
+}
+
+/// OR 关键字的边界：**只认大写**、**引号里不算**、单独一个 OR 是空查询而不是检索词。
+///
+/// 为什么只认大写：小写 `or` 是英文正文里的常见词（`this or that`），当运算符会让它搜不到；
+/// 要搜字面量 `OR` 可以用引号短语。
+#[test]
+fn inline_or_is_uppercase_and_not_an_operator_inside_quotes() {
+    // 小写 or 是普通检索词：AND 模式照旧连接它
+    let lower = expr("a or b", MatchMode::All);
+    assert!(lower.contains(" AND "), "小写 or 不是运算符：{lower}");
+    assert!(
+        lower.to_lowercase().contains("\"or\""),
+        "它作为词进 MATCH：{lower}"
+    );
+    // 引号短语里的 OR 是字面量（短语整体不进运算符判断）
+    let quoted = expr("\"OR\"", MatchMode::All);
+    assert!(!quoted.contains(" OR "), "引号内 OR 不是运算符：{quoted}");
+    // 只剩一个 OR ⇒ 摘掉后没有正面词：按「空查询」而不是检索词处理
+    assert!(
+        parse_query("OR", MatchMode::All)
+            .expect("单独 OR 不是语法错误")
+            .is_empty_query(),
+        "只有 OR 时等价于没有查询内容"
+    );
+}
+
+/// 排除项必须作用于**整个**正面集合：FTS5 里 NOT 优先级高于 AND/OR，
+/// `a OR b NOT c` 会被解析成 `a OR (b NOT c)`（含 c 的 a 仍命中）⇒ 必须加括号。
+#[test]
+fn exclusions_apply_to_the_whole_positive_expression() {
+    let e = expr("报告 OR 草稿 -废弃", MatchMode::All);
+    assert!(
+        e.starts_with("(\"") || e.starts_with('('),
+        "排除项存在时正面表达式必须加括号：{e}"
+    );
+    assert!(e.contains(") NOT "), "NOT 必须作用于括号整体：{e}");
+    // 无排除项时不加括号（不改变既有表达式形状）
+    let plain = expr("报告 OR 草稿", MatchMode::All);
+    assert!(!plain.starts_with('('), "没有排除项就不该加括号：{plain}");
+}
+
 /// FR-SEARCH-26：过滤条件、精确短语、排除词三者混用时各归各位。
 #[test]
 fn filters_mix_with_phrase_and_exclusion() {

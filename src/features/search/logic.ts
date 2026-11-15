@@ -133,5 +133,5 @@ export function splitHighlight(
 export const EMPTY_HINTS: readonly string[] = [
   '换个更短的关键词，或用 "引号" 搜完整短语',
   '用 tag:标签 或 path:目录/ 先缩小范围',
-  '用 -词 排除某个词，用 OR 连接候选（默认 AND）',
+  '用 -词 排除某个词，用大写 OR 连接候选（如 甲 OR 乙；默认全部词即 AND）',
 ];

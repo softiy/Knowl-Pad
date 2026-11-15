@@ -125,8 +125,9 @@ defineExpose({ focusFilter });
       含子级
     </label>
     <p class="kp-tags__hint" data-testid="tag-include-children-hint">
-      含子级：勾选后连同全部子孙标签的笔记一起列出；不勾选则只列显式写了该标签的笔记
-      （层级标签的祖先登记不算"写过"—— FR-TAG-03 / 勘误 D-40②，2026-10-17 批次 4 起生效）。
+      含子级：默认勾选 —— 连同全部子孙标签的笔记一起列出（FR-TAG-03 的主行为）；
+      取消勾选则只列显式写了该标签的笔记（层级标签的祖先登记不算"写过"——
+      FR-TAG-03 / 勘误 D-40②，2026-10-17 批次 4 起生效）。
     </p>
 
     <TagNotesList
