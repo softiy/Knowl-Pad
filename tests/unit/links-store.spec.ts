@@ -67,6 +67,21 @@ describe('链接面板 store', () => {
     expect(s.backlinks).toEqual([]);
   });
 
+  it('切 Vault 时 reset 清空目标笔记与四类清单（9.6 串状态），且不再查询', async () => {
+    const s = useLinksStore();
+    await s.setActive('b.md');
+    await s.refresh();
+    hoisted.backlinks.mockClear();
+    s.reset();
+    expect(s.backlinks).toEqual([]);
+    expect(s.dangling).toEqual([]);
+    expect(s.ambiguous).toEqual([]);
+    expect(s.orphans).toEqual([]);
+    expect(s.activeRelPath).toBeNull();
+    expect(s.error).toBeNull();
+    expect(hoisted.backlinks).not.toHaveBeenCalled();
+  });
+
   it('事件到来后防抖刷新（1 秒内可见），且不重复注册', async () => {
     vi.useFakeTimers();
     const s = useLinksStore();

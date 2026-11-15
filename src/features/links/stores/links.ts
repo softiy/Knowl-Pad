@@ -96,6 +96,24 @@ export const useLinksStore = defineStore('links', () => {
     ]);
   }
 
+  /**
+   * 切 Vault 时清空面板数据（9.6 串状态）：
+   * 反链面板若保持打开，`activeRelPath` 会指向上一个 Vault 的笔记、清单也会残留上一次查询的结果。
+   * 订阅不在这里退订——面板卸载时由 dispose() 负责（两者职责不同）。
+   */
+  function reset(): void {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    backlinks.value = [];
+    dangling.value = [];
+    ambiguous.value = [];
+    orphans.value = [];
+    loading.value = false;
+    error.value = null;
+    activeRelPath.value = null;
+    lastRefreshedAt.value = 0;
+  }
+
   function dispose(): void {
     if (timer) clearTimeout(timer);
     timer = null;
@@ -118,6 +136,7 @@ export const useLinksStore = defineStore('links', () => {
     setActive,
     scheduleRefresh,
     subscribe,
+    reset,
     dispose,
   };
 });

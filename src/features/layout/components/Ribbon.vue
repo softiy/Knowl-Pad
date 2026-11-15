@@ -2,8 +2,18 @@
 /**
  * Ribbon（FR-LAYOUT-02）：只放**真实存在**的入口 —— 文件树、搜索、标签、设置。
  * 图谱 / 回收站视图在 M5 不存在，按 D-44 同口径登记去向（不造占位按钮）。
+ *
+ * 三个开关都按「已打开」高亮（aria-pressed）：搜索/标签是**开关**（再点一次关闭），
+ * 右侧面板按钮 ▥ 只在反链可见时高亮 —— 三者在同一时刻至多一个可见（单右栏 dock）。
  */
-const props = defineProps<{ collapsed: boolean; rightPanelVisible: boolean }>();
+const props = defineProps<{
+  collapsed: boolean;
+  rightPanelVisible: boolean;
+  /** 搜索面板当前是否打开（用于 aria-pressed 与「再点一次关闭」的可感知状态）。 */
+  searchOpen?: boolean;
+  /** 标签面板当前是否打开。 */
+  tagsOpen?: boolean;
+}>();
 const emit = defineEmits<{
   toggleSidebar: [];
   search: [];
@@ -16,9 +26,9 @@ const emit = defineEmits<{
 <template>
   <nav class="kp-ribbon" data-testid="ribbon" aria-label="快速入口">
     <button type="button" class="kp-ribbon__btn" data-testid="ribbon-files" :aria-pressed="!props.collapsed" title="文件树（折叠/展开左侧栏）" @click="emit('toggleSidebar')">▤</button>
-    <button type="button" class="kp-ribbon__btn" data-testid="ribbon-search" title="搜索（Mod+Shift+F）" @click="emit('search')">⌕</button>
-    <button type="button" class="kp-ribbon__btn" data-testid="ribbon-tags" title="标签（Mod+Shift+T）" @click="emit('tags')">＃</button>
-    <button type="button" class="kp-ribbon__btn" data-testid="ribbon-right" :aria-pressed="props.rightPanelVisible" title="右侧面板（反链）" @click="emit('toggleRight')">▥</button>
+    <button type="button" class="kp-ribbon__btn" data-testid="ribbon-search" :aria-pressed="props.searchOpen === true" title="搜索（Mod+Shift+F；再点一次关闭）" @click="emit('search')">⌕</button>
+    <button type="button" class="kp-ribbon__btn" data-testid="ribbon-tags" :aria-pressed="props.tagsOpen === true" title="标签（Mod+Shift+T；再点一次关闭）" @click="emit('tags')">＃</button>
+    <button type="button" class="kp-ribbon__btn" data-testid="ribbon-right" :aria-pressed="props.rightPanelVisible" title="右侧面板（反链；再点一次关闭）" @click="emit('toggleRight')">▥</button>
     <button type="button" class="kp-ribbon__btn" data-testid="ribbon-settings" title="设置" @click="emit('settings')">⚙</button>
   </nav>
 </template>

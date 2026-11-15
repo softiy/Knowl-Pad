@@ -1,244 +1,105 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { systemInfo, vaultStateGet, vaultStateSet } from '@core/ipc/commands';
+import { vaultStateGet, vaultStateSet } from '@core/ipc/commands';
+import { assetUrlFor } from '@core/ipc/assetCommands';
 import { bindShortcuts } from '@core/shortcut';
 import { useVaultStore } from '@features/vault';
 import { EditorView, useEditorStore } from '@features/editor';
-import { FileOpsDialog, FileTree, useFileOpsStore, type MenuAction } from '@features/file-tree';
+import { FileOpsDialog, FileTree, useFileOpsStore, useFileTreeStore, type MenuAction } from '@features/file-tree';
 import { LinksPanel } from '@features/links';
 import { QuickOpen, SearchPanel, useSearchStore } from '@features/search';
 import { TagPanel, useTagsStore } from '@features/tags';
 import { CommandPalette, usePaletteStore } from '@features/palette';
 import { SettingsPanel, useSettingsStore } from '@features/settings';
-import { Ribbon, clampSidebarWidth, useLayoutStore } from '@features/layout';
-import { useFileTreeStore } from '@features/file-tree/stores/fileTree';
+import {
+  Ribbon, SIDEBAR_MIN_WIDTH, createPaletteActions, useLayoutStore, useWorkspaceStore,
+} from '@features/layout';
 import VaultList from '@features/vault/components/VaultList.vue';
 import StatusBar from './StatusBar.vue';
 
 /**
- * 工作区布局（技术方案 §2.2 的 `app/layout`）：左文件树 + 右编辑器 + 文件操作对话框 + 状态栏。
+ * 工作区布局（技术方案 §2.2 的 `app/layout`）：Ribbon + 左文件树 + 中编辑器 + 右单一 dock + 状态栏。
  *
- * 接线职责（M2 的最后一公里）：
- * - 文件树点开笔记 → 编辑器打开（FR-FILE-10 的进入编辑态）；
- * - 文件树右键动作 → 文件操作对话框（新建/重命名/删除，AC-FILE-03/04）；
- * - 重命名成功后由 fileOps store 调 `editor.followRename`（FR-FILE-28 / AC-FILE-05）；
- * - 状态栏显示 Vault 名称与索引状态（FR-VAULT-11）与 Git 忽略提示（FR-VAULT-12/FR-STORAGE-03）。
- * 未打开 Vault 时展示 Vault 列表（避免空白工作区）。
+ * 本组件只做「渲染 + 组件 ref」；跨 feature 的时序编排（切库重置、右栏互斥、命令执行体、
+ * 保存失败语义）在 `@features/layout` 的 workspace store 里，可被单测直接覆盖。
  */
 const vaultStore = useVaultStore();
-const ops = useFileOpsStore();
 const editor = useEditorStore();
 const search = useSearchStore();
 const tags = useTagsStore();
 const palette = usePaletteStore();
 const fileTree = useFileTreeStore();
+const ops = useFileOpsStore();
 const settings = useSettingsStore();
 const layout = useLayoutStore();
-/** 拖拽中的临时宽度（不每次落盘；pointerup 才写 vault_state）。 */
-const draggingWidth = ref<number | null>(null);
+const workspace = useWorkspaceStore();
 const searchPanel = ref<InstanceType<typeof SearchPanel> | null>(null);
 const quickOpen = ref<InstanceType<typeof QuickOpen> | null>(null);
 const tagPanel = ref<InstanceType<typeof TagPanel> | null>(null);
 let unbind: (() => void) | null = null;
+let untrackViewport: (() => void) | null = null;
 
-/**
- * **FR-GLOBAL-01 / DEBT-20**：全局库在本次启动被重建过时，提示一次（可关闭）。
- *
- * 为什么用 `system_info` 而不是事件：重建发生在**启动早期**（webview 还没就绪），事件发出去也收不到；
- * 恢复信息是"每次启动一个值"，挂载时取一次正好，且正常启动恒为 false（不产生噪声）。
- */
-const globalRecovery = ref<{ backup: string | null; reason: string } | null>(null);
-
-async function checkGlobalRecovery(): Promise<void> {
-  try {
-    const info = await systemInfo();
-    if (info.globalDbRebuilt === true) {
-      globalRecovery.value = { backup: info.globalDbBackup ?? null, reason: info.globalDbReason ?? '' };
-    }
-  } catch {
-    // 诊断信息取不到不影响主流程（也不静默改写别的状态）
-  }
-}
-
-// Vault 状态来自 store（唯一来源）：切换/打开/移除都会响应式传播，
-// 状态栏的 watch 因此真正生效（M1/M2 复核：此前只在挂载时取一次）。
-// 顺带绑定搜索入口（FR-SEARCH-01 的 Mod+Shift+F 与 FR-SEARCH-40 的 Mod+O）——
-// 快捷键统一走 core/shortcut（ED-04：组件不自行绑 keydown），卸载时必须注销（ED-01）。
-// 命令面板（FR-PALETTE-01/03/07）：执行体在这一层注入（跨 feature 的编排只允许在 layout 层，FE-02）。
-// 命令只调用**既有**通路，不新增写路径；不可用命令由 registry 的 needs/reason 判定（FR-PALETTE-08 的机制面）。
-// FR-LAYOUT-01：布局状态按 PRD 记在 vault_state（键 ui.sidebarCollapsed / ui.sidebarWidth / ui.rightPanel）。
+// FR-LAYOUT-01：布局按 PRD 记在 vault_state（键 ui.sidebarCollapsed / ui.sidebarWidth / ui.rightPanel）。
 layout.configureVaultState({
-  read: async (key) => (await vaultStateGet([key])).values[key],
-  write: async (key, value) => {
-    await vaultStateSet({ [key]: value });
-  },
+  read: async (keys) => (await vaultStateGet(keys)).values,
+  write: async (key, value) => { await vaultStateSet({ [key]: value }); },
 });
-watch(
-  () => vaultStore.current?.vaultId ?? null,
-  () => {
-    void layout.load();
-  },
-);
-function onViewportResize(): void {
-  layout.applyViewport(window.innerWidth);
-}
-function startResize(event: PointerEvent): void {
-  if (layout.effectiveCollapsed) return;
-  event.preventDefault();
-  const startX = event.clientX;
-  const startWidth = layout.sidebarWidth;
-  const onMove = (ev: PointerEvent): void => {
-    draggingWidth.value = clampSidebarWidth(startWidth + (ev.clientX - startX));
-  };
-  const onUp = (): void => {
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
-    if (draggingWidth.value !== null) {
-      const width = draggingWidth.value;
-      draggingWidth.value = null;
-      void layout.setSidebarWidth(width);
-    }
-  };
-  window.addEventListener('pointermove', onMove);
-  window.addEventListener('pointerup', onUp);
-}
-
-// AC-SET-02：Vault 级设置只认「当前 Vault」——读写都走 file-tree 的 vault_state 通路
-// （ui.showHiddenFiles 已是 vault_state 作用域，见 fileTree.ts 的 restoreState/setIncludeHidden）。
+// AC-SET-02：Vault 级设置只认「当前 Vault」；read 里同时按新库恢复文件树展开态（AC-FILE-08）。
 settings.configureVaultScope({
   read: async () => {
     await fileTree.restoreState();
     return fileTree.includeHidden;
   },
-  write: async (value) => {
-    await fileTree.setIncludeHidden(value);
-  },
+  write: async (value) => { await fileTree.setIncludeHidden(value); },
 });
-watch(
-  () => vaultStore.current?.vaultId ?? null,
-  () => {
-    void settings.loadVaultScope();
-    void layout.load();
-    layout.applyViewport(window.innerWidth);
-    window.addEventListener('resize', onViewportResize);
-  },
-);
+// S2：自动保存防抖的唯一来源是 editor store（设置面板与编辑器工具栏必须同源）。
+settings.configureAutosave({
+  get: () => editor.autosaveDelayMs,
+  set: (ms) => editor.setAutosaveDelay(ms),
+});
 
-palette.configure({
-  newNote: () => ops.openNewNote(''),
-  quickOpen: () => {
-    search.openQuickOpen();
-    void nextTick(() => {
-      quickOpen.value?.focusInput();
-    });
-  },
-  search: () => {
-    search.openPanel();
-    void nextTick(() => {
-      searchPanel.value?.focusInput();
-    });
-  },
-  tags: () => {
-    tags.openPanel();
-    void nextTick(() => {
-      tagPanel.value?.focusFilter();
-    });
-  },
-  saveNote: () => {
-    const relPath = editor.activeRelPath;
-    if (relPath !== null) return editor.save(relPath);
-  },
-  saveAll: () => { void editor.saveAll(); },
-  closeNote: () => {
-    const relPath = editor.activeRelPath;
-    if (relPath !== null) editor.closeNote(relPath);
-  },
-  toggleMode: () => {
-    editor.mode = editor.mode === 'edit' ? 'read' : 'edit';
-  },
-  switchVault: () => { void onSwitchVault(); },
-  refreshTree: () => { void fileTree.refresh(); },
-  toggleHidden: () => { void fileTree.setIncludeHidden(!fileTree.includeHidden); },
-  openSettings: () => settings.open(),
-  toggleSidebar: () => layout.toggleSidebar(),
-  toggleRightPanel: () => layout.toggleRightPanel(),
-  toggleTheme: () => settings.toggleTheme(),
-});
+function focusSearch(): void { void nextTick(() => { searchPanel.value?.focusInput(); }); }
+function focusTags(): void { void nextTick(() => { tagPanel.value?.focusFilter(); }); }
+function focusQuickOpen(): void { void nextTick(() => { quickOpen.value?.focusInput(); }); }
+
+// 命令面板（FR-PALETTE-01/03/07）：执行体在这一层注入（跨 feature 编排，FE-02）。
+palette.configure(createPaletteActions(workspace, { quickOpen: focusQuickOpen, search: focusSearch, tags: focusTags }));
+
+// 9.5：启动时路由守卫已 restore current，watch 默认不触发 —— onMounted 必须主动 apply 一次。
+// 9.6：之后切库（含 current→null）统一走 applyVaultScope：先清跨库状态，再恢复新库的持久化布局。
+watch(() => vaultStore.current?.vaultId ?? null, (vaultId) => { void workspace.applyVaultScope(vaultId); });
+
+/** 打开命令面板：先刷新上下文（FR-PALETTE-01 的置灰判定按当前状态算）。 */
+function openPalette(): void {
+  palette.open({
+    hasActiveNote: editor.activeRelPath !== null,
+    hasVault: vaultStore.current !== null,
+    mode: editor.mode === 'read' ? 'read' : 'edit',
+    includeHidden: fileTree.includeHidden,
+  });
+}
 
 onMounted(() => {
   void vaultStore.init();
-  void checkGlobalRecovery();
+  void workspace.checkGlobalRecovery();
+  untrackViewport = workspace.trackViewport(); // FR-LAYOUT-04：只注册一次，卸载注销
+  void workspace.applyVaultScope(vaultStore.current?.vaultId ?? null);
+  // 快捷键统一走 core/shortcut（ED-04：组件不自行绑 keydown），卸载时必须注销（ED-01）。
   unbind = bindShortcuts(window, [
-    {
-      spec: 'Mod+Shift+F',
-      handler: () => {
-        search.openPanel();
-        void nextTick(() => {
-          searchPanel.value?.focusInput();
-        });
-      },
-    },
-    {
-      spec: 'Mod+O',
-      handler: () => {
-        search.openQuickOpen();
-        void nextTick(() => {
-          quickOpen.value?.focusInput();
-        });
-      },
-    },
-      {
-        // 命令面板（FR-PALETTE-01）：打开时刷新上下文（编辑器/焦点/隐藏文件），置灰判定按当前状态算。
-        spec: 'Mod+P',
-        handler: () => {
-          palette.open({
-            hasActiveNote: editor.activeRelPath !== null,
-            hasVault: vaultStore.current !== null,
-            mode: editor.mode === 'read' ? 'read' : 'edit',
-            includeHidden: fileTree.includeHidden,
-          });
-        },
-      },
-    {
-      // 标签面板（FR-TAG-01 的入口）：与搜索同一形态 —— 先开面板，再聚焦过滤框。
-      // 键位选 Mod+Shift+T：Mod+Shift+F 已给搜索、Mod+O 给快速打开，避开二者。
-      spec: 'Mod+Shift+T',
-      handler: () => {
-        tags.openPanel();
-        void nextTick(() => {
-          tagPanel.value?.focusFilter();
-        });
-      },
-    },
+    { spec: 'Mod+Shift+F', handler: () => { workspace.openSearch(); focusSearch(); } },
+    { spec: 'Mod+O', handler: () => { workspace.quickOpen(); focusQuickOpen(); } },
+    { spec: 'Mod+P', handler: openPalette },
+    // Mod+Shift+T：Mod+Shift+F 已给搜索、Mod+O 给快速打开，避开二者。
+    { spec: 'Mod+Shift+T', handler: () => { workspace.openTags(); focusTags(); } },
   ]);
 });
 
 onUnmounted(() => {
   unbind?.();
   unbind = null;
+  untrackViewport?.();
+  untrackViewport = null;
 });
-
-/** 切换失败时的可见提示（R-07：不静默丢内容，也不假装成功）。 */
-const switchError = ref<string | null>(null);
-
-/**
- * FR-VAULT-04/05：回到欢迎页以切换知识库。
- *
- * 顺序很关键：**先刷盘，再关闭** —— 否则未保存内容会随 Vault 关闭一起消失
- * （AC-VAULT-03 的"编辑内容被写入磁盘"也正是这条路径）。
- * 若仍有标签保存失败，则**取消切换**并给出可见提示：宁可不切，也不丢内容。
- */
-async function onSwitchVault(): Promise<void> {
-  switchError.value = null;
-  await editor.saveAll();
-  if (editor.hasUnsaved()) {
-    // 脏判定用 store 的派生函数（buffer 本身没有 isDirty 字段）。
-    const dirty = editor.buffers.filter((b) => editor.isDirty(b.relPath)).length;
-    switchError.value = `仍有 ${dirty} 个标签保存失败，已取消切换；请处理后重试。`;
-    return;
-  }
-  await vaultStore.closeCurrent();
-}
 
 function onOpen(relPath: string): void {
   void editor.openNote(relPath);
@@ -249,21 +110,12 @@ function onOpenLink(payload: { relPath: string; line: number }): void {
   void editor.reveal(payload.relPath, payload.line);
 }
 
-/**
- * 点击搜索结果：同一条既有通路（FR-SEARCH-07 的"跳转并定位到命中位置"）。
- * 带上命中列区间 ⇒ 精确选中命中处；没有区间时编辑器回退成整行选中。
- */
+/** 点击搜索结果：带上命中列区间 ⇒ 精确选中命中处（FR-SEARCH-07）；无区间时回退整行。 */
 function onOpenHit(relPath: string, line: number, range?: { start: number; end: number }): void {
   void editor.reveal(relPath, line, range);
 }
 
-/**
- * 阅读态 wikilink 的跳转出口（FR-EDITOR-25）—— **跨 feature 的编排只在这一层**（FE-02）。
- *
- * 已裁决的链接：与反链/搜索**同一条既有通路** `editor.reveal`；
- * **悬空链接的创建**：交给 file-tree 域的既有"新建笔记"流程（带建议名，新增能力见 `fileOps.createFromLink`）；
- * **标签**：打开标签面板并选中它（对接 PR-C 的 tags store）。
- */
+/** 阅读态 wikilink 的跳转出口（FR-EDITOR-25）：已裁决 → 既有 reveal 通路；悬空 → 既有新建流程。 */
 function onOpenWikiLink(target: string, event?: MouseEvent): void {
   // FR-EDITOR-25：Ctrl/Cmd+Alt+点击 ⇒ 新标签页打开（不切走当前标签）
   if (event?.altKey === true) void editor.openNoteInNewTab(target);
@@ -271,19 +123,28 @@ function onOpenWikiLink(target: string, event?: MouseEvent): void {
 }
 
 function onCreateFromLink(name: string): void {
-  // 复用既有的"新建笔记"对话框并**预填**建议名（FR-EDITOR-27 的创建流程）：
-  // 不新增写入路径 —— 名称校验、冲突三选项、创建后进入编辑态全部照旧（AC-FILE-03/04）。
+  // 复用既有「新建笔记」对话框并预填建议名（FR-EDITOR-27）：不新增写入路径。
   ops.createFromLink(name);
 }
 
+/** 阅读态点标签（FR-TAG-05）：先按单 dock 规则打开标签面板，再选中该标签。 */
 function onOpenTag(tag: string): void {
+  workspace.openTags();
   tags.selectTag(tag);
-  void nextTick(() => {
-    tagPanel.value?.focusFilter();
-  });
+  focusTags();
 }
 
-/** 快速打开只负责"打开文件"，不请求行定位（它不是命中跳转）。 */
+/**
+ * 阅读态本地附件（E1 / FR-EDITOR-43）：vault root + 当前笔记 relPath → asset:// URL。
+ * 解析失败返回 null ⇒ 渲染器保留原 src（远程/绝对路径不生成可请求 URL，SEC-08）。
+ */
+function resolveAsset(src: string): string | null {
+  const root = vaultStore.current?.root;
+  const note = editor.activeRelPath;
+  return root && note ? assetUrlFor(root, note, src) : null;
+}
+
+/** 快速打开只负责「打开文件」，不请求行定位（它不是命中跳转）。 */
 function onOpenQuick(relPath: string): void {
   search.closeQuickOpen();
   void editor.openNote(relPath);
@@ -316,40 +177,43 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
         type="button"
         class="kp-workspace__switch"
         data-testid="workspace-switch-vault"
-        @click="onSwitchVault"
+        @click="workspace.switchVault()"
       >
         切换知识库
       </button>
     </header>
     <!-- FR-GLOBAL-01 / DEBT-20：全局库重建的一次性告知（正常启动不渲染） -->
-    <div v-if="globalRecovery" class="kp-workspace__recovery" data-testid="global-recovered" role="status">
+    <div v-if="workspace.globalRecovery" class="kp-workspace__recovery" data-testid="global-recovered" role="status">
       <p>
         全局库已重建，请重新选择知识库。笔记数据在 Vault 内，未受影响。
-        <span v-if="globalRecovery.backup">原文件已保留为「{{ globalRecovery.backup }}」。</span>
+        <span v-if="workspace.globalRecovery.backup">原文件已保留为「{{ workspace.globalRecovery.backup }}」。</span>
       </p>
-      <button
-        type="button"
-        data-testid="global-recovered-dismiss"
-        @click="globalRecovery = null"
-      >
+      <button type="button" data-testid="global-recovered-dismiss" @click="workspace.dismissGlobalRecovery()">
         知道了
       </button>
     </div>
-    <p v-if="switchError" class="kp-workspace__error" data-testid="workspace-switch-error">
-      {{ switchError }}
+    <p v-if="workspace.switchError" class="kp-workspace__error" data-testid="workspace-switch-error">
+      {{ workspace.switchError }}
     </p>
     <div class="kp-workspace__body">
       <Ribbon
         :collapsed="layout.effectiveCollapsed"
         :right-panel-visible="layout.rightPanel === 'links'"
-        @toggle-sidebar="layout.toggleSidebar()"
-        @search="search.openPanel()"
-        @tags="tags.openPanel()"
+        :search-open="search.panelOpen"
+        :tags-open="tags.panelOpen"
+        @toggle-sidebar="workspace.toggleSidebar()"
+        @search="workspace.toggleSearch()"
+        @tags="workspace.toggleTags()"
         @settings="settings.open()"
-        @toggle-right="layout.toggleRightPanel()"
+        @toggle-right="workspace.toggleRightDock()"
       />
       <template v-if="vaultStore.current">
-        <aside v-show="!layout.effectiveCollapsed" class="kp-workspace__side" data-testid="workspace-sidebar" :style="{ width: ((draggingWidth ?? layout.sidebarWidth)) + 'px' }">
+        <aside
+          v-show="!layout.effectiveCollapsed"
+          class="kp-workspace__side"
+          data-testid="workspace-sidebar"
+          :style="{ width: ((workspace.draggingWidth ?? layout.sidebarWidth)) + 'px', minWidth: SIDEBAR_MIN_WIDTH + 'px' }"
+        >
           <FileTree @open="onOpen" @action="onAction" />
         </aside>
         <div
@@ -358,29 +222,33 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
           data-testid="workspace-resizer"
           role="separator"
           aria-orientation="vertical"
-          @pointerdown="startResize"
+          @pointerdown="workspace.startSidebarResize($event)"
         />
         <section class="kp-workspace__main">
           <EditorView
             :open-link="onOpenWikiLink"
             :open-tag="onOpenTag"
             :create-note="onCreateFromLink"
+            :resolve-asset="resolveAsset"
           />
         </section>
-        <LinksPanel v-if="layout.rightPanel === 'links'" :active-rel-path="editor.activeRelPath ?? null" @open="onOpenLink" />
-        <SearchPanel
-          v-if="search.panelOpen"
-          ref="searchPanel"
-          @open="onOpenHit"
-          @close="search.closePanel()"
-        />
-        <TagPanel
-          v-if="tags.panelOpen"
-          ref="tagPanel"
-          data-testid="workspace-tag-panel"
-          @open="onOpen"
-          @close="tags.closePanel()"
-        />
+        <!-- 单一右栏 dock：搜索 / 标签 / 反链同一时刻最多一个（9.6 的并排与重叠问题） -->
+        <div v-if="workspace.rightDockPanel !== null" class="kp-workspace__right" data-testid="workspace-right-dock">
+          <SearchPanel
+            v-if="workspace.rightDockPanel === 'search'"
+            ref="searchPanel"
+            @open="onOpenHit"
+            @close="search.closePanel()"
+          />
+          <TagPanel
+            v-else-if="workspace.rightDockPanel === 'tags'"
+            ref="tagPanel"
+            data-testid="workspace-tag-panel"
+            @open="onOpen"
+            @close="tags.closePanel()"
+          />
+          <LinksPanel v-else :active-rel-path="editor.activeRelPath ?? null" @open="onOpenLink" />
+        </div>
       </template>
       <VaultList v-else />
     </div>
@@ -401,12 +269,16 @@ function onAction(payload: { type: MenuAction; relPath: string; isDir: boolean }
 </template>
 
 <style scoped>
-.kp-workspace { display: flex; flex-direction: column; height: 100vh; }
-.kp-workspace__body { flex: 1; display: flex; min-height: 0; }
+.kp-workspace { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.kp-workspace__body { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
 .kp-workspace__resizer { width: 4px; flex: 0 0 4px; cursor: col-resize; background: var(--kp-border); }
 .kp-workspace__resizer:hover { background: var(--kp-accent); }
-.kp-workspace__side { width: 280px; min-width: 200px; border-right: 1px solid var(--kp-border, #ddd); overflow: hidden; }
-.kp-workspace__main { flex: 1; min-width: 0; }
+/* 宽度与最小宽度来自 layout store 常量（内联 style），这里不再写死数值 */
+.kp-workspace__side { flex: 0 0 auto; border-right: 1px solid var(--kp-border, #ddd); overflow: hidden; }
+/* 编辑区：flex:1 + min-width:0 —— 右栏与侧栏都不得把它挤出视口（9.7） */
+.kp-workspace__main { flex: 1; min-width: 0; overflow: hidden; }
+.kp-workspace__right { display: flex; flex: 0 0 auto; min-width: 0; overflow: hidden; }
+.kp-workspace__right > * { min-width: 0; }
 .kp-workspace__recovery { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #fff8e1; border-bottom: 1px solid #ffe082; font-size: 13px; }
 .kp-workspace__recovery p { margin: 0; flex: 1; }
 .kp-workspace__error { margin: 0; padding: 6px 8px; color: #b00020; }

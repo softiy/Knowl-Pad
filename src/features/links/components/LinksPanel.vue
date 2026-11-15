@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 import BacklinkPanel from './BacklinkPanel.vue';
 import RewriteConfirmDialog from './RewriteConfirmDialog.vue';
 import { useLinksStore } from '../stores/links';
@@ -49,6 +49,20 @@ onMounted(async () => {
   await links.setActive(props.activeRelPath ?? null);
   await links.refresh();
 });
+
+/**
+ * 编辑区切换当前笔记时必须跟着换反链（9.6 的「串状态」另一半）。
+ *
+ * 此前只在 onMounted 取一次 activeRelPath：之后打开别的笔记，面板仍显示上一篇的反链；
+ * 关闭当前笔记后还会停在旧列表（setActive(null) 只清空、不查 IPC，代价为零）。
+ */
+watch(
+  () => props.activeRelPath ?? null,
+  (relPath) => {
+    void links.setActive(relPath);
+  },
+);
+
 onUnmounted(() => links.dispose());
 
 </script>
