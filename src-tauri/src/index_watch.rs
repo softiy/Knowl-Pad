@@ -51,6 +51,73 @@ pub(crate) fn is_markdown(rel: &str) -> bool {
     rel.to_lowercase().ends_with(".md")
 }
 
+/// 非 Markdown 文件（附件/其它）的**轻量增量更新**：只重写 `file` 行，不读内容、不写 FTS/派生表。
+///
+/// 为什么不复用完整路径 `index_engine::index_file_mode`：那条路会 `std::fs::read` 整个文件去算内容指纹；
+/// 而附件的内容不进索引，DEBT-35 的变更判定对附件也只用 mtime + 大小（`is_unchanged` 的 check_hash）⇒
+/// 为了一个附件把整个二进制读进内存是没有收益的 IO/内存尖峰。非 .md 本来就没有 FTS 与派生行（PR-6）。
+fn index_attachment_meta(
+    conn: &rusqlite::Connection,
+    entry: &crate::index_engine::ScanEntry,
+) -> Result<(), AppError> {
+    use rusqlite::OptionalExtension;
+    let (name, stem, ext) = crate::index_scan::split_name(&entry.rel_path);
+    let kind = crate::index_scan::kind_of(&entry.rel_path);
+    let now = entry.mtime_ms.max(1);
+    // 先删旧行再写（与完整路径同语义）：note_fts 的 rowid 与 file.id 对齐，必须先取 id 再删 file 行。
+    let old_id: Option<i64> = conn
+        .query_row(
+            crate::index_sql::OLD_FILE_ID_SQL,
+            rusqlite::params![entry.rel_path],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| AppError::db_with("查附件旧行", &e))?;
+    if let Some(id) = old_id {
+        conn.execute(crate::index_sql::FTS_DELETE_SQL, rusqlite::params![id])
+            .map_err(|e| AppError::db_with("增量清理附件 FTS 行", &e))?;
+        conn.execute(crate::index_sql::FILE_DELETE_SQL, rusqlite::params![id])
+            .map_err(|e| AppError::db_with("增量删除附件旧行", &e))?;
+    }
+    // content_hash 传 NULL（「未计算」）：附件不参与内容指纹（见上）；已建索引库的列本身可空。
+    conn.execute(
+        crate::index_sql::FILE_INSERT_SQL,
+        rusqlite::params![
+            entry.rel_path,
+            name,
+            stem,
+            ext,
+            kind,
+            entry.size_bytes as i64,
+            entry.mtime_ms,
+            None::<String>,
+            now
+        ],
+    )
+    .map_err(|e| AppError::db_with("增量写入附件行", &e))?;
+    Ok(())
+}
+
+/// 增量重写一个文件的索引行：`.md` 走完整解析/分词/FTS；其余（附件/其它）只重写元信息。
+///
+/// **为什么非 .md 也要写**（M5 冒烟 5.3 的根因之一）：默认文件树以索引库为数据源 ——
+/// 此前这里被 `is_markdown` 门挡住，于是运行期新建的附件不出现、附件的 mtime 停在旧值
+/// （「修改时间」排序与磁盘不一致）、重命名后旧行删了新行没写（条目消失）。
+fn index_changed_file(
+    conn: &rusqlite::Connection,
+    root: &Path,
+    entry: &crate::index_engine::ScanEntry,
+) -> Result<(), AppError> {
+    if is_markdown(&entry.rel_path) {
+        // 增量路径只关心"写没写成"：超时（FileOutcome::TimedOut）已在校验侧记日志，
+        // 这里不额外处理 —— 该文件的索引行保持上一次的状态，等下次变更/重建再收。
+        let _ = index_engine::index_file_mode(conn, root, entry, IndexMode::Force)?;
+    } else {
+        index_attachment_meta(conn, entry)?;
+    }
+    Ok(())
+}
+
 /// 处理一批变更：增量写库 → 事件回调 → 一次裁决与计数重算。
 pub fn apply_changes<F: Fn(&[Change])>(
     pool: &DbPool,
@@ -97,29 +164,13 @@ pub fn apply_changes<F: Fn(&[Change])>(
                     .map_err(|e| AppError::db_with("增量删除 FTS", &e))?;
                     conn.execute("DELETE FROM file WHERE rel_path = ?1", rusqlite::params![from])
                         .map_err(|e| AppError::db_with("增量删除旧路径", &e))?;
-                    if is_markdown(to) {
-                        if let Some(entry) = scan_entry(&root_owned, to) {
-                            // 增量路径只关心"写没写成"：超时（FileOutcome::TimedOut）已在校验侧记日志，
-                            // 这里不额外处理 —— 该文件的索引行保持上一次的状态，等下次变更/重建再收。
-                            let _ = index_engine::index_file_mode(
-                                conn,
-                                &root_owned,
-                                &entry,
-                                IndexMode::Force,
-                            )?;
-                        }
+                    if let Some(entry) = scan_entry(&root_owned, to) {
+                        index_changed_file(conn, &root_owned, &entry)?;
                     }
                 }
                 Change::Created(rel) | Change::Modified(rel) => {
-                    if is_markdown(rel) {
-                        if let Some(entry) = scan_entry(&root_owned, rel) {
-                            let _ = index_engine::index_file_mode(
-                                conn,
-                                &root_owned,
-                                &entry,
-                                IndexMode::Force,
-                            )?;
-                        }
+                    if let Some(entry) = scan_entry(&root_owned, rel) {
+                        index_changed_file(conn, &root_owned, &entry)?;
                     }
                 }
             }

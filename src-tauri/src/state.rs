@@ -24,6 +24,11 @@ pub struct AppState {
     /// 判据来自存储层自己的重建判定（`RebuildOutcome::Untouched` 表示索引文件被保留、
     /// 即确实建立过；`Fresh`/`Rebuilt` 表示刚被新建或丢弃重建，此时索引还是空的）。
     index_ready: AtomicBool,
+    /// **最近一次索引的非致命警告**（SEC-03 / 勘误 D-46：超时/超限被跳过的文件必须可见）。
+    ///
+    /// 为什么是状态而不是事件载荷：`kp://index/completed` 的字段集合由 PRD §5.4 定死（EVT-03，
+    /// 不得新增未定义字段）；而警告需要"本轮索引结束后仍能查询"，所以落在这里由 `index_status` 透出。
+    index_warnings: Mutex<Vec<String>>,
     /// 当前 Vault 的文件监听句柄（M3 WP5）；关闭 Vault 或重新打开时替换/停止。
     watcher: Mutex<Option<crate::index_watch::WatcherHandle>>,
     /// 该句柄监听的 Vault 根（M3 复核 blocker 修复）：
@@ -112,6 +117,21 @@ impl AppState {
     /// 索引循环检查取消请求，并在读取时清除（避免影响下一次索引）。
     pub fn take_index_cancel(&self) -> bool {
         self.index_cancel.swap(false, Ordering::SeqCst)
+    }
+
+    /// 记录最近一次索引的警告（**覆盖**而不是追加：只反映本轮；打开新 Vault / 新一轮对账开始前先清空）。
+    pub fn set_index_warnings(&self, warnings: Vec<String>) {
+        if let Ok(mut guard) = self.index_warnings.lock() {
+            *guard = warnings;
+        }
+    }
+
+    /// 最近一次索引的警告（未打开 Vault 或尚未跑过索引时为空）。
+    pub fn index_warnings(&self) -> Vec<String> {
+        self.index_warnings
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
     }
 
     /// 记录监听句柄与它监听的 root（替换旧的会先停止它）。

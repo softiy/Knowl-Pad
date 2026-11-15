@@ -1,6 +1,8 @@
 //! 索引域命令的测试（DEBT-14 的第一刀：命令体已抽成可注入状态的函数 + 纯函数）。
 
 use crate::commands::index::read_stats;
+use crate::commands::vault::index_status_impl;
+use crate::state::AppState;
 
 /// 本模块自带的临时 Vault 夹具（存储层的同名助手是模块私有，跨模块不可见）。
 fn temp_vault() -> (tempfile::TempDir, std::path::PathBuf) {
@@ -65,6 +67,101 @@ fn signature_info_reports_matched_for_same_root() {
     let none = crate::commands::index::signature_info(&root, None);
     assert!(!none.matched, "没有索引库时必须不可信");
 }
+
+/// **T1 / SEC-03 / 勘误 D-46 的契约面**：最近一次索引的警告必须经 IndexStatus 透出。
+///
+/// 修好前的通道是**零**：启动对账把 outcome.warnings 丢了，而事件载荷按 PRD §5.4 不得扩展
+/// （EVT-03）⇒ 用户看到「索引就绪」却不知道有文件被跳过。
+#[test]
+fn index_status_exposes_recent_index_warnings() {
+    let (_d, root) = temp_vault();
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    let state = AppState::new();
+    state.set_root(Some(root.clone()));
+    state.set_index_db(Some(std::sync::Arc::new(pool)));
+
+    let fresh = index_status_impl(&state).expect("索引状态");
+    assert!(
+        fresh.warnings.is_empty(),
+        "尚未跑过索引时必须是空清单（不是缺字段/None）：{:?}",
+        fresh.warnings
+    );
+
+    state.set_index_warnings(vec!["skip-timeout:超长单行.md".to_string()]);
+    let after = index_status_impl(&state).expect("索引状态");
+    assert_eq!(
+        after.warnings,
+        vec!["skip-timeout:超长单行.md".to_string()],
+        "IndexStatus 必须原样带出最近一次索引的警告"
+    );
+}
+
+/// **T1 根因的端到端回归**：启动对账必须把 outcome.warnings 落进状态，并**替换**上一个 Vault 的旧警告。
+///
+/// 用扫描侧的 `skip-oversize:` 制造确定性的真实警告（与 `skip-timeout:` 同一套前缀口径；
+/// 等 10 秒的解析超时不适合放进单测，超时分支由 `index_engine_tests` 的零超时用例钉住）。
+#[test]
+fn reconcile_publishes_warnings_and_discards_previous_vault_ones() {
+    let (_d, root) = temp_vault();
+    let big = root.join("超限笔记.md");
+    let size = (crate::index_scan::MAX_NOTE_BYTES as usize) + 1;
+    std::fs::write(&big, vec![b'x'; size]).expect("写超限笔记");
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    let state = AppState::new();
+    state.set_index_warnings(vec!["skip-timeout:上一个 Vault 的旧警告.md".to_string()]);
+
+    let outcome =
+        crate::commands::vault::run_reconcile(&state, &pool, &root, |_, _| {}).expect("对账应成功");
+    assert!(
+        outcome
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("skip-oversize:")),
+        "扫描必须记下超限跳过：{:?}",
+        outcome.warnings
+    );
+    assert_eq!(
+        state.index_warnings(),
+        outcome.warnings,
+        "状态里应是本轮警告"
+    );
+    assert!(
+        !state.index_warnings().iter().any(|w| w.contains("旧警告")),
+        "打开新 Vault 必须清空上一个 Vault 的警告：{:?}",
+        state.index_warnings()
+    );
+
+    // 透出链路端到端：同一个 state 上 index_status 能看到被跳过的文件名
+    state.set_root(Some(root.clone()));
+    state.set_index_db(Some(std::sync::Arc::new(pool)));
+    let status = index_status_impl(&state).expect("索引状态");
+    assert!(status.ready, "对账成功后应就绪");
+    assert!(
+        status.warnings.iter().any(|w| w.contains("超限笔记.md")),
+        "IndexStatus.warnings 必须带出被跳过的文件名：{:?}",
+        status.warnings
+    );
+}
+
+/// 干净的一轮对账（没有文件被跳过）必须把旧警告清成空 —— 否则「⚠ N 条」会永久挂在已修好的库上。
+#[test]
+fn clean_reconcile_run_clears_previous_warnings() {
+    let (_d, root) = temp_vault();
+    std::fs::write(root.join("普通.md"), b"# hi\n").expect("写笔记");
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    let state = AppState::new();
+    state.set_index_warnings(vec!["skip-timeout:旧.md".to_string()]);
+
+    let outcome =
+        crate::commands::vault::run_reconcile(&state, &pool, &root, |_, _| {}).expect("对账应成功");
+    assert!(
+        outcome.warnings.is_empty(),
+        "干净库不该有警告：{:?}",
+        outcome.warnings
+    );
+    assert!(state.index_warnings().is_empty(), "旧警告必须被清空");
+}
+
 /// 期望签名随 Vault 根变化（签名含 vault_root，防止把 .knowlpad 拷到别处误用）。
 #[test]
 fn expected_signature_depends_on_vault_root() {

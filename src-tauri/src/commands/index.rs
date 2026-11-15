@@ -298,6 +298,13 @@ pub async fn index_rebuild(
     match result {
         Ok(outcome) => {
             let ending = settle_rebuild(&state, &pool, &outcome)?;
+            // SEC-03 / 勘误 D-46：本轮警告必须在 completed 事件之后仍可查 —— 事件载荷按 PRD §5.4
+            // 不得扩展（EVT-03），故写进 AppState 由 index_status 透出；取消 ⇒ 索引不可信，警告清空。
+            state.set_index_warnings(if ending == RebuildEnding::Completed {
+                outcome.warnings.clone()
+            } else {
+                Vec::new()
+            });
             let stats = IndexStatsPayload {
                 indexed: outcome.indexed,
                 skipped: outcome.skipped,
@@ -338,6 +345,8 @@ pub async fn index_rebuild(
             })
         }
         Err(err) => {
+            // 失败 ⇒ 没有可信的「最近一次索引」，旧警告不得冒充本轮结果。
+            state.set_index_warnings(Vec::new());
             let _ = app.emit(
                 "kp://index/failed",
                 IndexFailed {

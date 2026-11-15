@@ -778,3 +778,177 @@ fn incremental_cleanup_keeps_tag_still_referenced() {
     );
     assert!(tag_tree_lists(&pool, "共用"), "面板仍应列出它");
 }
+// ── M5 冒烟 5.3：运行期非 .md 文件的索引一致性（index_watch::apply_changes）──────────
+
+/// 读一个路径的 `file` 行元信息（kind, size_bytes, mtime_ms, content_hash）；不存在返回 None。
+fn file_meta(
+    pool: &crate::storage::pool::DbPool,
+    rel: &str,
+) -> Option<(String, i64, i64, Option<String>)> {
+    pool.with_reader(|conn| {
+        use rusqlite::OptionalExtension;
+        conn.query_row(
+            "SELECT kind, size_bytes, mtime_ms, content_hash FROM file WHERE rel_path = ?1 AND deleted = 0",
+            rusqlite::params![rel],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(|e| AppError::db(&format!("读 file 行：{e}")))
+    })
+    .expect("读 file 行")
+}
+
+/// 磁盘上某文件的 mtime（毫秒），作为「索引里的 mtime 是否跟上磁盘」的期望值。
+fn fs_mtime_ms(root: &Path, rel: &str) -> i64 {
+    std::fs::metadata(root.join(rel))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// **5.3 面①**：运行期新建的 `.txt` 必须进索引 —— 默认文件树以索引库为数据源，
+/// 不进索引就不显示（此前 `is_markdown` 门把整个分支挡住了）。
+#[test]
+fn created_non_markdown_file_gets_a_file_row_without_touching_fts() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲\n").expect("写笔记");
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+
+    fs::write(root.join("附件.txt"), b"hello attachment").expect("新建附件");
+    crate::index_watch::apply_changes(
+        &pool,
+        &root,
+        &[Change::Created("附件.txt".to_string())],
+        |_| {},
+    )
+    .expect("增量索引");
+
+    let (kind, size, mtime, hash) = file_meta(&pool, "附件.txt").expect("新建附件必须进索引");
+    assert_eq!(kind, "attachment", "非 .md 的 kind 由扩展名决定");
+    assert_eq!(size, 16, "大小必须取自磁盘");
+    assert_eq!(mtime, fs_mtime_ms(&root, "附件.txt"), "mtime 必须取自磁盘");
+    assert!(hash.is_none(), "轻量分支不读内容，content_hash 应为 NULL");
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM note_fts WHERE rowid = (SELECT id FROM file WHERE rel_path = '附件.txt')"
+        ),
+        0,
+        "非 .md 不得写全文索引（PR-6：只有 .md 会被解析）"
+    );
+}
+
+/// **5.3 面②**：运行期外部修改（含等长替换）后，`.txt` 的 size/mtime 必须刷新 ——
+/// 否则默认文件树的「修改时间」排序与磁盘不一致（冒烟 5.3 的 a10/b.txt 首两位互换）。
+#[test]
+fn modified_non_markdown_file_refreshes_size_and_mtime() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("b.txt"), b"v1").expect("写附件");
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    assert_eq!(file_meta(&pool, "b.txt").expect("前置").1, 2);
+
+    fs::write(root.join("b.txt"), b"version-2").expect("外部改写");
+    crate::index_watch::apply_changes(
+        &pool,
+        &root,
+        &[Change::Modified("b.txt".to_string())],
+        |_| {},
+    )
+    .expect("增量索引");
+
+    let (_, size, mtime, _) = file_meta(&pool, "b.txt").expect("附件行必须仍在");
+    assert_eq!(
+        size, 9,
+        "size 必须跟上磁盘（等长替换也不会被 mtime 判据放过）"
+    );
+    assert_eq!(mtime, fs_mtime_ms(&root, "b.txt"), "mtime 必须跟上磁盘");
+}
+
+/// **5.3 面③**：`.txt` 改名后旧行消失、新行带上同样的元信息（此前先删旧行、新行不写 ⇒ 条目消失）。
+#[test]
+fn renamed_non_markdown_file_moves_the_file_row() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("旧图.png"), b"png-bytes").expect("写附件");
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+
+    fs::rename(root.join("旧图.png"), root.join("新图.png")).expect("外部改名");
+    crate::index_watch::apply_changes(
+        &pool,
+        &root,
+        &[Change::Renamed(
+            "旧图.png".to_string(),
+            "新图.png".to_string(),
+        )],
+        |_| {},
+    )
+    .expect("增量索引");
+
+    assert!(
+        file_meta(&pool, "旧图.png").is_none(),
+        "旧路径必须从索引消失"
+    );
+    let (kind, size, _, _) = file_meta(&pool, "新图.png").expect("改名后新路径必须被索引");
+    assert_eq!(kind, "attachment");
+    assert_eq!(size, 9, "新行的大小应与磁盘一致");
+}
+
+/// **目录事件不得落成文件行**：notify 的 Create 也会报目录；`file` 表只登记文件。
+/// 目录名恰好叫 `x.md` 时更危险 —— 以前会走到 `std::fs::read(目录)` 让整批增量失败。
+#[test]
+fn directory_events_do_not_become_file_rows() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲\n").expect("写笔记");
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    fs::create_dir(root.join("子目录")).expect("建目录");
+    fs::create_dir(root.join("假笔记.md")).expect("建同名目录");
+
+    crate::index_watch::apply_changes(
+        &pool,
+        &root,
+        &[
+            Change::Created("子目录".to_string()),
+            Change::Created("假笔记.md".to_string()),
+        ],
+        |_| {},
+    )
+    .expect("目录事件必须被安全忽略（整批不得失败）");
+
+    assert!(file_meta(&pool, "子目录").is_none(), "目录不得写成 file 行");
+    assert!(
+        file_meta(&pool, "假笔记.md").is_none(),
+        "名为 *.md 的目录也不得写成 file 行"
+    );
+}
+
+/// **`.md` 路径不回归**：新增非 .md 分支不得让笔记的增量索引（解析 + FTS）失效。
+#[test]
+fn markdown_incremental_path_still_updates_fts() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let root = dir.path().to_path_buf();
+    fs::write(root.join("a.md"), "# 甲\n\noldword\n").expect("写笔记");
+    let pool = crate::storage::index::open(&root).expect("建索引库");
+    full_index(&pool, &root, |_, _| {}).expect("首次索引");
+    assert_eq!(fts_hits(&pool, "oldword", "a.md"), 1, "基线");
+
+    fs::write(root.join("a.md"), "# 甲\n\nnewword\n").expect("外部改写");
+    crate::index_watch::apply_changes(
+        &pool,
+        &root,
+        &[Change::Modified("a.md".to_string())],
+        |_| {},
+    )
+    .expect("增量索引");
+
+    assert_eq!(fts_hits(&pool, "newword", "a.md"), 1, "新内容必须可检索");
+    assert_eq!(fts_hits(&pool, "oldword", "a.md"), 0, "旧内容必须淘汰");
+}

@@ -20,6 +20,27 @@ fn index_db_handle_is_settable_and_clearable() {
     assert!(state.index_db().is_none(), "清除后应为空");
 }
 
+/// SEC-03 / 勘误 D-46：最近一次索引的警告是**覆盖式**状态（只反映本轮），且必须能清空
+/// （打开新 Vault / 关闭 Vault / 重建取消时都会清）。
+#[test]
+fn index_warnings_are_replaceable_and_clearable() {
+    let state = AppState::new();
+    assert!(state.index_warnings().is_empty(), "初始应无警告");
+    state.set_index_warnings(vec!["skip-timeout:超长单行.md".to_string()]);
+    assert_eq!(
+        state.index_warnings(),
+        vec!["skip-timeout:超长单行.md".to_string()]
+    );
+    // 覆盖而不是追加：只保留本轮结果
+    state.set_index_warnings(vec!["skip-oversize:巨大笔记.md".to_string()]);
+    assert_eq!(
+        state.index_warnings(),
+        vec!["skip-oversize:巨大笔记.md".to_string()]
+    );
+    state.set_index_warnings(Vec::new());
+    assert!(state.index_warnings().is_empty(), "必须能清空");
+}
+
 #[test]
 fn global_db_handle_is_settable() {
     let state = AppState::new();
