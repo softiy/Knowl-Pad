@@ -59,3 +59,33 @@ describe('点击路由：意图判定（FR-EDITOR-25 / FR-EDITOR-27）', () => {
     expect(clickIntent({ target: 'x', dangling: false }, { metaKey: true, altKey: true })).toEqual({ kind: 'link-new-tab', target: 'x' });
     expect(clickIntent({ target: 'x', dangling: false }, { ctrlKey: true })).toEqual({ kind: 'link', target: 'x' });
   });
+
+/**
+ * D2 / 10.7：跳转目标在**进入路由层之前**已被 MarkdownView 换成真实 relPath
+ * （显示目标 `B` → 索引里的 `dir/B.md`）。路由层必须原样透传，不得再改写/拼接 ——
+ * 任何"补 .md""取最后一段"的处理都会让跳转落到错误路径。
+ */
+describe('点击路由：已解析的 relPath 原样透传（D2 / 10.7）', () => {
+  it('Ctrl/Cmd+点击 ⇒ link 意图带完整 relPath（含目录、多级、中文）', () => {
+    const relPath = 'notes/子目录/B.md';
+    expect(clickIntent({ target: relPath, dangling: false }, { ctrlKey: true })).toEqual({
+      kind: 'link',
+      target: relPath,
+    });
+  });
+
+  it('Ctrl/Cmd+Alt+点击 ⇒ link-new-tab 意图同样带 relPath（新标签分支在布局层读 altKey）', () => {
+    expect(clickIntent({ target: 'dir/B.md', dangling: false }, { metaKey: true, altKey: true })).toEqual({
+      kind: 'link-new-tab',
+      target: 'dir/B.md',
+    });
+  });
+
+  it('普通点击已解析链接 ⇒ 不动作（阅读态不误跳，仍由需求口径决定）', () => {
+    expect(clickIntent({ target: 'dir/B.md', dangling: false }, {})).toEqual({ kind: 'none' });
+  });
+
+  it('悬空链接的创建建议名仍走显示名（relPath 只用于跳转，不参与"新建笔记"）', () => {
+    expect(clickIntent({ target: '缺笔记', dangling: true }, {})).toEqual({ kind: 'create', name: '缺笔记.md' });
+  });
+});
