@@ -112,11 +112,35 @@ pub(crate) fn run_reconcile<P: FnMut(usize, usize)>(
     progress: P,
 ) -> Result<crate::index_engine::IndexOutcome, kp_domain::error::AppError> {
     state.set_index_ready(false);
+    // 新一轮对账开始 ⇒ 先清掉上一个 Vault / 上一轮的警告（**打开新 Vault 时清空**的同一处保证：
+    // 打开与启动恢复都经这里；失败时保持为空，避免把历史警告当成本次结果）。
+    state.set_index_warnings(Vec::new());
     let result = full_index_cancellable(pool, root, progress, IndexMode::SkipUnchanged, || false);
-    if result.is_ok() {
+    if let Ok(outcome) = &result {
         state.set_index_ready(true);
+        // **T1 根因修复**（SEC-03 / 勘误 D-46）：outcome.warnings（skip-timeout:/skip-oversize:/遍历告警）
+        // 此前在本路径被丢弃 —— 事件载荷按 PRD §5.4 不得扩展，故改由 AppState 经 index_status 透出。
+        state.set_index_warnings(outcome.warnings.clone());
     }
     result
+}
+
+/// 阅读态本地附件（E1 / FR-EDITOR-43 / SEC-08，task-2 跨域接线）：把**当前** Vault 根目录
+/// 加入 asset 协议读取范围。
+///
+/// 为什么运行时授权而不是写死 assetProtocol.scope：Vault 路径由用户任选，静态配置无法预先枚举；
+/// 只开放当前打开的那一个 Vault，也符合 SEC-05 的最小授权口径。
+fn allow_vault_assets(app: &AppHandle, root: &std::path::Path) {
+    if let Err(err) = app.asset_protocol_scope().allow_directory(root, true) {
+        tracing::warn!(error = %err, "授予本地附件读取权限失败");
+    }
+}
+
+/// 关闭 / 切走 Vault 时收回（否则切库后旧库的图片仍可被 asset URL 读取）。
+fn forbid_vault_assets(app: &AppHandle, root: &std::path::Path) {
+    if let Err(err) = app.asset_protocol_scope().forbid_directory(root, true) {
+        tracing::warn!(error = %err, "收回本地附件读取权限失败");
+    }
 }
 
 /// 从状态里取根与索引库；两者齐备才启动后台任务。
@@ -124,9 +148,13 @@ pub(crate) fn reconcile_after_open(state: &AppState, app: &AppHandle) {
     let Ok(root) = super::paths::root_of(state) else {
         return;
     };
+    // E1：asset 协议只信任运行时登记的目录 —— 打开 / 新建 / 启动恢复都经这里，统一授权避免三处遗漏。
+    allow_vault_assets(app, &root);
     let Some(pool) = state.index_db() else {
         return;
     };
+    // 切库瞬间就作废旧警告（不能等后台对账真的跑起来 —— 那之前一次 index_status 会显示上一个 Vault 的警告）。
+    state.set_index_warnings(Vec::new());
     spawn_reconcile_and_watch(app.clone(), root, pool);
 }
 // ── 命令（薄壳，RS-01）────────────────────────────────────────────
@@ -148,7 +176,12 @@ pub async fn vault_open(
             ))
         })?
         .map_err(KpError)?;
+    // E1：切换 Vault 先记下旧根，激活后收回旧根的 asset 授权（reconcile_after_open 负责授予新根）。
+    let previous_root = state.current_root();
     let info = activate_vault(&state, prepared).map_err(KpError)?;
+    if let Some(old_root) = previous_root {
+        forbid_vault_assets(&app, &old_root);
+    }
     reconcile_after_open(&state, &app);
     Ok(info)
 }
@@ -170,7 +203,12 @@ pub async fn vault_create(
             ))
         })?
         .map_err(KpError)?;
+    // E1：同 vault_open —— 新库授权由 reconcile_after_open 统一做，旧库授权在这里收回。
+    let previous_root = state.current_root();
     let info = activate_vault(&state, prepared).map_err(KpError)?;
+    if let Some(old_root) = previous_root {
+        forbid_vault_assets(&app, &old_root);
+    }
     reconcile_after_open(&state, &app);
     if let (Some(name), Some(id), Some(global)) = (args.name, info.vault_id, state.global_db()) {
         crate::storage::global::rename_vault(&global, id, &name).map_err(KpError)?;
@@ -184,10 +222,17 @@ pub async fn vault_create(
 
 /// 关闭当前 Vault（先刷盘）。
 #[tauri::command]
-pub async fn vault_close(state: tauri::State<'_, AppState>) -> Result<(), KpError> {
+pub async fn vault_close(state: tauri::State<'_, AppState>, app: AppHandle) -> Result<(), KpError> {
     // 先停止文件监听（M3 WP5），避免关闭过程中的事件触发增量写库
     state.stop_watcher();
+    let previous_root = state.current_root();
     close_current(&state);
+    // E1（task-2 跨域接线）：关闭后收回 asset 读取授权，否则已关闭 Vault 的图片仍可被 asset URL 读取。
+    if let Some(old_root) = previous_root {
+        forbid_vault_assets(&app, &old_root);
+    }
+    // 没有 Vault 就没有"最近一次索引"，旧警告不得残留到下一个 Vault / 空状态。
+    state.set_index_warnings(Vec::new());
     Ok(())
 }
 
@@ -222,6 +267,7 @@ pub async fn vault_list(state: tauri::State<'_, AppState>) -> Result<Vec<VaultSu
 #[tauri::command]
 pub async fn vault_register_remove(
     state: tauri::State<'_, AppState>,
+    app: AppHandle,
     args: VaultIdArgs,
 ) -> Result<(), KpError> {
     let Some(global) = state.global_db() else {
@@ -230,7 +276,13 @@ pub async fn vault_register_remove(
     crate::storage::global::remove_vault(&global, args.vault_id).map_err(KpError)?;
     // 若移除的是当前打开的 Vault，则同时关闭（但不触碰磁盘）
     if state.current_vault_id() == Some(args.vault_id) {
+        let previous_root = state.current_root();
         close_current(&state);
+        // E1（task-2 跨域接线）：关闭即收回 asset 授权。
+        if let Some(old_root) = previous_root {
+            forbid_vault_assets(&app, &old_root);
+        }
+        state.set_index_warnings(Vec::new());
     }
     Ok(())
 }
@@ -266,6 +318,7 @@ pub async fn vault_rename(
 #[tauri::command]
 pub async fn vault_relocate(
     state: tauri::State<'_, AppState>,
+    app: AppHandle,
     args: VaultRelocateArgs,
 ) -> Result<VaultInfo, KpError> {
     let path = PathBuf::from(&args.new_abs_path);
@@ -284,17 +337,30 @@ pub async fn vault_relocate(
         crate::storage::global::relocate_vault(&global, args.vault_id, &abs_path)
             .map_err(KpError)?;
     }
+    let previous_root = state.current_root();
     let mut info = activate_vault(&state, prepared).map_err(KpError)?;
     info.vault_id = Some(args.vault_id);
     state.set_current_vault_id(Some(args.vault_id));
+    // E1（task-2 跨域接线）：换根后收回旧根 asset 授权、授予新根 —— 本路径不触发对账，授权必须显式做。
+    if let Some(old_root) = previous_root {
+        forbid_vault_assets(&app, &old_root);
+    }
+    if let Some(root) = state.current_root() {
+        allow_vault_assets(&app, &root);
+    }
+    // 换根 ⇒ 上一个根的警告作废（本路径不触发对账，等下次打开/重建再产生新警告）。
+    state.set_index_warnings(Vec::new());
     Ok(info)
 }
 
 /// 索引状态：已打开 Vault 时读取索引库 meta；未打开时返回布局信息与 ready=false。
-#[tauri::command]
-pub async fn index_status(state: tauri::State<'_, AppState>) -> Result<IndexStatus, KpError> {
+///
+/// 命令体抽成可注入状态的函数（与 index_stats_impl 同一做法，见 DEBT-14 / 审计 T-03）：
+/// 「警告透出」是本缺陷的**契约面**，必须能脱离 Tauri State 直接断言（T1 / 勘误 D-46）。
+pub(crate) fn index_status_impl(state: &AppState) -> Result<IndexStatus, KpError> {
     let index_dir = crate::storage::INDEX_DIR_REL.to_string();
     let index_db = crate::storage::INDEX_DB_REL.to_string();
+    let warnings = state.index_warnings();
 
     let Some(pool) = state.index_db() else {
         return Ok(IndexStatus {
@@ -304,6 +370,7 @@ pub async fn index_status(state: tauri::State<'_, AppState>) -> Result<IndexStat
             schema_version: None,
             signature_prefix: None,
             built_at: None,
+            warnings,
         });
     };
 
@@ -325,7 +392,14 @@ pub async fn index_status(state: tauri::State<'_, AppState>) -> Result<IndexStat
         schema_version: schema_version.and_then(|raw| raw.parse().ok()),
         signature_prefix: signature.map(|raw| raw.chars().take(12).collect()),
         built_at: built_at.and_then(|raw| raw.parse().ok()),
+        warnings,
     })
+}
+
+/// 索引状态（薄壳，RS-01）：实现见 index_status_impl。
+#[tauri::command]
+pub async fn index_status(state: tauri::State<'_, AppState>) -> Result<IndexStatus, KpError> {
+    index_status_impl(&state)
 }
 
 #[cfg(test)]

@@ -207,6 +207,12 @@ pub fn merge_events(root: &Path, kinds: Vec<(EventKind, Vec<PathBuf>)>) -> Vec<C
 pub(crate) fn scan_entry(root: &Path, rel: &str) -> Option<ScanEntry> {
     let abs = root.join(rel);
     let meta = std::fs::metadata(&abs).ok()?;
+    // 只认普通文件：`file` 表只登记文件（目录由 rel_path 前缀派生，见 `scan_vault` 的同一判据）。
+    // 不挡的话，notify 的 Create/Modify(目录) 事件会把目录写成一个 kind=other 的「文件」行；
+    // 目录名恰好叫 `x.md` 时更糟：`std::fs::read(目录)` 报错会让整批增量失败。
+    if !meta.is_file() {
+        return None;
+    }
     let mtime_ms = meta
         .modified()
         .ok()

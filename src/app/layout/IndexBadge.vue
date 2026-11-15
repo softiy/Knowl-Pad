@@ -30,6 +30,8 @@ const error = ref<string | null>(null);
 const progress = ref<{ done: number; total: number } | null>(null);
 const rebuilding = ref(false);
 const actionError = ref<string | null>(null);
+/** 本次手动重建返回的警告（显式动作的结果必须可见，不能只留在返回值里）。 */
+const rebuildWarnings = ref<string[]>([]);
 let unlisten: UnlistenFn[] = [];
 
 /**
@@ -56,6 +58,31 @@ const detail = computed(() => {
   return '文件 ' + s.files + ' · 链接 ' + s.links + ' · 标签 ' + s.tags;
 });
 
+/** 悬停明细最多列出的条数：状态栏放不下全量，完整清单仍在 `index.warnings` 里。 */
+const MAX_WARNING_LINES = 5;
+
+/**
+ * **最近一次索引的非致命警告**（PRD §5.3.7 / 勘误 D-46）。
+ *
+ * T1 的根因：启动对账把 `outcome.warnings` 丢了，而 `kp://index/completed` 的字段集合
+ * 由 PRD §5.4 定死（EVT-03，不得扩展）—— 警告只能作为**可轮询的状态**经 `index_status` 出来。
+ * 因此这里不做一次性提示，而是每次 refresh（含 completed 事件后）都从状态里读。
+ */
+const warnings = computed(() => index.value?.warnings ?? []);
+
+/** 明细：前 N 条（含 `skip-timeout:<文件名>` 这类可诊断路径），其余只报剩余条数。 */
+function formatWarnings(list: string[]): string {
+  const shown = list.slice(0, MAX_WARNING_LINES).join('\n');
+  return list.length > MAX_WARNING_LINES ? `${shown}\n…另有 ${list.length - MAX_WARNING_LINES} 条` : shown;
+}
+
+const warningsTitle = computed(() =>
+  `最近一次索引有 ${warnings.value.length} 条警告（超时/超限的文件已跳过、未进入索引）：\n${formatWarnings(warnings.value)}`,
+);
+const rebuildWarningsTitle = computed(
+  () => `本次重建跳过/告警的文件：\n${formatWarnings(rebuildWarnings.value)}`,
+);
+
 /**
  * 拉一次索引状态 + 规模详情。
  *
@@ -73,6 +100,7 @@ async function refresh(): Promise<void> {
     stats.value = null;
     failed.value = false;
     error.value = null;
+    rebuildWarnings.value = [];
     return;
   }
   failed.value = false;
@@ -93,8 +121,13 @@ async function refresh(): Promise<void> {
 async function rebuild(): Promise<void> {
   rebuilding.value = true;
   actionError.value = null;
+  rebuildWarnings.value = [];
   try {
-    await indexRebuild(true);
+    // T1 的另一半：手工重建此前只把 warnings 放在返回值里、界面无人展示。
+    // 这里把它接住；后端同时会写进 AppState，finally 的 refresh 还会经 index_status 再取一次。
+    const result = await indexRebuild(true);
+    // 取消 ⇒ 索引不可信（与后端 clear 一致），不展示半程警告；完成时把跳过的文件如实列出来。
+    rebuildWarnings.value = result.cancelled ? [] : result.warnings;
   } catch (err) {
     actionError.value = asKpError(err).message;
   } finally {
@@ -156,6 +189,22 @@ watch(
       重建索引
     </button>
     <button v-else type="button" data-testid="index-cancel" @click="cancel">取消</button>
+    <span
+      v-if="warnings.length"
+      class="kp-index__warn"
+      data-testid="index-warnings"
+      :title="warningsTitle"
+    >
+      ⚠ {{ warnings.length }} 条索引警告
+    </span>
+    <span
+      v-if="rebuildWarnings.length"
+      class="kp-index__warn"
+      data-testid="index-rebuild-warnings"
+      :title="rebuildWarningsTitle"
+    >
+      重建完成：{{ rebuildWarnings.length }} 条警告（部分文件被跳过）
+    </span>
     <span v-if="actionError" class="kp-index__error" data-testid="index-rebuild-error">
       {{ actionError }}
     </span>
@@ -165,4 +214,6 @@ watch(
 <style scoped>
 .kp-index { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
 .kp-index__error { color: #b00020; }
+/* 与状态栏 Git 提示/搜索"范围过大"同一套橙色（StatusBar.vue 的 .kp-status__hint 用的就是它）。 */
+.kp-index__warn { color: #b26a00; cursor: help; }
 </style>

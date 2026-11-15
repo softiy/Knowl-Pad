@@ -12,6 +12,8 @@ const hoisted = vi.hoisted(() => ({
   indexStats: vi.fn(),
   indexRebuild: vi.fn(),
   indexCancel: vi.fn(),
+  /** onIndexCompleted 注册的处理器：用于模拟 completed 事件（刷新链路的回归）。 */
+  completedHandler: null as null | (() => void),
 }));
 
 // 只替换这四个命令：组件不需要同模块的其它导出（类型在编译期擦除），
@@ -25,16 +27,31 @@ vi.mock('@core/ipc/commands', () => ({
 
 vi.mock('@core/ipc/events', () => ({
   onIndexProgress: vi.fn(async () => () => {}),
-  onIndexCompleted: vi.fn(async () => () => {}),
+  onIndexCompleted: vi.fn(async (handler: () => void) => {
+    hoisted.completedHandler = handler;
+    return () => {};
+  }),
+  onIndexCancelled: vi.fn(async () => () => {}),
   onIndexFailed: vi.fn(async () => () => {}),
 }));
 
 import IndexBadge from '@/app/layout/IndexBadge.vue';
 
 const VAULT = { root: 'C:/vaults/notes', displayName: '笔记', vaultId: 1, caseInsensitiveFs: true };
+/** 就绪状态的基准返回；警告用例在此基础上加 warnings。 */
+const READY_STATUS = {
+  indexDir: '.knowlpad',
+  indexDb: 'index.db',
+  ready: true,
+  schemaVersion: 1,
+  signaturePrefix: 'abc',
+  builtAt: 1,
+  warnings: [] as string[],
+};
 
 describe('索引徽标：状态、重建与取消', () => {
   beforeEach(() => {
+    hoisted.completedHandler = null;
     hoisted.indexStatus.mockReset().mockResolvedValue({
       indexDir: '.knowlpad',
       indexDb: 'index.db',
@@ -124,5 +141,71 @@ describe('索引徽标：状态、重建与取消', () => {
     expect(el.text()).not.toContain('索引中');
     // 上一个 Vault 的统计不得残留
     expect(el.attributes('title') ?? '').toBe('');
+  });
+
+  it('有警告时显示「⚠ N 条」并把含文件名的明细放进悬停 title（SEC-03 / 勘误 D-46）', async () => {
+    hoisted.indexStatus.mockResolvedValue({
+      ...READY_STATUS,
+      warnings: ['skip-timeout:超长单行.md', 'skip-oversize:巨大笔记.md'],
+    });
+    const w = mount(IndexBadge, { props: { vault: VAULT } });
+    await flushPromises();
+    const badge = w.get('[data-testid="index-warnings"]');
+    expect(badge.text()).toContain('⚠ 2 条索引警告');
+    const title = badge.attributes('title') ?? '';
+    expect(title).toContain('skip-timeout:超长单行.md');
+    expect(title).toContain('skip-oversize:巨大笔记.md');
+  });
+
+  it('明细最多列前 5 条，其余只报条数（状态栏不被长清单撑破）', async () => {
+    const many = Array.from({ length: 8 }, (_, i) => `skip-timeout:笔记-${i}.md`);
+    hoisted.indexStatus.mockResolvedValue({ ...READY_STATUS, warnings: many });
+    const w = mount(IndexBadge, { props: { vault: VAULT } });
+    await flushPromises();
+    const title = w.get('[data-testid="index-warnings"]').attributes('title') ?? '';
+    expect(title).toContain('笔记-4.md');
+    expect(title).not.toContain('笔记-5.md');
+    expect(title).toContain('另有 3 条');
+  });
+
+  it('无警告时不渲染警告徽标（不能凭空制造告警）', async () => {
+    hoisted.indexStatus.mockResolvedValue({ ...READY_STATUS, warnings: [] });
+    const w = mount(IndexBadge, { props: { vault: VAULT } });
+    await flushPromises();
+    expect(w.find('[data-testid="index-warnings"]').exists()).toBe(false);
+  });
+
+  it('completed 事件后 refresh 能拿到新警告（T1：完成通知之后警告仍可见）', async () => {
+    hoisted.indexStatus.mockResolvedValue({ ...READY_STATUS, warnings: [] });
+    const w = mount(IndexBadge, { props: { vault: VAULT } });
+    await flushPromises();
+    expect(w.find('[data-testid="index-warnings"]').exists()).toBe(false);
+
+    hoisted.indexStatus.mockResolvedValue({
+      ...READY_STATUS,
+      warnings: ['skip-timeout:打开 Vault 时被跳过的长笔记.md'],
+    });
+    hoisted.completedHandler?.();
+    await flushPromises();
+    expect(w.get('[data-testid="index-warnings"]').text()).toContain('1 条索引警告');
+  });
+
+  it('手动重建返回的 warnings 在按钮旁可见（不静默，橙色告警）', async () => {
+    hoisted.indexStatus.mockResolvedValue({ ...READY_STATUS, warnings: [] });
+    hoisted.indexRebuild.mockResolvedValue({
+      indexed: 3,
+      skipped: 0,
+      durationMs: 9,
+      cancelled: false,
+      warnings: ['skip-timeout:重建时跳过的长笔记.md'],
+    });
+    const w = mount(IndexBadge, { props: { vault: VAULT } });
+    await flushPromises();
+    await w.get('[data-testid="index-rebuild"]').trigger('click');
+    await flushPromises();
+    const badge = w.get('[data-testid="index-rebuild-warnings"]');
+    expect(badge.text()).toContain('1 条警告');
+    expect(badge.attributes('title')).toContain('重建时跳过的长笔记.md');
+    expect(badge.classes()).toContain('kp-index__warn');
   });
 });

@@ -74,4 +74,9 @@ pub struct IndexStatus {
     pub signature_prefix: Option<String>,
     /// 上次建库时间戳（毫秒）
     pub built_at: Option<i64>,
+    /// **最近一次索引的非致命警告**（SEC-03 / 勘误 D-46）：`skip-timeout:<相对路径>` /
+    /// `skip-oversize:<相对路径>` / `遍历告警:<原因>`。
+    ///
+    /// 超时/超限被跳过的文件**必须可见**（不能只留在日志里）；打开新 Vault 时清空。
+    pub warnings: Vec<String>,
 }

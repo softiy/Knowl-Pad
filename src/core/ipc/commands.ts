@@ -94,6 +94,14 @@ export interface IndexStatus {
   signaturePrefix?: string;
   /** 上次建库时间戳（毫秒） */
   builtAt?: number;
+  /**
+   * **最近一次索引的非致命警告**（PRD §5.3.7 / 勘误 D-46；对应 SEC-03 的"超限跳过要记录警告"）。
+   *
+   * 形如 `skip-timeout:<相对路径>` / `skip-oversize:<相对路径>` / `遍历告警:<原因>`。
+   * 为什么放在 IndexStatus 而不是事件载荷：`kp://index/completed` 的字段集合由 PRD §5.4 定死
+   * （EVT-03，不得新增未定义字段），警告是**可轮询的状态**而非一次性通知。
+   */
+  warnings?: string[];
 }
 
 export const vaultOpen = (absPath: string): Promise<VaultInfo> => call<VaultInfo>('vault_open', { args: { absPath } });
