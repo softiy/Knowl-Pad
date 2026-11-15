@@ -115,6 +115,20 @@ describe('搜索 store：入口开关与派生（FR-SEARCH-01/40）', () => {
     expect(s.quickSelected).toBe(-1);
   });
 
+  it('匹配模式（全部词/任一词）随查询一起交给 IPC —— A7 的两种入口在前端是同一个参数', async () => {
+    hoisted.fulltext.mockResolvedValue(emptyPage);
+    const s = useSearchStore();
+    s.setQuery('词1 词2');
+    await vi.waitFor(() => expect(hoisted.fulltext).toHaveBeenCalled());
+    // 缺省 = 全部词（PRD §4.11.3「默认匹配模式 AND」）
+    expect(hoisted.fulltext.mock.calls[0]?.[1]).toMatchObject({ matchMode: 'all' });
+    s.setMatchMode('any');
+    await flushPromises();
+    // 切到「任一词（OR）」后必须**立即重查**，且把 any 透传给后端（行内 OR 关键字由后端等价处理）
+    expect(hoisted.fulltext.mock.calls.at(-1)?.[1]).toMatchObject({ matchMode: 'any' });
+    expect(hoisted.fulltext.mock.calls.at(-1)?.[2]).toMatchObject({ offset: 0 });
+  });
+
   it('查询为空时换排序不发请求（没有查询词就没有可排的东西），但设置要生效', async () => {
     hoisted.fulltext.mockResolvedValue(emptyPage);
     const s = useSearchStore();

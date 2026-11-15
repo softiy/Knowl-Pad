@@ -7,7 +7,9 @@
 //! - `path:` / `file:` / `tag:` / `line:`（FR-SEARCH-20~23）由 `search_syntax` 摘成过滤条件，
 //!   **不进** MATCH —— 见该模块顶部「为什么过滤条件不进 MATCH」；
 //! - 语法错误（未闭合引号等）一律 `AppError::SearchSyntax`（FR-SEARCH-27 / AC-SEARCH-05）；
-//! - 其余词按 ALL（AND，默认）或 ANY（OR）连接。
+//! - 其余词按 ALL（AND，默认）或 ANY（OR）连接；
+//! - **行内大写 `OR`** 是「整条查询切到 ANY」的语法糖（见 `split_inline_or`），
+//!   于是「输入 `词1 OR 词2`」与「把匹配模式切到任一词（OR）」得到同一个 MATCH 表达式。
 
 use crate::error::AppError;
 use crate::search_syntax::{self, SearchFilters};
@@ -37,6 +39,9 @@ impl MatchMode {
         }
     }
 }
+
+/// 行内布尔 OR 关键字（**只认大写**，理由见 `split_inline_or`）。
+const OR_KEYWORD: &str = "OR";
 
 /// FTS5 转义：双引号包裹并把内部双引号翻倍（TECH:1557）。
 pub fn escape_fts(token: &str) -> String {
@@ -95,6 +100,9 @@ pub fn parse_query(query: &str, mode: MatchMode) -> Result<ParsedQuery, AppError
     let (phrases, rest) = search_syntax::extract_quoted(&text)?;
     // 3) 排除项（- 前缀）
     let (exclude_text, include_text) = split_negation(&rest);
+    // 3.5) 行内 OR 关键字：整条查询切到 ANY（等价于匹配模式下拉切「任一词（OR）」）
+    let (include_text, inline_or) = split_inline_or(&include_text);
+    let effective_mode = if inline_or { MatchMode::Any } else { mode };
     // 4) 分词
     let includes = tokenize::for_query(&include_text);
     let excludes = tokenize::for_query(&exclude_text);
@@ -108,18 +116,25 @@ pub fn parse_query(query: &str, mode: MatchMode) -> Result<ParsedQuery, AppError
     let mut positives: Vec<String> = phrases.iter().map(|p| phrase_expr(p)).collect();
     positives.extend(includes.iter().map(|t| escape_fts(t)));
     positives.extend(line_tokens.iter().map(|t| escape_fts(t)));
-    let positive_expr = positives.join(mode.joiner());
+    let positive_expr = positives.join(effective_mode.joiner());
     // 5) 构造 MATCH：**没有正面词就没有 MATCH** —— 只有排除项时 FTS5 缺左侧操作数
     //    （它没有「全部笔记」这个操作数），排除改由索引侧的 NOT IN 子查询表达
     //    （见 ParsedQuery::excludes 与 storage::search_sql）。
     //    2026-10-15 裁定（已落 PRD §5.3.4.3）：只有排除项时的语义是**排除** = 全集 − 命中集，
     //    **不得**退化为「按包含处理」（M3 的 OR 兜底据此删除）。
+    // 排除项必须作用于**整个**正面表达式：FTS5 里 NOT 的优先级高于 AND/OR，直接拼
+    // `a OR b NOT c` 会被解析成 `a OR (b NOT c)` —— 含 c 的 a 仍会命中，等于排除没生效。
+    // 因此有排除项时给正面表达式加括号（只有排除项时没有正面表达式，走索引侧的 NOT IN，见上）。
     let match_expr = if positive_expr.is_empty() {
         String::new()
+    } else if excludes.is_empty() {
+        positive_expr.clone()
     } else {
-        excludes.iter().fold(positive_expr.clone(), |acc, term| {
-            format!("{acc} NOT {}", escape_fts(term))
-        })
+        excludes
+            .iter()
+            .fold(format!("({positive_expr})"), |acc, term| {
+                format!("{acc} NOT {}", escape_fts(term))
+            })
     };
 
     Ok(ParsedQuery {
@@ -129,6 +144,29 @@ pub fn parse_query(query: &str, mode: MatchMode) -> Result<ParsedQuery, AppError
         highlight: merge_highlight(&phrases, &includes, &line_tokens),
         filters,
     })
+}
+
+/// 从正面关键词文本里摘掉行内 `OR` 关键字，返回（剩余文本, 是否出现过 OR）。
+///
+/// **为什么认大写**：小写 `or` 是英文正文的常见词（`this or that`），当运算符会让它搜不到；
+/// `OR` 大写是搜索语法的通行写法，搜索面板的空结果提示也正是让用户「用 OR 连接候选」。
+/// 要搜字面量 `OR` 仍可写成引号短语（`"OR"`，引号内的内容在提取短语时已被整体拿走）。
+///
+/// **为什么是「整条切 ANY」而不是逐段布尔运算**：FTS-02 把查询定义成「分词后各词以 AND/OR
+/// 连接」的**扁平 token 列表**，没有优先级与括号语法；再造一套逐段 OR 就是第二套文档里不存在的
+/// 语义。整条切换的结果恰好等于「同一串词 + 匹配模式 any」，两种入口因此**严格一致**
+/// （M5 冒烟 A7 的验收原文）。单独一个 `OR`（或只剩 OR）摘掉后是空查询，由调用方按「没有查询」处理。
+fn split_inline_or(text: &str) -> (String, bool) {
+    let mut has_or = false;
+    let kept: Vec<&str> = text
+        .split_whitespace()
+        .filter(|word| {
+            let is_or = *word == OR_KEYWORD;
+            has_or |= is_or;
+            !is_or
+        })
+        .collect();
+    (kept.join(" "), has_or)
 }
 
 /// 把剩余文本按空白切开：`-词` 进排除表，其余进正面词。

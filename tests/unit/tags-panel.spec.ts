@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
+import { E_PREVIEW_EXPIRED } from '@core/ipc/errors';
 
 /**
  * 标签面板（FR-TAG-01~04 / 13）：树形与计数、点击看笔记、排序切换、面板内过滤、
@@ -47,6 +48,29 @@ function treeFixture() {
     },
     { norm: '随笔', display: '随笔', depth: 1, isLeaf: true, refCount: 9, unclassified: false, children: [] },
     { norm: '', display: '未分类', depth: 0, isLeaf: true, refCount: 4, unclassified: true, children: [] },
+  ];
+}
+
+/** 三层树（AC-TAG-01 原文）：项目 → alpha → {前端, 后端}、项目 → beta。
+ *
+ * 与 treeFixture 的区别：alpha 是**分支**（有子孙），B4/B7 的缺陷只在"点父标签"与
+ * "过滤 alpha 时后代 norm 也含 alpha"这两个场景才暴露。 */
+function deepTreeFixture() {
+  return [
+    {
+      norm: '项目', display: '项目', depth: 1, isLeaf: false, refCount: 3, unclassified: false,
+      children: [
+        {
+          norm: '项目/alpha', display: 'alpha', depth: 2, isLeaf: false, refCount: 2, unclassified: false,
+          children: [
+            { norm: '项目/alpha/前端', display: '前端', depth: 3, isLeaf: true, refCount: 2, unclassified: false, children: [] },
+            { norm: '项目/alpha/后端', display: '后端', depth: 3, isLeaf: true, refCount: 1, unclassified: false, children: [] },
+          ],
+        },
+        { norm: '项目/beta', display: 'beta', depth: 2, isLeaf: true, refCount: 1, unclassified: false, children: [] },
+      ],
+    },
+    { norm: '', display: '未分类', depth: 0, isLeaf: true, refCount: 0, unclassified: true, children: [] },
   ];
 }
 
@@ -132,7 +156,8 @@ describe('标签面板：点击看笔记（FR-TAG-03、AC-TAG-03）', () => {
     await flushPromises();
     await findRow(w, '随笔').get('[data-testid="tag-node"]').trigger('click');
     await flushPromises();
-    expect(hoisted.notes).toHaveBeenCalledWith('随笔', false);
+    // B4：含子级默认勾选 ⇒ 第二条参数是 true（FR-TAG-03 的主行为）
+    expect(hoisted.notes).toHaveBeenCalledWith('随笔', true);
     expect(w.get('[data-testid="tag-notes-title"]').text()).toContain('共 2 篇');
   });
 
@@ -178,7 +203,7 @@ describe('标签面板：点击看笔记（FR-TAG-03、AC-TAG-03）', () => {
     await flushPromises();
     await findRow(w, '').get('[data-testid="tag-node"]').trigger('click');
     await flushPromises();
-    expect(hoisted.notes).toHaveBeenCalledWith('', false);
+    expect(hoisted.notes).toHaveBeenCalledWith('', true);
     expect(w.get('[data-testid="tag-notes-title"]').text()).toContain('未分类');
   });
 
@@ -206,6 +231,26 @@ describe('标签面板：点击看笔记（FR-TAG-03、AC-TAG-03）', () => {
     await findRow(w, '随笔').get('[data-testid="tag-node"]').trigger('click');
     await flushPromises();
     expect(w.get('[data-testid="tag-notes-empty"]').text()).toContain('没有笔记');
+  });
+
+  it('**B4**：点父标签 项目/alpha ⇒ 显示"alpha —— 共 N 篇"与笔记列表，点一条能打开', async () => {
+    hoisted.tree.mockResolvedValue(deepTreeFixture());
+    hoisted.notes.mockResolvedValue([
+      { relPath: 'front.md', name: 'front.md', mtimeMs: 1, sources: ['body'] },
+      { relPath: 'back.md', name: 'back.md', mtimeMs: 2, sources: ['body'] },
+    ]);
+    const w = mount(TagPanel);
+    await flushPromises();
+    await findRow(w, '项目/alpha').get('[data-testid="tag-node"]').trigger('click');
+    await flushPromises();
+
+    // 父标签的笔记写在子标签上（祖先登记不算"写过"）⇒ 含子级默认勾选才列得出来
+    expect(hoisted.notes).toHaveBeenCalledWith('项目/alpha', true);
+    expect(w.get('[data-testid="tag-notes-title"]').text()).toBe('alpha —— 共 2 篇');
+    const items = w.findAll('[data-testid="tag-note-item"]');
+    expect(items).toHaveLength(2);
+    await items[1]?.trigger('click');
+    expect(w.emitted('open')?.[0]).toEqual(['back.md']);
   });
 });
 
@@ -236,6 +281,35 @@ describe('标签面板：排序与过滤（FR-TAG-04）', () => {
     expect(w.findAll('[data-testid="tag-tree-row"]')).toHaveLength(0);
     expect(w.get('[data-testid="tag-filter-empty"]').text()).toContain('没有匹配');
   });
+
+  it('**B7**：排序切名称生效；过滤 alpha 只剩 项目 → alpha（裁掉后代与兄弟），zzz 给无匹配提示', async () => {
+    // 引用计数与显示名**不同向**：项目/beta 计数大、alpha 名字靠前 ⇒ 两种排序结果可区分
+    hoisted.tree.mockResolvedValue([
+      {
+        norm: '项目', display: '项目', depth: 1, isLeaf: false, refCount: 3, unclassified: false,
+        children: [
+          { norm: '项目/alpha', display: 'alpha', depth: 2, isLeaf: true, refCount: 1, unclassified: false, children: [] },
+          { norm: '项目/beta', display: 'beta', depth: 2, isLeaf: true, refCount: 9, unclassified: false, children: [] },
+        ],
+      },
+      { norm: '', display: '未分类', depth: 0, isLeaf: true, refCount: 0, unclassified: true, children: [] },
+    ]);
+    const w = mount(TagPanel);
+    await flushPromises();
+    const norms = () => w.findAll('[data-testid="tag-tree-row"]').map((r) => r.attributes('data-norm'));
+    // 缺省按引用计数：beta(9) 在 alpha(1) 之前
+    expect(norms()).toEqual(['项目', '项目/beta', '项目/alpha', '']);
+    await w.get('[data-testid="tag-sort"]').setValue('name');
+    // 名称排序：alpha 在 beta 之前（display 参与排序）
+    expect(norms()).toEqual(['项目', '项目/alpha', '项目/beta', '']);
+
+    await w.get('[data-testid="tag-filter"]').setValue('alpha');
+    // 祖先保留、匹配节点的后代与兄弟分支裁掉 ⇒ 只剩两行
+    expect(norms()).toEqual(['项目', '项目/alpha']);
+    await w.get('[data-testid="tag-filter"]').setValue('zzz');
+    expect(w.findAll('[data-testid="tag-tree-row"]')).toHaveLength(0);
+    expect(w.get('[data-testid="tag-filter-empty"]').text()).toContain('没有匹配「zzz」');
+  });
 });
 
 describe('标签面板：include_children 开关（2026-10-17 批次 4 起**真正生效**，勘误 D-40②）', () => {
@@ -245,21 +319,28 @@ describe('标签面板：include_children 开关（2026-10-17 批次 4 起**真�
     hoisted.notes.mockReset().mockResolvedValue([]);
   });
 
-  it('开关在，且说明写的是**生效后的语义**（不再出现 no-op/无差别）', async () => {
+  it('开关在、**默认勾选**，且说明写的是生效后的语义（不再出现 no-op/无差别）', async () => {
     const w = mount(TagPanel);
     await flushPromises();
-    expect(w.find('[data-testid="tag-include-children"]').exists()).toBe(true);
+    // get() 找不到就会抛，本身就是"开关存在"的断言（它的返回类型上刻意去掉了 exists）
+    const box = w.get('[data-testid="tag-include-children"]');
+    // B4：缺省勾选 = FR-TAG-03 的「含全部子标签」是主行为；取消勾选才是收窄到显式标签
+    expect((box.element as HTMLInputElement).checked).toBe(true);
     const hint = w.get('[data-testid="tag-include-children-hint"]').text();
+    expect(hint).toContain('默认勾选');
     expect(hint).toContain('显式');
     expect(hint).toContain('子孙');
     expect(hint).toContain('D-40②');
     expect(hint).not.toContain('无差别');
   });
 
-  it('勾选后把 true 交给后端并**重查**（该参数在后端生效，必须重新发请求）', async () => {
+  it('**B8**：取消勾选把 false 交给后端并**重查**；再勾回 true 同样重查', async () => {
     const w = mount(TagPanel);
     await flushPromises();
     await findRow(w, '项目').get('[data-testid="tag-node"]').trigger('click');
+    await flushPromises();
+    expect(hoisted.notes).toHaveBeenLastCalledWith('项目', true);
+    await w.get('[data-testid="tag-include-children"]').setValue(false);
     await flushPromises();
     expect(hoisted.notes).toHaveBeenLastCalledWith('项目', false);
     await w.get('[data-testid="tag-include-children"]').setValue(true);
@@ -352,12 +433,12 @@ describe('标签重命名（FR-TAG-07/08、AC-TAG-02）', () => {
     expect(hoisted.renameApply).not.toHaveBeenCalled();
   });
 
-  it('预览过期（E_PREVIEW_EXPIRED）⇒ 提示重新预览，并**锁住**确认按钮', async () => {
+  it('预览过期（E_PREVIEW_EXPIRED）⇒ 橙色警示 + 提示重新预览，并**锁住**确认按钮', async () => {
     hoisted.renamePreview.mockResolvedValue({
       previewId: 'tp2', fromRef: 'a', toRef: 'b', fileCount: 1, spanCount: 1,
       skipped: [], edits: [], createdAtMs: 1,
     });
-    hoisted.renameApply.mockRejectedValue({ code: 'E_PREVIEW_EXPIRED', message: '预览已过期' });
+    hoisted.renameApply.mockRejectedValue({ code: E_PREVIEW_EXPIRED, message: '预览已过期' });
     const w = mount(TagRenameDialog);
     await w.get('[data-testid="rewrite-from"]').setValue('a');
     await w.get('[data-testid="rewrite-to"]').setValue('b');
@@ -365,11 +446,63 @@ describe('标签重命名（FR-TAG-07/08、AC-TAG-02）', () => {
     await flushPromises();
     await w.get('[data-testid="rewrite-apply"]').trigger('click');
     await flushPromises();
-    expect(w.get('[data-testid="rewrite-error"]').text()).toContain('预览已过期');
-    expect(w.get('[data-testid="rewrite-error"]').text()).toContain('重新点击"预览"');
-    // `get` 本身找不到就会抛；这里断言它**渲染出来了**（用 text 而不是 exists —— get 的返回类型上刻意去掉了它）
-    expect(w.get('[data-testid="tag-rename-repreview"]').text()).toContain('重新预览');
+    const err = w.get('[data-testid="rewrite-error"]');
+    expect(err.text()).toContain('预览已过期');
+    expect(err.text()).toContain('重新点击『预览』');
+    // 过期是**可操作状态**（重新预览即可），不是"改写失败"⇒ 橙色警示，不是红色失败
+    expect(err.attributes('data-kind')).toBe('expired');
+    // 域自带的橙色警示同样可见（两种提示都指向"重新点预览"这同一个动作）
+    expect(w.get('[data-testid="tag-rename-repreview"]').text()).toContain('请重新点击『预览』');
     // 二次确认按钮被锁住：不让用户一直点一个注定失败的按钮
     expect(w.get('[data-testid="rewrite-apply"]').attributes('disabled')).toBeDefined();
+  });
+
+  it('**C6/C7**：预览成功后连点两次确认 ⇒ 第二次橙色「预览已过期」+按钮灰；重新预览后恢复并可执行', async () => {
+    hoisted.renamePreview.mockResolvedValue({
+      previewId: 'tp3', fromRef: 'old/name', toRef: 'new/name', fileCount: 1, spanCount: 1,
+      skipped: [], edits: [{ relPath: 'a.md', hits: 1, occurrences: [] }], createdAtMs: 1,
+    });
+    hoisted.renameApply
+      // ① 第一次确认：成功（previewId 被消费）
+      .mockResolvedValueOnce({ operationId: 'op-1', fileCount: 1, spanCount: 1 })
+      // ② 第二次确认：同一个 previewId 已被消费 ⇒ 后端必须拒绝（PRD §5.2 / §5.3.6.2）
+      .mockRejectedValueOnce({ code: E_PREVIEW_EXPIRED, message: '预览已过期' })
+      // ③ 重新预览后的确认：正常执行
+      .mockResolvedValueOnce({ operationId: 'op-2', fileCount: 1, spanCount: 1 });
+
+    const w = mount(TagRenameDialog, { props: { fromTag: 'old/name' } });
+    await w.get('[data-testid="rewrite-from"]').setValue('old/name');
+    await w.get('[data-testid="rewrite-to"]').setValue('new/name');
+    await w.get('[data-testid="rewrite-preview"]').trigger('click');
+    await flushPromises();
+
+    // 第一次确认：成功，且「确认执行」按钮**仍在**（否则第二次点击不存在，C6 无法复现）
+    await w.get('[data-testid="rewrite-apply"]').trigger('click');
+    await flushPromises();
+    expect(hoisted.renameApply).toHaveBeenNthCalledWith(1, 'old/name', 'new/name', 'tp3');
+    expect(w.get('[data-testid="rewrite-applied"]').text()).toContain('已改写 1 个文件 / 1 处标签');
+    expect(w.find('[data-testid="rewrite-apply"]').exists()).toBe(true);
+
+    // 第二次确认：同一个已消费的 previewId ⇒ 橙色「预览已过期」、确认按钮变灰
+    await w.get('[data-testid="rewrite-apply"]').trigger('click');
+    await flushPromises();
+    expect(hoisted.renameApply).toHaveBeenNthCalledWith(2, 'old/name', 'new/name', 'tp3');
+    const err = w.get('[data-testid="rewrite-error"]');
+    expect(err.text()).toContain('预览已过期（previewId 一次性消费）');
+    expect(err.text()).toContain('请重新点击『预览』');
+    expect(err.attributes('data-kind')).toBe('expired');
+    expect(w.get('[data-testid="tag-rename-repreview"]').text()).toContain('请重新点击『预览』');
+    expect(w.get('[data-testid="rewrite-apply"]').attributes('disabled')).toBeDefined();
+
+    // C7：再点一次「预览」⇒ 警示消失、按钮恢复可用、可正常执行
+    await w.get('[data-testid="rewrite-preview"]').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-testid="rewrite-error"]').exists()).toBe(false);
+    expect(w.find('[data-testid="tag-rename-repreview"]').exists()).toBe(false);
+    expect(w.get('[data-testid="rewrite-apply"]').attributes('disabled')).toBeUndefined();
+    await w.get('[data-testid="rewrite-apply"]').trigger('click');
+    await flushPromises();
+    expect(hoisted.renameApply).toHaveBeenNthCalledWith(3, 'old/name', 'new/name', 'tp3');
+    expect(w.emitted('renamed')?.map((e) => (e[0] as { operationId: string }).operationId)).toEqual(['op-1', 'op-2']);
   });
 });

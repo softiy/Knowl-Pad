@@ -116,7 +116,7 @@ describe('标签面板 store', () => {
     expect(s.visibleTree.map((n) => n.display)).toEqual(['Zeta', 'Alpha']);
   });
 
-  it('过滤按规范键与显示名匹配，并保留祖先链', async () => {
+  it('过滤按**显示名**匹配并保留祖先链（B7：不再用规范键子串，避免带出后代）', async () => {
     const s = useTagsStore();
     await s.refresh();
     s.setFilter('alpha');
@@ -132,21 +132,28 @@ describe('标签面板 store', () => {
     s.select('');
     expect(s.selectedNorm).toBe('');
     expect(s.selectedNode?.unclassified).toBe(true);
-    // 直接把 store 持有的那个值交给查询：它必须是**空串**（而不是 null / undefined）
+    // 直接把 store 持有的那个值交给查询：它必须是**空串**（而不是 null / undefined）；
+    // 第二个参数缺省为 true（B4：含子级默认勾选，见下一条用例）
     await s.loadNotes(s.selectedNorm ?? 'MISSING');
-    expect(hoisted.notes).toHaveBeenCalledWith('', false);
+    expect(hoisted.notes).toHaveBeenCalledWith('', true);
   });
 
-  it('切换"含子级"会如实透传并重查（尽管勘误 D-40② 说它当前是 no-op）', async () => {
+  it('**B4**：「含子级」默认勾选（FR-TAG-03 主行为），且开关仍如实透传并重查', async () => {
     const s = useTagsStore();
     await s.refresh();
+    expect(s.includeChildren).toBe(true);
     s.select('项目');
     await s.loadNotes('项目');
+    // 全量重建后父标签 项目 的笔记在其子孙里，缺省含子级才列得出来
+    expect(hoisted.notes).toHaveBeenLastCalledWith('项目', true);
+    // **B8**：取消勾选 ⇒ 显式传 false（只列显式写了该标签的笔记）并重新查询
+    s.setIncludeChildren(false);
+    await Promise.resolve();
+    expect(s.includeChildren).toBe(false);
     expect(hoisted.notes).toHaveBeenLastCalledWith('项目', false);
+    // 再勾回来也重新查询
     s.setIncludeChildren(true);
     await Promise.resolve();
-    expect(s.includeChildren).toBe(true);
-    // UI 不假装它生效：调用方**确实**把 true 交给了后端（"无差别"是后端的祖先登记造成的）
     expect(hoisted.notes).toHaveBeenLastCalledWith('项目', true);
   });
 
@@ -218,7 +225,7 @@ describe('标签面板 store', () => {
     s.select('项目');
     await s.reloadActive();
     expect(hoisted.tree).toHaveBeenCalledTimes(2);
-    expect(hoisted.notes).toHaveBeenLastCalledWith('项目', false);
+    expect(hoisted.notes).toHaveBeenLastCalledWith('项目', true);
   });
 
   it('FR-TAG-05：正文点标签 ⇒ selectTag 归一化后选中并打开面板', async () => {

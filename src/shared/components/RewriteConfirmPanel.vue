@@ -49,6 +49,12 @@ const props = withDefaults(defineProps<{
   canApply?: boolean;
   /** 计量单位文案（链接域"处链接"、标签域"处标签"）：让确认文案说的是用户看得到的东西。 */
   unitLabel?: string;
+  /**
+   * 执行期错误的**分类**（缺省一律 other）。唯一用途：把「预览已过期」与真正的改写失败
+   * 在视觉上分开 —— 前者是**可操作**的（重新预览即可，橙色提示），后者才是红色失败。
+   * 面板刻意不 import core/ipc，因此判定由域注入（标签域用 isPreviewExpired）。
+   */
+  classifyApplyError?: ((err: unknown) => 'expired' | 'other') | undefined;
   /** 第一步：**只读**预览。必须由调用方注入（本组件不碰 IPC）。 */
   onPreview: (from: string, to: string) => Promise<unknown>;
   /** 第二步：用户确认后执行。缺失则只做预览（只读模式）。返回类型决定 `T`。 */
@@ -73,10 +79,23 @@ const props = withDefaults(defineProps<{
   toLabel: '改成',
   canApply: true,
   actionLabel: '批量改写',
+  classifyApplyError: undefined,
   onApply: undefined,
   onRollback: undefined,
 });
 
+
+/**
+ * 缺省的错误分类：只按**线上错误码**判"预览已过期"。
+ *
+ * 面板刻意不 import core/ipc（域无关），但 E_PREVIEW_EXPIRED 是 PRD §5.2 定义的**跨域契约**
+ * （链接改写与标签重命名共用同一个码）。有了它，两个域即使不注入 classifyApplyError，
+ * 第二次「确认执行」也不会被渲染成"改写失败"那种红色告警。
+ */
+function defaultClassifyApplyError(err: unknown): 'expired' | 'other' {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === 'E_PREVIEW_EXPIRED' ? 'expired' : 'other';
+}
 
 const from = ref('');
 const to = ref('');
@@ -85,6 +104,8 @@ const preview = ref<unknown>(null);
 /** 执行结果（精确类型 `T`）；回滚成功后清空，故回滚仍用它作凭据。 */
 const applied = ref<T | null>(null);
 const error = ref<string | null>(null);
+/** 错误的呈现类别：expired ⇒ 橙色「预览已过期」；other ⇒ 红色失败。 */
+const errorKind = ref<'expired' | 'other'>('other');
 const busy = ref(false);
 
 /** `unknown` 的最小结构收窄（不用 any：CODE-01）。 */
@@ -104,6 +125,8 @@ function previewOf(value: unknown): { fileCount: number; spanCount: number; skip
 async function runPreview(): Promise<void> {
   busy.value = true;
   error.value = null;
+  // 重新预览就是从"过期"回到可用：上一轮的橙色警示必须消失（C7 的"再点一次预览恢复"）。
+  errorKind.value = 'other';
   try {
     preview.value = await props.onPreview(from.value, to.value);
   } catch (err) {
@@ -121,9 +144,14 @@ async function runApply(): Promise<void> {
   try {
     const result = await props.onApply(from.value, to.value, preview.value);
     applied.value = result;
-    preview.value = null;
+    // **成功后不清 preview**：M5 冒烟 C6 要求「预览成功后连点两次确认」时第二次能撞上
+    // E_PREVIEW_EXPIRED（previewId 一次性消费由后端保证）。清空 preview 会让"确认执行"
+    // 按钮随 v-if 一起消失，用户根本没有第二次点击的机会 —— 那条失败路径就永远无法复现、
+    // 也无法验证。保留 preview 也让用户仍看得见本次改写的清单（不是假装什么都没发生）。
+    // 真正的"再来一次"必须先重新预览（C7）：第二次点击会得到过期错误并锁住按钮。
     emit('applied', result);
   } catch (err) {
+    errorKind.value = (props.classifyApplyError ?? defaultClassifyApplyError)(err);
     error.value = describe(err);
   } finally {
     busy.value = false;
@@ -136,6 +164,7 @@ async function runRollback(): Promise<void> {
   if (!props.onRollback || applied.value === null) return;
   busy.value = true;
   error.value = null;
+  errorKind.value = 'other'; // 回滚失败是普通失败，不是"预览过期"
   try {
     await props.onRollback(applied.value);
     applied.value = null;
@@ -236,7 +265,7 @@ function describe(err: unknown): string {
         回滚
       </button>
     </p>
-    <p v-if="error" class="kp-rewrite__error" data-testid="rewrite-error">{{ error }}</p>
+    <p v-if="error" class="kp-rewrite__error" :data-kind="errorKind" data-testid="rewrite-error">{{ error }}</p>
   </div>
 </template>
 
@@ -245,5 +274,13 @@ function describe(err: unknown): string {
 .kp-rewrite__inputs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .kp-rewrite__arrow { color: #888; }
 .kp-rewrite__error { color: #b00020; }
+/* 「预览已过期」是可操作的（重新预览即可），不是磁盘失败：橙色警示 + 可读背景。
+   红色只留给真正的改写失败 —— 否则用户会以为磁盘坏了（M5 冒烟 C6 的失败态）。 */
+.kp-rewrite__error[data-kind='expired'] {
+  color: #b26a00;
+  background: #fff4e5;
+  border: 1px solid #ffd591;
+  padding: 4px 6px;
+}
 .kp-rewrite__warn { background: #fff7e6; border: 1px solid #ffd591; padding: 6px 8px; }
 </style>

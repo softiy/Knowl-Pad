@@ -2,7 +2,13 @@
 import { ref } from 'vue';
 import RewriteConfirmPanel from '@shared/components/RewriteConfirmPanel.vue';
 import { tagRenameApply, tagRenamePreview } from '@core/ipc/tagCommands';
-import { asKpError, isInvalidNameError, isPreviewExpired } from '@core/ipc/errors';
+import {
+  E_PREVIEW_EXPIRED,
+  KpError,
+  asKpError,
+  isInvalidNameError,
+  isPreviewExpired,
+} from '@core/ipc/errors';
 import type { RewritePreview, RewriteResult } from '@core/ipc/linkCommands';
 
 /**
@@ -31,6 +37,14 @@ function messageOf(err: unknown): string {
   return asKpError(err).message;
 }
 
+/**
+ * 执行期错误的呈现分类（共享面板据此选橙色/红色）：
+ * 预览过期是可操作的（重新预览即可），**不是**"改写失败"。
+ */
+function applyErrorKind(err: unknown): 'expired' | 'other' {
+  return isPreviewExpired(err) ? 'expired' : 'other';
+}
+
 /** 第一步：只读预览。非法的新名（层级冲突/空/含空白）在这里就被拒绝，一个字节都不写盘。 */
 async function onPreview(from: string, to: string): Promise<unknown> {
   needsRepreview.value = false;
@@ -49,9 +63,14 @@ async function onApply(from: string, to: string, raw: unknown): Promise<RewriteR
     return await tagRenameApply(from.trim(), to.trim(), preview.previewId);
   } catch (err) {
     // 预览已过期/被消费 ⇒ 提示**重新预览**（PRD §5.2 的 410 处置），并锁住确认按钮。
+    // 重新抛出的错误**保留 E_PREVIEW_EXPIRED 码**：共享面板要靠它把这条渲染成橙色警示
+    // （"预览已过期"是可操作状态，不是磁盘失败 —— 普通红色会让人以为文件改坏了）。
     if (isPreviewExpired(err)) {
       needsRepreview.value = true;
-      throw new Error('预览已过期（previewId 一次性消费），请重新点击"预览"后再确认。');
+      throw new KpError({
+        code: E_PREVIEW_EXPIRED,
+        message: '预览已过期（previewId 一次性消费），请重新点击『预览』后再确认。',
+      });
     }
     throw err;
   }
@@ -63,6 +82,7 @@ async function onApply(from: string, to: string, raw: unknown): Promise<RewriteR
     :on-preview="onPreview"
     :on-apply="onApply"
     :can-apply="!needsRepreview"
+    :classify-apply-error="applyErrorKind"
     from-placeholder="旧标签名（如 old/name）"
     to-placeholder="new/name"
     to-label="新名称"
@@ -85,7 +105,7 @@ async function onApply(from: string, to: string, raw: unknown): Promise<RewriteR
         已选中：<code>{{ props.fromTag }}</code>（层级子标签的前缀会一并更新，FR-TAG-07）
       </p>
       <p v-if="needsRepreview" class="kp-tag-rename__warn" data-testid="tag-rename-repreview">
-        预览已过期，请重新预览后再确认。
+        预览已过期（previewId 一次性消费），请重新点击『预览』后再确认。
       </p>
       <p v-if="previewing" class="kp-tag-rename__hint" data-testid="tag-rename-previewing">
         正在扫描全部笔记…
