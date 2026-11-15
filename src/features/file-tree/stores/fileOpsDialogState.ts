@@ -12,6 +12,12 @@ import { fileValidateName } from '@core/ipc/commands';
  */
 export type FileOpMode = 'newNote' | 'newFolder' | 'rename' | 'move' | 'delete';
 
+/**
+ * 新建笔记的默认名称（M5 冒烟 5.6：此前默认值是**空串**，用户不写扩展名就建出无扩展名文件，
+ * 编辑器/索引都不把它当笔记）。默认带上 `.md`，对话框打开时只选中主文件名（见 FileOpsDialog）。
+ */
+export const DEFAULT_NOTE_NAME = '未命名.md';
+
 export interface FileOpDialog {
   mode: FileOpMode;
   /** 重命名/移动/删除的目标（源路径）；新建时为空 */

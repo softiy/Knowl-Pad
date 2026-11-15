@@ -191,3 +191,204 @@ describe('useFileTreeStore', () => {
     expect(store.expanded.has('dir')).toBe(false);
   });
 });
+
+describe('useFileTreeStore：切库重置 / 本地同步 / 排序方向（M5 冒烟 5.3–5.6）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.resetAllMocks();
+    mPrefGet.mockResolvedValue({ values: {} });
+    mStateGet.mockResolvedValue({ values: {} });
+    mStateSet.mockResolvedValue(undefined);
+    mPrefSet.mockResolvedValue(undefined);
+    stubTree();
+  });
+
+  it('reset：清空展开/缓存/可视行/错误与隐藏开关，且**不调用任何 IPC**（切库串树修复）', async () => {
+    mStateGet.mockResolvedValue({ values: { [STATE_KEY_SHOW_HIDDEN]: true, [STATE_KEY_TREE_EXPANDED]: ['dir'] } });
+    const store = useFileTreeStore();
+    await store.restoreState();
+    expect(store.includeHidden).toBe(true);
+    expect(store.expanded.has('dir')).toBe(true);
+    expect(store.rows.length).toBeGreaterThan(0);
+    mTree.mockClear();
+    mStateGet.mockClear();
+    mStateSet.mockClear();
+    store.reset();
+    expect(store.rows).toEqual([]);
+    expect(store.expanded.size).toBe(0);
+    expect(store.includeHidden).toBe(false);
+    expect(store.error).toBeNull();
+    expect(store.loading).toBe(false);
+    // 不写 vault_state、不读——新库的状态必须由随后的 restoreState 从 B 自己那份读
+    expect(mTree).not.toHaveBeenCalled();
+    expect(mStateGet).not.toHaveBeenCalled();
+    expect(mStateSet).not.toHaveBeenCalled();
+  });
+
+  it('reset 让上一个库还在飞的列表请求作废（装载代次，不回写旧库目录）', async () => {
+    let resolveTree: ((nodes: FileNode[]) => void) | null = null;
+    mTree.mockImplementation(
+      () => new Promise<FileNode[]>((resolve) => { resolveTree = resolve; }),
+    );
+    const store = useFileTreeStore();
+    const pending = store.loadRoot();
+    store.reset();
+    expect(resolveTree).not.toBeNull();
+    (resolveTree as unknown as (nodes: FileNode[]) => void)([note('旧库.md')]);
+    await pending;
+    expect(store.rows).toEqual([]);
+  });
+
+  it('restoreState 以持久化值为唯一权威：先清空展开状态，不与上一轮并集', async () => {
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    await store.toggle('dir');
+    expect(store.expanded.has('dir')).toBe(true);
+    // 持久化里没有展开项（例如新库从未展开过）⇒ 恢复后不能凭空带着上一轮的 dir
+    mStateGet.mockResolvedValue({ values: {} });
+    await store.restoreState();
+    expect(store.expanded.size).toBe(0);
+    expect(store.rows.map((r) => r.relPath)).toEqual(['dir', 'root.md']);
+  });
+
+  it('排序方向：name 默认升序、mtime 默认降序，toggleSortDirection 纯前端翻转', async () => {
+    mTree.mockResolvedValue([
+      { relPath: 'a.md', name: 'a.md', isDir: false, kind: 'note', mtimeMs: 100 },
+      { relPath: 'b.md', name: 'b.md', isDir: false, kind: 'note', mtimeMs: 900 },
+    ]);
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    expect(store.sortDirection).toBe('asc');
+    store.setSortMode('mtime');
+    expect(store.sortDirection).toBe('desc');
+    expect(store.rows.map((r) => r.name)).toEqual(['b.md', 'a.md']);
+    mTree.mockClear();
+    store.toggleSortDirection();
+    expect(store.sortDirection).toBe('asc');
+    expect(store.rows.map((r) => r.name)).toEqual(['a.md', 'b.md']);
+    expect(mTree).not.toHaveBeenCalled();
+  });
+
+  it('nodeAdded：本地插入新笔记、展开父目录并持久化（新建后即时在树里）', async () => {
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    expect(store.rows.map((r) => r.relPath)).not.toContain('dir/新笔记.md');
+    await store.nodeAdded('dir/新笔记.md', { mtimeMs: 999 });
+    const row = store.rows.find((r) => r.relPath === 'dir/新笔记.md');
+    expect(row).toBeDefined();
+    expect(row?.depth).toBe(1);
+    expect(row?.kind).toBe('note');
+    expect(store.expanded.has('dir')).toBe(true);
+    expect(mStateSet).toHaveBeenCalledWith({ [STATE_KEY_TREE_EXPANDED]: ['dir'] });
+  });
+
+  it('nodeAdded：根层新建直接可见；文件夹标记为 isDir 且无子项', async () => {
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    await store.nodeAdded('新笔记.md', { mtimeMs: 5 });
+    await store.nodeAdded('新文件夹', { isDir: true });
+    const noteRow = store.rows.find((r) => r.relPath === '新笔记.md');
+    const dirRow = store.rows.find((r) => r.relPath === '新文件夹');
+    expect(noteRow?.depth).toBe(0);
+    expect(dirRow?.isDir).toBe(true);
+    expect(dirRow?.hasChildren).toBe(false);
+  });
+
+  it('pathRemoved：立刻从本地树移除（不等索引）；目录连带清展开状态与子层缓存', async () => {
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    await store.toggle('dir');
+    expect(store.rows.map((r) => r.relPath)).toContain('dir/a.md');
+    store.pathRemoved('dir/a.md');
+    expect(store.rows.map((r) => r.relPath)).not.toContain('dir/a.md');
+    store.pathRemoved('dir');
+    expect(store.rows.map((r) => r.relPath)).toEqual(['root.md']);
+    expect(store.expanded.has('dir')).toBe(false);
+  });
+
+  it('pathMoved：本地改名/移动整棵子树（旧路径消失、新路径与展开状态一起换）', async () => {
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    await store.toggle('dir');
+    store.pathMoved('dir', 'arch');
+    const paths = store.rows.map((r) => r.relPath);
+    expect(paths).toContain('arch');
+    expect(paths).toContain('arch/sub');
+    expect(paths).toContain('arch/a.md');
+    expect(paths).not.toContain('dir');
+    expect(paths.some((p) => p.startsWith('dir/'))).toBe(false);
+    expect(store.expanded.has('arch')).toBe(true);
+    expect(store.expanded.has('dir')).toBe(false);
+  });
+
+  it('pathMoved：同层重命名（父层缓存顺序按新名称重排）', async () => {
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    store.pathMoved('root.md', 'zzz.md');
+    const paths = store.rows.map((r) => r.relPath);
+    expect(paths).toContain('zzz.md');
+    expect(paths).not.toContain('root.md');
+  });
+});
+
+describe('useFileTreeStore：外部变更的最小同步（kp://fs/*，M5 冒烟 5.3）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.resetAllMocks();
+    mPrefGet.mockResolvedValue({ values: {} });
+    mStateGet.mockResolvedValue({ values: {} });
+    mStateSet.mockResolvedValue(undefined);
+    mPrefSet.mockResolvedValue(undefined);
+    stubTree();
+  });
+
+  it('applyMtime：更新缓存里的 mtime 并按当前排序重排，**零 IPC**', async () => {
+    mTree.mockResolvedValue([
+      { relPath: 'a.md', name: 'a.md', isDir: false, kind: 'note', mtimeMs: 100 },
+      { relPath: 'b.md', name: 'b.md', isDir: false, kind: 'note', mtimeMs: 900 },
+    ]);
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    store.setSortMode('mtime');
+    expect(store.rows.map((r) => r.name)).toEqual(['b.md', 'a.md']);
+    mTree.mockClear();
+    // 运行期外部把 a.md 改成更新的时间：事件已带磁盘 mtime，不需要再拉一次树
+    store.applyMtime('a.md', 5_000);
+    expect(store.rows.map((r) => r.name)).toEqual(['a.md', 'b.md']);
+    expect(mTree).not.toHaveBeenCalled();
+  });
+
+  it('applyMtime：父层未加载 / 找不到节点 / mtime 未变时是安全空操作', async () => {
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    expect(() => store.applyMtime('dir/不存在.md', 1)).not.toThrow();
+    expect(() => store.applyMtime('dir/a.md', 1)).not.toThrow(); // 父层 dir 未加载
+    store.applyMtime('root.md', 123);
+    expect(store.rows.map((r) => r.relPath)).toEqual(['dir', 'root.md']);
+    expect(() => store.applyMtime('root.md', 123)).not.toThrow(); // 值未变
+  });
+
+  it('refreshPath：外部新建后只重拉已加载的父层，新文件立刻出现', async () => {
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    mTree.mockResolvedValue([dir('dir'), note('root.md'), note('新建.md')]);
+    await store.refreshPath('新建.md');
+    expect(store.rows.map((r) => r.relPath)).toEqual(['dir', '新建.md', 'root.md']);
+  });
+
+  it('refreshPath：父层未加载时不发 IPC（懒加载交给展开时）', async () => {
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    mTree.mockClear();
+    await store.refreshPath('dir/sub/深层.md');
+    expect(mTree).not.toHaveBeenCalled();
+  });
+
+  it('refreshPath：父层重拉失败时给出可读原因（R-15 不静默）', async () => {
+    const store = useFileTreeStore();
+    await store.loadRoot();
+    mTree.mockRejectedValueOnce({ code: 'E_IO_FAILURE', message: '目录不可读' });
+    await store.refreshPath('root.md');
+    expect(store.error).toBe('目录不可读');
+  });
+});

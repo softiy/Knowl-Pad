@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils';
-import { createPinia } from 'pinia';
+import { createPinia, setActivePinia } from 'pinia';
 import { nextTick } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -46,6 +46,36 @@ vi.mock('@core/ipc/commands', () => ({
   vaultStateSet: vi.fn(),
 }));
 
+/**
+ * kp://fs/* 的受控替身：FileTree 挂载时订阅、卸载时注销。
+ * 用例直接调用捕获到的 handler 来模拟"后端文件系统事件"，不依赖 Tauri 运行时。
+ */
+const fsHandlers = vi.hoisted(() => ({
+  modified: null as ((payload: { relPath: string; mtimeMs: number }) => void) | null,
+  created: null as ((payload: { relPath: string; kind: string }) => void) | null,
+  removed: null as ((payload: { relPath: string }) => void) | null,
+  renamed: null as ((payload: { from: string; to: string }) => void) | null,
+  unlisten: vi.fn(),
+}));
+vi.mock('@core/ipc/events', () => ({
+  onFsModified: (handler: (payload: { relPath: string; mtimeMs: number }) => void) => {
+    fsHandlers.modified = handler;
+    return Promise.resolve(fsHandlers.unlisten);
+  },
+  onFsCreated: (handler: (payload: { relPath: string; kind: string }) => void) => {
+    fsHandlers.created = handler;
+    return Promise.resolve(fsHandlers.unlisten);
+  },
+  onFsRemoved: (handler: (payload: { relPath: string }) => void) => {
+    fsHandlers.removed = handler;
+    return Promise.resolve(fsHandlers.unlisten);
+  },
+  onFsRenamed: (handler: (payload: { from: string; to: string }) => void) => {
+    fsHandlers.renamed = handler;
+    return Promise.resolve(fsHandlers.unlisten);
+  },
+}));
+
 import {
   fileReveal,
   fileTree,
@@ -55,7 +85,7 @@ import {
   vaultStateSet,
   type FileNode,
 } from '@core/ipc/commands';
-import { FileTree } from '@features/file-tree';
+import { FileTree, useFileOpsStore } from '@features/file-tree';
 
 const mTree = vi.mocked(fileTree);
 const vstate = (globalThis as unknown as { __treeVirtualState: { scrollTop: number; viewport: number } })
@@ -70,8 +100,14 @@ function dir(relPath: string): FileNode {
   return { relPath, name: relPath, isDir: true, kind: 'other', hasChildren: true };
 }
 
+/** 最近一次 mount 的 fileOps store（复制提示等断言需要读它） */
+let ops: ReturnType<typeof useFileOpsStore>;
+
 function mountTree() {
-  return mount(FileTree, { global: { plugins: [createPinia()] } });
+  const pinia = createPinia();
+  setActivePinia(pinia);
+  ops = useFileOpsStore();
+  return mount(FileTree, { global: { plugins: [pinia] } });
 }
 
 const renderedRows = (wrapper: ReturnType<typeof mountTree>) =>
@@ -209,6 +245,9 @@ describe('FileTree 组件', () => {
     await wrapper.find('[data-testid="menu-copy-wikilink"]').trigger('click');
     await flushPromises();
     expect(writeText).toHaveBeenCalledWith('[[root]]');
+    // M5 冒烟 5.5：复制成功必须给出**含复制内容**的可见提示（action 之前完全静默）
+    expect(ops.notice).toBe('已复制 Wikilink：[[root]]');
+    ops.clearNotice();
   });
 
   it('DEBT-19：右键「移动到…」向外抛 move 动作（file_move 的 UI 入口）', async () => {
@@ -228,5 +267,155 @@ describe('FileTree 组件', () => {
     expect(buttons).toContain('复制相对路径');
     await wrapper.findAll('.kp-menu button')[0].trigger('click');
     expect(wrapper.emitted('action')?.[0]).toEqual([{ type: 'newNote', relPath: 'dir', isDir: true }]);
+  });
+});
+
+describe('FileTree 左栏布局与复制反馈（M5 冒烟 5.3/5.5 的回归）', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vstate.scrollTop = 0;
+    vi.mocked(preferenceGet).mockResolvedValue({ values: {} });
+    vi.mocked(vaultStateGet).mockResolvedValue({ values: {} });
+    vi.mocked(vaultStateSet).mockResolvedValue(undefined);
+    vi.mocked(preferenceSet).mockResolvedValue(undefined);
+    mTree.mockResolvedValue([dir('dir'), note('root.md')]);
+  });
+
+  it('头部单行：隐藏文件开关 + 排序下拉 + 方向按钮在同一工具条内', async () => {
+    const wrapper = mountTree();
+    await flushPromises();
+    const toolbar = wrapper.find('.file-tree__toolbar');
+    expect(toolbar.exists()).toBe(true);
+    expect(toolbar.find('input[type="checkbox"]').exists()).toBe(true);
+    expect(toolbar.find('[data-testid="tree-sort"]').exists()).toBe(true);
+    expect(toolbar.find('[data-testid="tree-sort-dir"]').exists()).toBe(true);
+    // 三个控件都在**同一个**工具条里（不再被挤到第二行）
+    expect(wrapper.findAll('.file-tree__toolbar')).toHaveLength(1);
+  });
+
+  it('方向按钮：名称模式默认 ↑，点击后变 ↓（纯前端翻转）', async () => {
+    const wrapper = mountTree();
+    await flushPromises();
+    const button = wrapper.find('[data-testid="tree-sort-dir"]');
+    expect(button.text()).toBe('↑');
+    await button.trigger('click');
+    expect(button.text()).toBe('↓');
+  });
+
+  it('每一行都带 title = 完整名称（窄侧栏下悬浮可见被截断的名字）', async () => {
+    mTree.mockResolvedValue([note('一个非常非常长的笔记名字用于测试截断.md'), note('root.md')]);
+    const wrapper = mountTree();
+    await flushPromises();
+    for (const row of renderedRows(wrapper)) {
+      const title = row.attributes('title');
+      expect(title).toBeTruthy();
+      expect(row.find('.file-tree__name').text()).toBe(title);
+    }
+  });
+
+  it('缩进更紧凑：每层 10px（而不是 12px）', async () => {
+    mTree.mockImplementation(async (parent?: string) =>
+      parent === 'dir' ? [note('dir/a.md')] : [dir('dir'), note('root.md')],
+    );
+    const wrapper = mountTree();
+    await flushPromises();
+    await renderedRows(wrapper)[0].trigger('click'); // 展开 dir
+    await flushPromises();
+    const child = renderedRows(wrapper).find((r) => r.find('.file-tree__name').text() === 'dir/a.md');
+    expect(child?.find('.file-tree__indent').attributes('style')).toContain('width: 10px');
+  });
+
+  it('复制相对路径同样给出提示（不静默）', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const wrapper = mountTree();
+    await flushPromises();
+    await renderedRows(wrapper)[1].trigger('contextmenu');
+    const copy = wrapper.findAll('.kp-menu button').find((b) => b.text() === '复制相对路径');
+    await copy?.trigger('click');
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith('root.md');
+    expect(ops.notice).toContain('root.md');
+    ops.clearNotice();
+  });
+
+  it('剪贴板不可用时如实报错（R-15），不假装复制成功', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    const wrapper = mountTree();
+    await flushPromises();
+    await renderedRows(wrapper)[1].trigger('contextmenu');
+    await wrapper.find('[data-testid="menu-copy-wikilink"]').trigger('click');
+    await flushPromises();
+    expect(ops.notice).toContain('失败');
+    expect(wrapper.find('.file-tree__error').exists()).toBe(true);
+    ops.clearNotice();
+  });
+});
+
+describe('FileTree 订阅 kp://fs/* 事件（M5 冒烟 5.3：运行期外部改动的实时同步）', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vstate.scrollTop = 0;
+    vi.mocked(preferenceGet).mockResolvedValue({ values: {} });
+    vi.mocked(vaultStateGet).mockResolvedValue({ values: {} });
+    vi.mocked(vaultStateSet).mockResolvedValue(undefined);
+    vi.mocked(preferenceSet).mockResolvedValue(undefined);
+    mTree.mockResolvedValue([dir('dir'), note('root.md')]);
+    fsHandlers.modified = null;
+    fsHandlers.created = null;
+    fsHandlers.removed = null;
+    fsHandlers.renamed = null;
+  });
+
+  it('modified：用事件里的磁盘 mtime 更新节点并重排（切到修改时间后新顺序立刻生效）', async () => {
+    mTree.mockResolvedValue([
+      { relPath: 'a.md', name: 'a.md', isDir: false, kind: 'note', mtimeMs: 100 },
+      { relPath: 'b.md', name: 'b.md', isDir: false, kind: 'note', mtimeMs: 900 },
+    ]);
+    const wrapper = mountTree();
+    await flushPromises();
+    await wrapper.find('[data-testid="tree-sort"]').setValue('mtime');
+    expect(renderedRows(wrapper).map((r) => r.find('.file-tree__name').text())).toEqual(['b.md', 'a.md']);
+    fsHandlers.modified?.({ relPath: 'a.md', mtimeMs: 5_000 });
+    await nextTick();
+    expect(renderedRows(wrapper).map((r) => r.find('.file-tree__name').text())).toEqual(['a.md', 'b.md']);
+    wrapper.unmount();
+  });
+
+  it('created：定向重拉父层，新建文件立刻出现在树里', async () => {
+    const wrapper = mountTree();
+    await flushPromises();
+    mTree.mockResolvedValue([dir('dir'), note('新建.md'), note('root.md')]);
+    fsHandlers.created?.({ relPath: '新建.md', kind: 'note' });
+    await flushPromises();
+    expect(renderedRows(wrapper).map((r) => r.find('.file-tree__name').text())).toContain('新建.md');
+    wrapper.unmount();
+  });
+
+  it('removed：外部删除后节点从树里消失', async () => {
+    const wrapper = mountTree();
+    await flushPromises();
+    fsHandlers.removed?.({ relPath: 'root.md' });
+    await nextTick();
+    expect(renderedRows(wrapper).map((r) => r.find('.file-tree__name').text())).not.toContain('root.md');
+    wrapper.unmount();
+  });
+
+  it('renamed：外部重命名后旧名消失、新名出现', async () => {
+    const wrapper = mountTree();
+    await flushPromises();
+    fsHandlers.renamed?.({ from: 'root.md', to: 'zzz.md' });
+    await nextTick();
+    const names = renderedRows(wrapper).map((r) => r.find('.file-tree__name').text());
+    expect(names).not.toContain('root.md');
+    expect(names).toContain('zzz.md');
+    wrapper.unmount();
+  });
+
+  it('卸载时注销全部订阅（ED-01：组件不留下全局监听）', async () => {
+    const wrapper = mountTree();
+    await flushPromises();
+    wrapper.unmount();
+    expect(fsHandlers.unlisten).toHaveBeenCalledTimes(4);
   });
 });

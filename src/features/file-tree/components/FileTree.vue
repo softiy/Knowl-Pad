@@ -4,6 +4,8 @@ import { useVirtualizer } from '@tanstack/vue-virtual';
 import { fileReveal } from '@core/ipc/commands';
 import { asKpError } from '@core/ipc/errors';
 import { useFileTreeStore } from '../stores/fileTree';
+import { useFileOpsStore } from '../stores/fileOps';
+import { useFileTreeFsSync } from '../composables/useFileTreeFsSync';
 import { wikilinkOf } from '../logic';
 import {
   SORT_OPTIONS,
@@ -23,6 +25,8 @@ const emit = defineEmits<{
 }>();
 
 const store = useFileTreeStore();
+/** 文件操作提示（M5 冒烟 5.5：复制 Wikilink / 路径后必须有可见反馈，且会自动消失） */
+const ops = useFileOpsStore();
 const scrollRef = ref<HTMLElement | null>(null);
 const menu = ref<{ visible: boolean; x: number; y: number; row: TreeRow | null }>({
   visible: false,
@@ -46,6 +50,10 @@ onMounted(() => {
   void store.restoreState();
 });
 
+/** 订阅 kp://fs/*（规则与生命周期见 composable；让排序与树反映运行期外部改动）。
+ * 放在 restoreState 的 onMounted 之后注册：先恢复树、再挂监听（与拆分前同一执行顺序）。 */
+useFileTreeFsSync(store);
+
 function onRowClick(row: TreeRow): void {
   if (row.isDir) {
     void store.toggle(row.relPath);
@@ -56,6 +64,18 @@ function onRowClick(row: TreeRow): void {
 
 function onRowContextMenu(event: MouseEvent, row: TreeRow): void {
   menu.value = { visible: true, x: event.clientX, y: event.clientY, row };
+}
+
+/** 剪贴板写入的统一出口：成功/失败都给出可见反馈（R-15：不静默，也不假装成功）。 */
+async function copyText(text: string, label: string): Promise<void> {
+  try {
+    if (!navigator.clipboard) throw new Error('当前环境不支持剪贴板');
+    await navigator.clipboard.writeText(text);
+    ops.setNotice(`已复制 ${label}：${text}`);
+  } catch (err) {
+    store.error = asKpError(err).message;
+    ops.setNotice(`复制 ${label} 失败`, 'error');
+  }
 }
 
 async function onMenuSelect(action: MenuAction): Promise<void> {
@@ -73,17 +93,12 @@ async function onMenuSelect(action: MenuAction): Promise<void> {
     return;
   }
   if (action === 'copyPath') {
-    await navigator.clipboard?.writeText(row.relPath);
+    await copyText(row.relPath, '相对路径');
     return;
   }
   if (action === 'copyWikilink') {
-    // FR-FILE-07：复制的是 `[[目标]]` 文本（去掉 .md），不是路径本身
-    try {
-      await navigator.clipboard?.writeText(wikilinkOf(row.relPath));
-    } catch (err) {
-      // R-15：剪贴板被拒时给出可见原因，不静默
-      store.error = asKpError(err).message;
-    }
+    // FR-FILE-07：复制的是 `[[目标]]` 文本（笔记去 .md、附件保留扩展名），不是路径本身
+    await copyText(wikilinkOf(row.relPath), 'Wikilink');
     return;
   }
   emit('action', { type: action, relPath: row.relPath, isDir: row.isDir });
@@ -108,8 +123,9 @@ function iconOf(row: TreeRow): string {
 
 <template>
   <div class="file-tree">
+    <!-- M5 冒烟：头部必须**单行**放下隐藏文件开关 + 排序 + 方向（不要换行挤成两行） -->
     <div class="file-tree__toolbar">
-      <label>
+      <label class="file-tree__hidden">
         <input
           type="checkbox"
           :checked="store.includeHidden"
@@ -123,6 +139,16 @@ function iconOf(row: TreeRow): string {
           <option v-for="opt in SORT_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
       </label>
+      <button
+        type="button"
+        class="file-tree__dir"
+        data-testid="tree-sort-dir"
+        :title="store.sortDirection === 'asc' ? '当前升序，点击切换为降序' : '当前降序，点击切换为升序'"
+        :aria-label="store.sortDirection === 'asc' ? '升序，点击切换为降序' : '降序，点击切换为升序'"
+        @click="store.toggleSortDirection()"
+      >
+        {{ store.sortDirection === 'asc' ? '↑' : '↓' }}
+      </button>
     </div>
     <p v-if="store.error" class="file-tree__error">{{ store.error }}</p>
     <div ref="scrollRef" class="file-tree__scroll" data-testid="tree-scroll">
@@ -132,13 +158,14 @@ function iconOf(row: TreeRow): string {
           :key="item.index"
           class="file-tree__row"
           data-testid="tree-row"
+          :title="store.rows[item.index].name"
           :style="{ transform: `translateY(${item.start}px)`, height: `${TREE_ROW_HEIGHT}px` }"
           @click="onRowClick(store.rows[item.index])"
           @contextmenu.prevent="onRowContextMenu($event, store.rows[item.index])"
         >
           <span
             class="file-tree__indent"
-            :style="{ width: `${store.rows[item.index].depth * 12}px` }"
+            :style="{ width: `${store.rows[item.index].depth * 10}px` }"
           />
           <span class="file-tree__icon">{{ iconOf(store.rows[item.index]) }}</span>
           <span class="file-tree__name">{{ store.rows[item.index].name }}</span>
@@ -158,12 +185,20 @@ function iconOf(row: TreeRow): string {
 </template>
 
 <style scoped>
-.file-tree { display: flex; flex-direction: column; height: 100%; font-size: 13px; }
-.file-tree__toolbar { padding: 4px 8px; border-bottom: 1px solid var(--kp-border, #ddd); }
+.file-tree { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; font-size: 13px; }
+/* 单行 + 紧凑：窄侧栏（layout 侧最小 240px）内也不换行；极端窄时横向滚动而不是截断 */
+.file-tree__toolbar { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; padding: 2px 5px; overflow-x: auto; white-space: nowrap; font-size: 12px; border-bottom: 1px solid var(--kp-border, #ddd); }
+.file-tree__toolbar label { display: flex; align-items: center; gap: 3px; flex: 0 0 auto; }
+.file-tree__toolbar input[type='checkbox'] { margin: 0; }
+.file-tree__sort { margin-left: auto; }
+.file-tree__sort select { max-width: 72px; font-size: 12px; }
+.file-tree__dir { flex: 0 0 auto; min-width: 22px; padding: 0 4px; background: none; border: 1px solid var(--kp-border, #ddd); border-radius: 3px; cursor: pointer; font-size: 12px; line-height: 16px; }
+.file-tree__dir:hover { background: var(--kp-hover, #f2f2f2); }
 .file-tree__error { margin: 0; padding: 4px 8px; color: #b00020; }
-.file-tree__scroll { flex: 1; overflow: auto; position: relative; }
+/* 树容器：flex 子项必须 min-height:0 才会真正产生滚动条（否则高度被内容撑开 / 溢出被裁掉） */
+.file-tree__scroll { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; }
 .file-tree__spacer { position: relative; width: 100%; }
-.file-tree__row { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 4px; padding: 0 8px; cursor: default; white-space: nowrap; }
+.file-tree__row { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 4px; padding: 0 6px; cursor: default; white-space: nowrap; }
 .file-tree__row:hover { background: var(--kp-hover, #f2f2f2); }
 .file-tree__indent { flex: none; }
 .file-tree__name { overflow: hidden; text-overflow: ellipsis; }
