@@ -15,6 +15,7 @@ const hoisted = vi.hoisted(() => {
     find: vi.fn((): { from: number; to: number; text: string }[] => []),
     // 阅读态跳转走 `editor.reveal` → consumeReveal 会问适配器要 `revealLine`（缺了会 unhandled rejection）
     revealLine: vi.fn(() => true),
+    focusEditor: vi.fn(),
     replace: vi.fn(() => ({ replaced: 0 })),
     destroy: vi.fn(),
   };
@@ -36,7 +37,7 @@ vi.mock('@core/ipc/commands', () => ({
 vi.mock('@core/ipc/linkCommands', () => ({ linkOutgoing: vi.fn(async () => []) }));
 
 import { noteRead, noteWrite } from '@core/ipc/commands';
-import { EditorView, useEditorStore } from '@features/editor';
+import { EditorView, MarkdownView, useEditorStore } from '@features/editor';
 
 const mRead = vi.mocked(noteRead);
 const mWrite = vi.mocked(noteWrite);
@@ -227,6 +228,8 @@ describe('EditorView', () => {
     expect(wrapper.find('[data-testid="find-panel"]').exists()).toBe(true);
     await wrapper.find('[data-testid="find-query"]').setValue('foo');
     expect(wrapper.find('[data-testid="find-count"]').text()).toContain('2');
+    // 定位请求必须带 focus:false：焦点留在查找框，连续跳转/继续输入才不会被编辑器抢走（10.1/10.2）
+    expect(hoisted.adapter.revealLine).toHaveBeenLastCalledWith(1, { start: 0, end: 3 }, { focus: false });
     await wrapper.find('[data-testid="find-replacement"]').setValue('bar');
     hoisted.adapter.find.mockReturnValueOnce([
       { from: 0, to: 3, text: 'foo' },
@@ -376,3 +379,51 @@ describe('EditorView：阅读态的点击路由（FR-EDITOR-25/27、FR-TAG-05）
     expect(wrapper.find('[data-testid="find-replacement"]').exists()).toBe(true);
     wrapper.unmount();
   });
+
+describe('EditorView：查找面板焦点的归还（10.3）与阅读态附件解析（E1）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mRead.mockResolvedValue(note('a.md', '原始'));
+    mWrite.mockResolvedValue({ relPath: 'a.md', newMtime: 200 });
+  });
+
+  it('Esc 关闭查找面板后把焦点交还编辑器（不是聚焦不可聚焦的宿主 div）', async () => {
+    const { wrapper, store } = await mountView();
+    await store.openNote('a.md');
+    await flushPromises();
+    await wrapper.find('[data-testid="find-toggle"]').trigger('click');
+    const input = wrapper.get('[data-testid="find-query"]');
+    await input.setValue('foo');
+    await input.trigger('keydown', { key: 'Escape' });
+    await flushPromises();
+    expect(wrapper.find('[data-testid="find-panel"]').exists()).toBe(false);
+    expect(hoisted.adapter.focusEditor).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it('关闭按钮同样把焦点交还编辑器', async () => {
+    const { wrapper, store } = await mountView();
+    await store.openNote('a.md');
+    await flushPromises();
+    await wrapper.find('[data-testid="find-toggle"]').trigger('click');
+    await wrapper.find('[data-testid="find-close"]').trigger('click');
+    await flushPromises();
+    expect(hoisted.adapter.focusEditor).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it('resolveAsset 透传给 MarkdownView（本地图片由布局层注入解析器，FR-EDITOR-43）', async () => {
+    const resolveAsset = vi.fn((src: string): string | null => (src ? `asset://${src}` : null));
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const wrapper = mount(EditorView, { props: { resolveAsset }, global: { plugins: [pinia] } });
+    await flushPromises();
+    mRead.mockResolvedValue(note('a.md', '![图](x.png)'));
+    await useEditorStore().openNote('a.md');
+    await flushPromises();
+    const markdown = wrapper.findComponent(MarkdownView);
+    expect(markdown.exists()).toBe(true);
+    expect(markdown.props('resolveAsset')).toBe(resolveAsset);
+    wrapper.unmount();
+  });
+});

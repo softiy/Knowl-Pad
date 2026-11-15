@@ -32,6 +32,15 @@ export interface CursorPosition {
   column: number;
 }
 
+/** `revealLine` 的附加语义。 */
+export interface RevealOptions {
+  /**
+   * 定位后是否把焦点移进编辑区（默认 true：搜索/反链跳转后用户要能直接继续编辑）。
+   * 查找替换面板必须传 false —— 否则每跳一处焦点就离开查找框，连续跳转/继续输入都会断（10.1/10.2）。
+   */
+  focus?: boolean;
+}
+
 export type EditorEvent = 'change' | 'cursor' | 'save';
 
 export interface KpEditorAdapter {
@@ -52,7 +61,13 @@ export interface KpEditorAdapter {
    * 用于"跳到命中处"（FR-SEARCH-07）；不给或区间非法时退回**整行选中**（反链的既有行为）。
    * 返回是否真的定位成功：引擎能力不足时返回 false，由调用方**如实降级**，绝不假装定位过。
    */
-  revealLine(line: number, range?: { start: number; end: number }): boolean;
+  revealLine(line: number, range?: { start: number; end: number }, options?: RevealOptions): boolean;
+  /**
+   * 把焦点交还编辑区（查找/替换面板关闭时用）。
+   *
+   * 不能靠"聚焦外层宿主 div"来还原焦点：那个 div 不可聚焦，`focus()` 是空操作（10.3 的根因）。
+   */
+  focusEditor(): void;
   /** 释放全部资源（DOM 监听器、定时器、编辑器实例）——ED-01。 */
   destroy(): void;
 }

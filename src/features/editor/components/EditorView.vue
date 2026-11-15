@@ -24,6 +24,9 @@ const props = defineProps<{
   openLink?: ((target: string, event?: MouseEvent) => void) | undefined;
   openTag?: ((tag: string) => void) | undefined;
   createNote?: ((name: string) => void) | undefined;
+  /** 阅读态本地附件解析（E1/FR-EDITOR-43）：布局层注入（vault root + 笔记目录 → asset:// URL）。
+   *  缺省时不解析：本地图片保留原 src，远程图片依旧只出占位符（SEC-08）。 */
+  resolveAsset?: ((src: string) => string | null) | undefined;
 }>();
 
 const store = useEditorStore();
@@ -39,7 +42,8 @@ const modes: { value: EditorMode; label: string }[] = [
 ];
 const autosaveOptions = [500, AUTOSAVE_DEFAULT_MS, 2000, 3000, 5000];
 
-const { findOpen, findMode, findPanel, openFind, toggleFind, closeFind } = useFindPanel(hostRef);
+// 关闭面板后要把焦点交给**内核可编辑元素**，因此传入适配器访问器（hostRef 是不可聚焦的外层 div）。
+const { findOpen, findMode, findPanel, openFind, toggleFind, closeFind } = useFindPanel(() => adapter);
 void findPanel; // 模板 ref 由组件绑定，脚本侧仅需保留引用（类型检查用）
 consumeReveal({ current: () => store.pendingReveal, active: () => store.activeRelPath, clear: () => store.clearReveal(), adapter: () => adapter });
 
@@ -136,7 +140,6 @@ const routing = createClickRouting({
     <FindReplacePanel
       v-if="findOpen" ref="findPanel"
       :adapter="adapter"
-      :content="active?.content ?? ''"
       :mode="findMode"
       @close="closeFind"
     />
@@ -165,6 +168,7 @@ const routing = createClickRouting({
           :source="active.content ?? ''"
           :rel-path="active.relPath"
           :cache-scope="active.relPath"
+          :resolve-asset="resolveAsset"
           @link="routing.onLink"
           @tag="routing.onTag"
         />

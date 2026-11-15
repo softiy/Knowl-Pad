@@ -48,14 +48,30 @@ export interface ShortcutBinding {
   handler: (event: KeyboardEvent) => void;
 }
 
+export interface BindShortcutOptions {
+  /** 默认 true：避免 WebView 的浏览器默认行为（如 Ctrl+S 保存网页）。 */
+  preventDefault?: boolean;
+  /**
+   * 默认 true：匹配后**停止传播**，避免同一次按键再被子元素上的监听器处理。
+   *
+   * 这一条是"两个搜索面板"的修复（10.1/10.4）：md-editor-v3 的内核是 CodeMirror 6，
+   * 它自己在编辑区 DOM 上监听 keydown（`@codemirror/search` 的 Mod+F/H 会弹出内核搜索面板）。
+   * 只在 window 冒泡阶段 preventDefault 拦不住它 —— 改为**捕获阶段**监听并在匹配时 stopPropagation，
+   * 事件根本到不了 CodeMirror 的监听器。未匹配的按键不受影响（编辑区照常输入）。
+   */
+  stopPropagation?: boolean;
+}
+
 /**
  * 绑定一组快捷键，返回**注销函数**（ED-01：调用方必须在卸载时调用）。
- * 默认 `preventDefault`，避免 WebView 的浏览器默认行为（如 Ctrl+S 保存网页）。
+ *
+ * 监听固定在 **capture 阶段**：全局快捷键要抢在内核/组件自己的 keydown 之前处理，
+ * 否则 CodeMirror 这类深嵌组件会先把按键吃掉（见 `stopPropagation` 的说明）。
  */
 export function bindShortcuts(
   target: Window | HTMLElement,
   bindings: ShortcutBinding[],
-  options: { preventDefault?: boolean } = {},
+  options: BindShortcutOptions = {},
 ): () => void {
   const parsed = bindings.map((b) => ({ spec: parseShortcut(b.spec), handler: b.handler }));
   const listener = (event: Event): void => {
@@ -63,11 +79,12 @@ export function bindShortcuts(
     for (const binding of parsed) {
       if (matchesShortcut(keyEvent, binding.spec)) {
         if (options.preventDefault !== false) keyEvent.preventDefault();
+        if (options.stopPropagation !== false) keyEvent.stopPropagation();
         binding.handler(keyEvent);
         return;
       }
     }
   };
-  target.addEventListener('keydown', listener);
-  return () => target.removeEventListener('keydown', listener);
+  target.addEventListener('keydown', listener, { capture: true });
+  return () => target.removeEventListener('keydown', listener, { capture: true });
 }
