@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "",
-    "beforeBuildCommand": ""
+    "beforeBuildCommand": "pnpm build"
   },
   "app": {
     "withGlobalTauri": false,
@@ -16,7 +16,7 @@
         "default-src": "'self'",
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' asset: https://asset.localhost data: blob:",
+        "img-src": "'self' asset: http://asset.localhost https://asset.localhost data: blob:",
         "font-src": "'self' data:",
         "connect-src": "'self' ipc: http://ipc.localhost https://gitee.com",
         "object-src": "'none'",
@@ -25,7 +25,11 @@
         "frame-ancestors": "'none'"
       },
       "dangerousDisableAssetCspModification": false,
-      "freezePrototype": false
+      "freezePrototype": false,
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
     },
     "windows": [
       {
@@ -33,8 +37,8 @@
         "title": "Knowl Pad",
         "width": 1200,
         "height": 800,
-        "minWidth": 900,
-        "minHeight": 600
+        "minWidth": 640,
+        "minHeight": 480
       }
     ]
   },
