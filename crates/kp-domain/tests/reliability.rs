@@ -4,6 +4,27 @@ use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+/// 读取目标；对 Windows 上原子替换的**瞬时缺失**做有界重试。
+///
+/// 为什么不是放宽断言：Windows 的 MoveFileEx(REPLACE_EXISTING) 是实现层面的
+/// 「删除旧目标 → 改名新目标」，并发按路径打开可能瞬时得到 ERROR_FILE_NOT_FOUND
+/// （fs_atomic 刻意不对被占用的目标做强占，见其模块注释）。本用例要钉的是
+/// **内容原子性**（读到的永远是完整的 A 或 B），不是"打开必然成功"；因此只容忍
+/// 瞬时缺失，若目标持续不存在（>100ms）仍判失败，真实缺陷不会被掩盖。
+fn read_with_transient_retry(target: &std::path::Path) -> Vec<u8> {
+    const RETRIES: usize = 100;
+    for attempt in 0..RETRIES {
+        match fs::read(target) {
+            Ok(data) => return data,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound && attempt + 1 < RETRIES => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(err) => panic!("读取并发目标失败：{err}"),
+        }
+    }
+    panic!("目标文件持续不存在（超过 100ms），疑似真实缺陷而非 Windows 替换瞬时窗口");
+}
+
 #[test]
 fn concurrent_readers_never_see_partial_content() {
     let dir = tempfile::tempdir().unwrap();
@@ -43,7 +64,7 @@ fn concurrent_readers_never_see_partial_content() {
     };
 
     for _ in 0..500 {
-        let data = fs::read(&target).unwrap();
+        let data = read_with_transient_retry(&target);
         assert!(
             data == a || data == b,
             "读到半截内容（{} 字节）",
