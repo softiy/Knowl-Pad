@@ -1,20 +1,29 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { asKpError } from '@core/ipc/errors';
+import { fileTree, vaultStateSet, type FileNode } from '@core/ipc/commands';
+import { defaultDirectionOf, sortNodes } from '../logic';
 import {
-  fileTree,
-  preferenceGet,
-  vaultStateGet,
-  vaultStateSet,
-  type FileNode,
-} from '@core/ipc/commands';
-import { sortNodes } from '../logic';
-import {
-  STATE_KEY_SHOW_HIDDEN,
   STATE_KEY_TREE_EXPANDED,
+  type LocalNodeInit,
+  type SortDirection,
   type TreeRow,
   type TreeSortMode,
 } from '../types';
+import { flattenRows } from './treeCache';
+import {
+  ensureTreeVisible,
+  refreshKeepingExpanded,
+  restoreTreeState,
+  setIncludeHiddenAndReload,
+} from './treeIO';
+import {
+  applyNodeMtime,
+  insertLocalNode,
+  moveTreeNode,
+  refreshTreePath,
+  removeTreeNode,
+} from './treeUpdates';
 
 const ROOT = '';
 
@@ -24,7 +33,11 @@ const ROOT = '';
  * 设计要点：
  * - 只缓存**已加载层级**（`cache` 非响应式），展开时才请求子节点 → 10 万节点不会一次性进内存；
  * - `rows` 是扁平化可视行数组，虚拟滚动直接消费；
- * - 展开状态持久化到 `vault_state`（AC-FILE-08），隐藏文件开关持久化到全局偏好（FR-FILE-05）。
+ * - 展开状态持久化到 `vault_state`（AC-FILE-08），隐藏文件开关持久化到本 Vault 的 `vault_state`（FR-FILE-05）；
+ * - **装载代次**（`generation`）：切库/reset 后，上一个库还在飞的请求返回时必须作废，
+ *   否则会把旧库的目录写进新库的缓存（冒烟里的「串文件树 / 文件不存在：归档 不是目录」）；
+ * - 持久化 / 整树装载在 `treeIO.ts`、节点级增删改在 `treeUpdates.ts`、缓存原语在 `treeCache.ts`
+ *   （CODE-11 的文件长度纪律）；store 只留状态与编排。
  */
 export const useFileTreeStore = defineStore('fileTree', () => {
   const rows = ref<TreeRow[]>([]);
@@ -36,72 +49,90 @@ export const useFileTreeStore = defineStore('fileTree', () => {
   const cache = new Map<string, FileNode[]>();
   /** FR-FILE-02：排序模式（默认名称；纯视图状态，不持久化 —— 见 DEBT-19 的处置说明） */
   const sortMode = ref<TreeSortMode>('name');
+  /** 排序方向（M5 冒烟 5.3）：默认方向随模式而定，用户可再翻转（见 logic.ts::defaultDirectionOf） */
+  const sortDirection = ref<SortDirection>(defaultDirectionOf('name'));
+  let generation = 0;
 
-  /** 依据 `expanded` 与缓存把树压平成一维可视行。 */
-  function flatten(): TreeRow[] {
-    const out: TreeRow[] = [];
-    const walk = (parent: string, depth: number): void => {
-      for (const node of cache.get(parent) ?? []) {
-        const isExpanded = node.isDir && expanded.value.has(node.relPath);
-        out.push({
-          relPath: node.relPath,
-          name: node.name,
-          isDir: node.isDir,
-          kind: node.kind,
-          depth,
-          hasChildren: node.hasChildren ?? false,
-          expanded: isExpanded,
-        });
-        if (isExpanded) {
-          walk(node.relPath, depth + 1);
-        }
-      }
-    };
-    walk(ROOT, 0);
-    return out;
-  }
-
-  async function loadChildren(relPath: string): Promise<void> {
-    const nodes = await fileTree(relPath === ROOT ? undefined : relPath, includeHidden.value);
-    cache.set(relPath, sortNodes(nodes, sortMode.value));
-  }
+  const isStale = (gen: number): boolean => gen !== generation;
+  const flatten = (): TreeRow[] => flattenRows(cache, expanded.value);
+  const sorted = (nodes: readonly FileNode[]): FileNode[] =>
+    sortNodes(nodes, sortMode.value, sortDirection.value);
 
   /**
-   * FR-FILE-02：切换排序 —— **纯前端重排，不重新请求**（缓存里的每层按新模式再排一次即可）。
-   * 不持久化：排序是"当前视图怎么看"，PRD §4.11.3 的设置项清单里没有它；要持久化应作为设置项另行登记。
+   * 三个拆分模块共用的状态视图：它们**不 import store**（避免循环依赖），
+   * 只通过这个对象读写状态与装载原语（各模块自身声明所必需的子集，结构兼容）。
    */
+  const ports = {
+    cache,
+    expanded,
+    includeHidden,
+    rows,
+    loading,
+    error,
+    sortMode,
+    sortDirection,
+    isStale,
+    sort: sorted,
+    flatten,
+    generation: () => generation,
+    persistExpanded: () => persistExpanded(),
+    loadChildren: (relPath: string, gen: number) => loadChildren(relPath, gen),
+    expandPath: (relPath: string, gen?: number) => expandPath(relPath, gen),
+  };
+
+  /** 拉取一层子节点并写入缓存；代次变了（切库/reset）就丢弃结果。 */
+  async function loadChildren(relPath: string, gen: number): Promise<void> {
+    const nodes = await fileTree(relPath === ROOT ? undefined : relPath, includeHidden.value);
+    if (isStale(gen)) return;
+    cache.set(relPath, sorted(nodes));
+  }
+
+  /** 按当前模式与方向重排所有已加载层（纯前端重排，不重新请求）。 */
+  function resortAll(): void {
+    for (const [parent, nodes] of [...cache.entries()]) cache.set(parent, sorted(nodes));
+    rows.value = flatten();
+  }
+
+  /** FR-FILE-02：切换排序 —— **纯前端重排，不重新请求**；方向回到该模式的默认值。 */
   function setSortMode(mode: TreeSortMode): void {
     if (sortMode.value === mode) return;
     sortMode.value = mode;
-    for (const [parent, nodes] of [...cache.entries()]) {
-      cache.set(parent, sortNodes(nodes, mode));
-    }
-    rows.value = flatten();
+    sortDirection.value = defaultDirectionOf(mode);
+    resortAll();
+  }
+
+  /** M5 冒烟 5.3：翻转当前模式的方向（文件夹永远在前的分组不翻转）。 */
+  function toggleSortDirection(): void {
+    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc';
+    resortAll();
   }
 
   /** 载入根层并重建可视行。 */
   async function loadRoot(): Promise<void> {
+    const gen = ++generation;
     loading.value = true;
     error.value = null;
     try {
       cache.clear();
-      await loadChildren(ROOT);
+      await loadChildren(ROOT, gen);
+      if (isStale(gen)) return;
       rows.value = flatten();
     } catch (err) {
-      error.value = asKpError(err).message;
+      if (!isStale(gen)) error.value = asKpError(err).message;
     } finally {
-      loading.value = false;
+      if (!isStale(gen)) loading.value = false;
     }
   }
 
   /** 逐层展开某路径（其祖先必须已加载）。 */
-  async function expandPath(relPath: string): Promise<void> {
-    const segments = relPath.split('/');
+  async function expandPath(relPath: string, gen = generation): Promise<void> {
     let parent = ROOT;
-    for (const segment of segments) {
+    for (const segment of relPath.split('/')) {
+      if (!segment) continue;
       const current = parent === ROOT ? segment : `${parent}/${segment}`;
       if (!cache.has(current)) {
-        await loadChildren(current);
+        await loadChildren(current, gen);
+        if (isStale(gen)) return;
       }
       expanded.value = new Set([...expanded.value, current]);
       parent = current;
@@ -129,92 +160,79 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     }
     next.add(relPath);
     expanded.value = next;
+    const gen = generation;
     try {
       if (!cache.has(relPath)) {
-        await loadChildren(relPath);
+        await loadChildren(relPath, gen);
+        if (isStale(gen)) return;
       }
       rows.value = flatten();
     } catch (err) {
       error.value = asKpError(err).message;
-      expanded.value = new Set([...expanded.value].filter((p) => p !== relPath));
+      expanded.value = new Set([...expanded.value].filter((path) => path !== relPath));
     }
     await persistExpanded();
   }
 
-  /** 重新加载（文件操作后刷新树）：清缓存 → 重载根 → 恢复原有展开层级。 */
+  /** 重新加载（手动刷新 / 索引追上后用）：清缓存 → 重载根 → 恢复原有展开层级。 */
   async function refresh(): Promise<void> {
-    const keep = [...expanded.value];
-    cache.clear();
-    error.value = null;
-    try {
-      await loadChildren(ROOT);
-      for (const path of keep) {
-        await expandPath(path);
-      }
-      rows.value = flatten();
-    } catch (err) {
-      error.value = asKpError(err).message;
-    }
+    await refreshKeepingExpanded(ports, ++generation);
   }
 
-  /**
-   * 切换「显示隐藏文件」（FR-FILE-05）：清缓存 → 重载 → 尽力恢复原有展开层级。
-   *
-   * 落盘位置是**每 Vault 的 `vault_state`**（PRD §4.11.3 把这一项定为 Vault 设置；FR-SET-04）：
-   * 写全局 `preference` 会让切换 Vault 时串设置 —— 那就是技术方案 §13.2 的 **DEBT-15**。
-   */
+  /** **定向重拉**某文件所在的一层（外部新建/变更后由 kp://fs/* 事件驱动）。 */
+  async function refreshPath(relPath: string): Promise<void> {
+    await refreshTreePath(ports, relPath);
+  }
+
+  /** 切换「显示隐藏文件」（FR-FILE-05）：口径与落盘位置见 treeIO.ts。 */
   async function setIncludeHidden(value: boolean): Promise<void> {
-    includeHidden.value = value;
-    const keep = [...expanded.value];
-    cache.clear();
-    try {
-      await loadChildren(ROOT);
-      for (const path of keep) {
-        await expandPath(path);
-      }
-      rows.value = flatten();
-      await vaultStateSet({ [STATE_KEY_SHOW_HIDDEN]: value });
-    } catch (err) {
-      error.value = asKpError(err).message;
-    }
+    await setIncludeHiddenAndReload(ports, ++generation, value);
   }
 
   /** 恢复上次的展开状态（AC-FILE-08）与隐藏文件偏好（FR-FILE-05）。 */
   async function restoreState(): Promise<void> {
-    loading.value = true;
+    await restoreTreeState(ports, ++generation);
+  }
+
+  /**
+   * **切库重置**（layout 在 Vault 切换时调用，M5 冒烟「切库后串文件树」）：
+   * 清空展开状态、缓存、可视行与错误，隐藏文件开关回默认值。**不调用任何 IPC、不写 vault_state** ——
+   * 新库的状态由随后的 `restoreState()` 从它自己的 vault_state 读，先写会把两个库的状态混在一起。
+   */
+  function reset(): void {
+    generation += 1; // 让上一库还在飞的请求全部作废
+    cache.clear();
+    expanded.value = new Set();
+    rows.value = [];
     error.value = null;
-    try {
-      // 优先级：**本 Vault 的 vault_state** 是唯一权威（DEBT-15）。
-      const hidden = await vaultStateGet([STATE_KEY_SHOW_HIDDEN]);
-      const fromVault = hidden.values[STATE_KEY_SHOW_HIDDEN];
-      if (typeof fromVault === 'boolean') {
-        includeHidden.value = fromVault;
-      } else {
-        // 一次性兼容：旧版本把同一个值写在**全局 preference**里（那正是 DEBT-15 的缺陷）。
-        // 读到就**写回本 Vault**，此后只认 vault_state —— 既不让老用户的选择无声丢失，
-        // 也不再让这个值跟着别的 Vault 串。全局那一行不删（它属于用户数据，删它没有收益）。
-        const legacy = await preferenceGet([STATE_KEY_SHOW_HIDDEN]);
-        const old = legacy.values[STATE_KEY_SHOW_HIDDEN];
-        if (typeof old === 'boolean') {
-          includeHidden.value = old;
-          await vaultStateSet({ [STATE_KEY_SHOW_HIDDEN]: old });
-        }
-      }
-      cache.clear();
-      await loadChildren(ROOT);
-      const stored = await vaultStateGet([STATE_KEY_TREE_EXPANDED]);
-      const list = stored.values[STATE_KEY_TREE_EXPANDED];
-      if (Array.isArray(list)) {
-        for (const path of list.filter((p): p is string => typeof p === 'string')) {
-          await expandPath(path);
-        }
-      }
-      rows.value = flatten();
-    } catch (err) {
-      error.value = asKpError(err).message;
-    } finally {
-      loading.value = false;
-    }
+    loading.value = false;
+    includeHidden.value = false;
+    sortDirection.value = defaultDirectionOf(sortMode.value);
+  }
+
+  /**
+   * 新建笔记/文件夹成功后**本地插入**节点（M5 冒烟 5.6「新建笔记未即时在文件树显示」）：
+   * 索引由文件监听异步更新，操作后立刻重拉只会看到旧索引；因此先按命令结果改树，
+   * 立即反馈给用户，等 refresh / 重开 Vault 时再由索引校正。
+   */
+  async function nodeAdded(relPath: string, init: LocalNodeInit = {}): Promise<void> {
+    await ensureTreeVisible(ports, relPath);
+    insertLocalNode(ports, relPath, init);
+  }
+
+  /** 删除成功后**本地移除**节点及其子树（同上：不等索引）。 */
+  function pathRemoved(relPath: string): void {
+    removeTreeNode(ports, relPath);
+  }
+
+  /** 重命名/移动成功后**本地改名**节点及其子树（同上：不等索引）。 */
+  function pathMoved(from: string, to: string): void {
+    moveTreeNode(ports, from, to);
+  }
+
+  /** **外部 mtime 变更**（kp://fs/modified）：更新缓存值并重排，零 IPC。 */
+  function applyMtime(relPath: string, mtimeMs: number): void {
+    applyNodeMtime(ports, relPath, mtimeMs);
   }
 
   return {
@@ -222,7 +240,9 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     expanded,
     includeHidden,
     sortMode,
+    sortDirection,
     setSortMode,
+    toggleSortDirection,
     loading,
     error,
     loadRoot,
@@ -231,5 +251,11 @@ export const useFileTreeStore = defineStore('fileTree', () => {
     restoreState,
     refresh,
     persistExpanded,
+    reset,
+    refreshPath,
+    applyMtime,
+    nodeAdded,
+    pathRemoved,
+    pathMoved,
   };
 });

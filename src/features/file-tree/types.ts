@@ -27,12 +27,27 @@ export type MenuAction =
 /** FR-FILE-02 的排序模式：名称（默认）/ 修改时间 / 类型。 */
 export type TreeSortMode = 'name' | 'mtime' | 'type';
 
+/**
+ * 排序方向（M5 冒烟 5.3）：下拉只选「按什么排」，方向由本类型显式表达 ——
+ * 三种模式各有默认方向（见 logic.ts::defaultDirectionOf），用户可再翻转。
+ */
+export type SortDirection = 'asc' | 'desc';
+
 /** 排序下拉的选项（标签即界面文案；顺序即下拉顺序）。 */
 export const SORT_OPTIONS: readonly { value: TreeSortMode; label: string }[] = [
   { value: 'name', label: '名称' },
   { value: 'mtime', label: '修改时间' },
   { value: 'type', label: '类型' },
 ];
+
+/**
+ * 本地新增节点的最小信息：写操作成功后**立刻**插进树（索引由监听异步更新，等它会让
+ * 「新建的笔记不在树里」，M5 冒烟 5.6 的实际故障）。其余字段（size/kind 细分）交给下次完整 refresh。
+ */
+export interface LocalNodeInit {
+  isDir?: boolean;
+  mtimeMs?: number;
+}
 
 /** 每 Vault 的界面状态键（PRD §3.3 的 `vault_state` 键名约定）。 */
 export const STATE_KEY_TREE_EXPANDED = 'tree.expanded';
