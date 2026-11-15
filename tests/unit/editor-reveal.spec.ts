@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 
 /**
- * 反链点击定位（FR-LINK-13 后半）：store 记录待定位行，consumeReveal 消费一次。
+ * 编辑器行定位（FR-LINK-13）：
+ * - store 记下"待定位行"，consumeReveal 消费一次；
+ * - 定位算法是**纯函数**（行号/列区间 → 文档偏移），在 CodeMirror 视图上执行原生选区事务。
+ *
+ * 旧实现走 `textarea.setSelectionRange`，而 md-editor-v3 6.x 的内核是 CodeMirror 6、没有 textarea
+ * ⇒ 永远定位失败，只计数不选中（10.1/10.2/10.4）。这里用结构化替身锁住新口径。
  */
 vi.mock('@core/ipc/commands', () => ({
   noteRead: vi.fn(async () => ({ relPath: 'a.md', content: '# 甲\n第一行\n第二行\n', mtimeMs: 1, sizeBytes: 10 })),
@@ -11,7 +16,48 @@ vi.mock('@core/ipc/commands', () => ({
 
 import { useEditorStore } from '@features/editor';
 import { consumeReveal } from '@features/editor/adapter/consumeReveal';
-import { revealLineIn } from '@features/editor/adapter/revealLine';
+import { editorViewOf, revealInView, type EditorViewLike } from '@features/editor/adapter/editorView';
+import { revealOffsets } from '@features/editor/adapter/revealLine';
+
+/** 与 CodeMirror `Text` 同口径的最小文档替身。 */
+function docOf(text: string) {
+  const rows = text.split('\n');
+  const starts: number[] = [];
+  let offset = 0;
+  for (const row of rows) {
+    starts.push(offset);
+    offset += row.length + 1;
+  }
+  return {
+    lines: rows.length,
+    line(number: number): { from: number; to: number } {
+      const from = starts[number - 1] ?? 0;
+      return { from, to: from + (rows[number - 1] ?? '').length };
+    },
+    toString: (): string => text,
+  };
+}
+
+function viewOf(text: string): EditorViewLike & { selections: { anchor: number; head: number }[]; scrolls: number; focusCalls: number } {
+  const fake = {
+    selections: [] as { anchor: number; head: number }[],
+    scrolls: 0,
+    focusCalls: 0,
+    state: { doc: docOf(text) },
+    dispatch(spec: {
+      selection?: { anchor: number; head: number } | undefined;
+      scrollIntoView?: boolean | undefined;
+      changes?: readonly { from: number; to: number; insert: string }[] | undefined;
+    }): void {
+      if (spec.selection) fake.selections.push(spec.selection);
+      if (spec.scrollIntoView === true) fake.scrolls += 1;
+    },
+    focus(): void {
+      fake.focusCalls += 1;
+    },
+  };
+  return fake;
+}
 
 describe('编辑器行定位（FR-LINK-13）', () => {
   beforeEach(() => setActivePinia(createPinia()));
@@ -31,8 +77,15 @@ describe('编辑器行定位（FR-LINK-13）', () => {
     const stop = consumeReveal({
       current: () => req,
       active: () => 'a.md',
-      clear: () => { req = null; },
-      adapter: () => ({ revealLine: (line: number) => { seen.push(line); return true; } }),
+      clear: () => {
+        req = null;
+      },
+      adapter: () => ({
+        revealLine: (line: number) => {
+          seen.push(line);
+          return true;
+        },
+      }),
     });
     expect(seen).toEqual([5]);
     expect(req).toBeNull();
@@ -46,7 +99,9 @@ describe('编辑器行定位（FR-LINK-13）', () => {
       active: () => 'a.md',
       clear: () => {},
       adapter: () => ({ revealLine: () => false }),
-      onDegrade: () => { degraded += 1; },
+      onDegrade: () => {
+        degraded += 1;
+      },
     });
     expect(degraded).toBe(1);
     stop();
@@ -58,7 +113,12 @@ describe('编辑器行定位（FR-LINK-13）', () => {
       current: () => ({ relPath: 'b.md', line: 1 }),
       active: () => 'a.md',
       clear: () => {},
-      adapter: () => ({ revealLine: () => { calls += 1; return true; } }),
+      adapter: () => ({
+        revealLine: () => {
+          calls += 1;
+          return true;
+        },
+      }),
     });
     expect(calls).toBe(0);
     stop();
@@ -69,7 +129,9 @@ describe('编辑器行定位（FR-LINK-13）', () => {
     const stop = consumeReveal({
       current: () => ({ relPath: 'a.md', line: 1 }),
       active: () => 'a.md',
-      clear: () => { cleared += 1; },
+      clear: () => {
+        cleared += 1;
+      },
       adapter: () => null,
     });
     expect(cleared).toBe(0);
@@ -98,63 +160,72 @@ describe('默认降级路径', () => {
     warn.mockRestore();
   });
 });
-describe('列级定位（FR-SEARCH-07 的"跳到命中处"）', () => {
-  /** 真 DOM：把 textarea 放进宿主，断言**实际**选中的偏移，而不是"应该能"。 */
-  function hostWith(value: string): { root: HTMLElement; ta: HTMLTextAreaElement } {
-    const root = document.createElement('div');
-    const ta = document.createElement('textarea');
-    ta.value = value;
-    root.appendChild(ta);
-    document.body.appendChild(root);
-    return { root, ta };
-  }
 
+describe('行号/列区间 → 文档偏移（FR-LINK-13 / FR-SEARCH-07 的纯计算）', () => {
   const VALUE = '第一行\nsecond line here\n第三行';
-  // 第 1 行 3 个字符 + \n ⇒ 第 2 行从下标 4 开始
+  // 第 1 行 3 个字符 + 换行符 ⇒ 第 2 行从下标 4 开始
   const LINE2 = 4;
 
-  it('给了列区间 ⇒ 精确选中命中处（不是整行）', () => {
-    const { root, ta } = hostWith(VALUE);
-    expect(revealLineIn(root, VALUE, 2, { start: 7, end: 11 })).toBe(true);
-    expect(ta.selectionStart).toBe(LINE2 + 7);
-    expect(ta.selectionEnd).toBe(LINE2 + 11);
-    expect(VALUE.slice(ta.selectionStart, ta.selectionEnd)).toBe('line');
+  it('整行：从行首到行尾（含空行则 from === to）', () => {
+    const doc = docOf(VALUE);
+    expect(revealOffsets(doc, 1)).toEqual({ from: 0, to: 3 });
+    expect(revealOffsets(doc, 2)).toEqual({ from: LINE2, to: LINE2 + 'second line here'.length });
+    const withEmpty = docOf('a\n\nb');
+    expect(revealOffsets(withEmpty, 2)).toEqual({ from: 2, to: 2 });
   });
 
-  it('不给区间 ⇒ 仍选中整行（反链 FR-LINK-13 的既有行为不变）', () => {
-    const { root, ta } = hostWith(VALUE);
-    expect(revealLineIn(root, VALUE, 2)).toBe(true);
-    expect(ta.selectionStart).toBe(LINE2);
-    expect(ta.selectionEnd).toBe(LINE2 + 'second line here'.length);
+  it('列区间：精确选中命中片段（不是整行）', () => {
+    expect(revealOffsets(docOf(VALUE), 2, { start: 7, end: 11 })).toEqual({ from: LINE2 + 7, to: LINE2 + 11 });
   });
 
   it('区间越界/为空/反向 ⇒ 一律退回整行（绝不选空）', () => {
-    const { root, ta } = hostWith(VALUE);
-    // 实测行为：两端都夹到行尾后区间为空 ⇒ 走"退回整行"分支（不是"选中行尾的空区间"）
-    revealLineIn(root, VALUE, 2, { start: 999, end: 9999 });
-    expect(ta.selectionStart).toBe(LINE2);
-    expect(ta.selectionEnd).toBe(LINE2 + 'second line here'.length);
-
-    revealLineIn(root, VALUE, 2, { start: 5, end: 5 });
-    expect(ta.selectionStart).toBe(LINE2); // 空区间 ⇒ 退回整行
-    expect(ta.selectionEnd).toBe(LINE2 + 'second line here'.length);
-
-    revealLineIn(root, VALUE, 2, { start: 9, end: 3 });
-    expect(ta.selectionStart).toBe(LINE2); // 反向 ⇒ 退回整行
-    expect(ta.selectionEnd).toBe(LINE2 + 'second line here'.length);
+    const doc = docOf(VALUE);
+    const whole = { from: LINE2, to: LINE2 + 'second line here'.length };
+    expect(revealOffsets(doc, 2, { start: 999, end: 9999 })).toEqual(whole);
+    expect(revealOffsets(doc, 2, { start: 5, end: 5 })).toEqual(whole);
+    expect(revealOffsets(doc, 2, { start: 9, end: 3 })).toEqual(whole);
+    // 负值夹到行首；两端夹完为空同样退回整行
+    expect(revealOffsets(doc, 2, { start: -5, end: -1 })).toEqual(whole);
   });
 
-  it('行号越界仍按既有规则收敛，且区间照样生效', () => {
-    const { root, ta } = hostWith(VALUE);
-    revealLineIn(root, VALUE, 99, { start: 0, end: 1 });
-    expect(VALUE.slice(ta.selectionStart, ta.selectionEnd)).toBe('第');
+  it('行号越界收敛到首/末行；空文档（lines<1）返回 null 如实降级', () => {
+    const doc = docOf(VALUE);
+    expect(revealOffsets(doc, 0)).toEqual({ from: 0, to: 3 });
+    expect(revealOffsets(doc, 99)).toEqual({ from: VALUE.indexOf('第三行'), to: VALUE.indexOf('第三行') + 3 });
+    expect(revealOffsets({ lines: 0, line: () => ({ from: 0, to: 0 }) }, 1)).toBeNull();
+  });
+});
+
+describe('CodeMirror 视图接面（narrow + 选区事务）', () => {
+  it('editorViewOf：形状不符（旧内核/未就绪）一律返回 null，而不是抛错', () => {
+    expect(editorViewOf(undefined)).toBeNull();
+    expect(editorViewOf(null)).toBeNull();
+    expect(editorViewOf({})).toBeNull();
+    expect(editorViewOf({ getEditorView: () => undefined })).toBeNull();
+    expect(editorViewOf({ getEditorView: () => ({ state: { doc: {} }, dispatch: () => {}, focus: () => {} }) })).toBeNull();
+    expect(editorViewOf({ getEditorView: () => ({ focus: () => {} }) })).toBeNull();
+    const ok = editorViewOf({ getEditorView: () => viewOf('a') });
+    expect(ok).not.toBeNull();
   });
 
-  it('没有 textarea 的宿主 ⇒ 返回 false（如实降级，不假装选中）', () => {
-    const root = document.createElement('div');
-    expect(revealLineIn(root, VALUE, 1, { start: 0, end: 1 })).toBe(false);
+  it('revealInView：一次事务同时设置选区并滚动到视口', () => {
+    const view = viewOf('第一行\nsecond line here\n第三行');
+    expect(revealInView(view, 2, { start: 7, end: 11 })).toBe(true);
+    expect(view.selections).toEqual([{ anchor: 4 + 7, head: 4 + 11 }]);
+    expect(view.scrolls).toBe(1);
   });
 
+  it('revealInView：文档不可用时返回 false（调用方据此降级，不假装定位过）', () => {
+    const empty: EditorViewLike = {
+      state: { doc: { lines: 0, line: () => ({ from: 0, to: 0 }), toString: () => '' } },
+      dispatch: () => {},
+      focus: () => {},
+    };
+    expect(revealInView(empty, 1)).toBe(false);
+  });
+});
+
+describe('列级定位（FR-SEARCH-07 的"跳到命中处"）', () => {
   it('consumeReveal 会把列区间一并交给适配器', () => {
     const seen: Array<{ line: number; range?: { start: number; end: number } }> = [];
     let req: { relPath: string; line: number; range?: { start: number; end: number } } | null = {

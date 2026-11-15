@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bindShortcuts, matchesShortcut, parseShortcut } from '@core/shortcut';
 
 function keyEvent(init: KeyboardEventInit): KeyboardEvent {
@@ -62,5 +62,67 @@ describe('bindShortcuts（ED-04）', () => {
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);
     dispose();
+  });
+});
+describe('捕获阶段拦截（修复 10.1/10.4 的重复搜索面板）', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('匹配的全局快捷键在 window 捕获阶段被拦下：CodeMirror 编辑区里的监听器收不到', () => {
+    const handler = vi.fn();
+    const dispose = bindShortcuts(window, [{ spec: 'Mod+F', handler }]);
+    const editorLike = document.createElement('div');
+    editorLike.innerHTML = '<div class="cm-content"></div>';
+    const contentDom = editorLike.querySelector('.cm-content');
+    if (!contentDom) throw new Error('替身未构造');
+    const codeMirrorKeymap = vi.fn();
+    contentDom.addEventListener('keydown', codeMirrorKeymap);
+    document.body.append(editorLike);
+    try {
+      const event = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+      contentDom.dispatchEvent(event);
+      expect(handler).toHaveBeenCalledTimes(1);
+      // @codemirror/search 的 Mod+F 面板绑定在内容 DOM 上：收不到事件 ⇒ 不会再出现"第二个搜索框"
+      expect(codeMirrorKeymap).not.toHaveBeenCalled();
+      expect(event.defaultPrevented).toBe(true);
+    } finally {
+      dispose();
+      editorLike.remove();
+    }
+  });
+
+  it('未匹配的按键照常冒泡（编辑区输入/其它组件的 keydown 不受影响）', () => {
+    const handler = vi.fn();
+    const dispose = bindShortcuts(window, [{ spec: 'Mod+F', handler }]);
+    const input = document.createElement('textarea');
+    const childKeydown = vi.fn();
+    input.addEventListener('keydown', childKeydown);
+    document.body.append(input);
+    try {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }));
+      expect(childKeydown).toHaveBeenCalledTimes(1);
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+      input.remove();
+    }
+  });
+
+  it('可显式关闭 stopPropagation（给确实需要冒泡的宿主留口子）', () => {
+    const handler = vi.fn();
+    const dispose = bindShortcuts(window, [{ spec: 'Mod+F', handler }], { stopPropagation: false });
+    const child = document.createElement('div');
+    const childKeydown = vi.fn();
+    child.addEventListener('keydown', childKeydown);
+    document.body.append(child);
+    try {
+      child.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }));
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(childKeydown).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+      child.remove();
+    }
   });
 });

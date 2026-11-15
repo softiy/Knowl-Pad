@@ -11,8 +11,7 @@ import { computed, nextTick, ref } from 'vue';
 import { asKpError } from '@core/ipc/errors';
 import type { InFileMatch, KpEditorAdapter } from '../adapter';
 
-const props = withDefaults(defineProps<{ adapter: KpEditorAdapter | null; content?: string; mode?: 'find' | 'replace' }>(), {
-  content: '',
+const props = withDefaults(defineProps<{ adapter: KpEditorAdapter | null; mode?: 'find' | 'replace' }>(), {
   mode: 'find',
 });
 const emit = defineEmits<{ close: [] }>();
@@ -40,8 +39,8 @@ function options(): { caseSensitive: boolean; wholeWord: boolean; regex: boolean
 }
 
 /** 偏移（UTF-16）→ 1-based 行号 + 行内列区间（revealLine 的口径）。 */
-function lineRangeOf(match: InFileMatch): { line: number; range: { start: number; end: number } } {
-  const before = props.content.slice(0, match.from);
+function lineRangeOf(match: InFileMatch, text: string): { line: number; range: { start: number; end: number } } {
+  const before = text.slice(0, match.from);
   const line = before.split('\n').length;
   const lineStart = before.lastIndexOf('\n') + 1;
   const start = match.from - lineStart;
@@ -50,13 +49,17 @@ function lineRangeOf(match: InFileMatch): { line: number; range: { start: number
 
 /** 定位并选中第 index 条（环绕；空列表返回 false）。 */
 function goto(index: number): boolean {
-  if (!props.adapter || matches.value.length === 0) return false;
+  const adapter = props.adapter;
+  if (!adapter || matches.value.length === 0) return false;
   const size = matches.value.length;
   const next = ((index % size) + size) % size;
   const target = matches.value[next];
   if (!target) return false;
-  const { line, range } = lineRangeOf(target);
-  props.adapter.revealLine(line, range);
+  // 行/列必须按**内核里的当前文本**换算：content prop 要等一次 store→prop 渲染，
+  // 替换后立刻 runFind 时它还是旧值，按旧值换算会把标记放到错误的行（10.4 的同源缺陷）。
+  const { line, range } = lineRangeOf(target, adapter.getValue());
+  // focus:false —— 焦点留在查找框，连续跳转/继续输入才不会被抢走（10.1/10.2）。
+  adapter.revealLine(line, range, { focus: false });
   current.value = next;
   error.value = null;
   return true;
