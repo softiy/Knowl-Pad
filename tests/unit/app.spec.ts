@@ -72,15 +72,19 @@ describe('KpSafeHtml', () => {
 });
 
 describe('App', () => {
-  it('带 pinia + router 挂载成功并渲染标题与路由视图', async () => {
+  it('挂载成功：只渲染路由视图，不再渲染 M0 脚手架', async () => {
     // RT-01 守卫需要已激活的 pinia（真实应用在 router 之前安装 pinia）
     const pinia = createPinia();
     setActivePinia(pinia);
     await router.push('/welcome');
     await router.isReady();
     const wrapper = mount(App, { global: { plugins: [pinia, router] } });
-    expect(wrapper.text()).toContain('Knowl Pad');
     await flushPromises();
+    // 欢迎页自己的 h1 仍在（V-WELCOME 的标题），但它来自路由视图而不是 App 脚手架
     expect(wrapper.find('[data-testid="vault-welcome"]').exists()).toBe(true);
+    expect(wrapper.find('.kp-welcome__title').text()).toBe('Knowl Pad');
+    // App 层已无脚手架：没有 <main> 包裹，也没有演示段落
+    expect(wrapper.find('main').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('Markdown 渲染');
   });
 });
