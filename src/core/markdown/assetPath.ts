@@ -75,7 +75,7 @@ function noteDirSegments(noteRelPath: string): string[] | null {
  *
  * @param vaultRoot 当前 Vault 的绝对根目录（来自 `vault_current`，如 `C:\\Users\\me\\vault`）
  * @param noteRelPath 当前笔记的 Vault 相对路径（如 `notes/a.md`）
- * @param src Markdown 里的图片源（如 `./img/a.png`、`../assets/中文 图.png`）
+ * @param src Markdown 里的图片源（如 `./img/a.png`、指向上一级目录的 `assets/中文 图.png`）
  * @returns 绝对路径字符串；无法/不允许解析时 `null`（渲染器保留原 src，且仍不加载远程资源）
  */
 export function resolveAssetSrc(vaultRoot: string, noteRelPath: string, src: string): string | null {
