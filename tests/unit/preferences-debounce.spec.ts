@@ -7,6 +7,7 @@ import { preferenceSet } from '@core/ipc/commands';
 import {
   PREFERENCE_FLUSH_MS,
   flushPreferences,
+  installPreferenceFlushOnUnload,
   pendingPreferenceCount,
   preferenceFlushError,
   schedulePreferenceSet,
@@ -87,3 +88,62 @@ describe(
     );
   },
 );
+/**
+ * S2 的另一半根因：偏好写入是 500ms 防抖批量提交，用户改完设置立刻关窗时定时器还没到点，
+ * 队列会随进程退出一起消失（重启后"回到默认值"）。窗口卸载/隐藏前必须 flush。
+ */
+describe('卸载/隐藏时提交（S2 回归）', () => {
+  let uninstall: (() => void) | null = null;
+
+  afterEach(() => {
+    uninstall?.();
+    uninstall = null;
+    // 恢复 jsdom 默认的 visibilityState getter（见下方 stubVisibility）
+    delete (document as { visibilityState?: DocumentVisibilityState }).visibilityState;
+    vi.restoreAllMocks();
+  });
+
+  /** jsdom 的 visibilityState 是只读 getter；用可配置实例属性模拟"页面被隐藏"。 */
+  function stubVisibility(state: DocumentVisibilityState): void {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+  }
+
+  it('beforeunload 时立即提交队列，不等 500ms 窗口', async () => {
+    uninstall = installPreferenceFlushOnUnload();
+    schedulePreferenceSet({ 'appearance.theme': 'dark' });
+    window.dispatchEvent(new Event('beforeunload'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mSet).toHaveBeenCalledTimes(1);
+    expect(mSet).toHaveBeenCalledWith({ 'appearance.theme': 'dark' });
+    expect(pendingPreferenceCount()).toBe(0);
+  });
+
+  it('页面可见时不提交；切到 hidden 时提交（最小化/切后台被回收的路径）', async () => {
+    uninstall = installPreferenceFlushOnUnload();
+    stubVisibility('visible');
+    schedulePreferenceSet({ 'appearance.editorFontSize': 18 });
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mSet).not.toHaveBeenCalled();
+    stubVisibility('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mSet).toHaveBeenCalledWith({ 'appearance.editorFontSize': 18 });
+    expect(pendingPreferenceCount()).toBe(0);
+  });
+
+  it('重复 install 只注册一份监听；注销后标记复位（可再次安装）', () => {
+    const spy = vi.spyOn(window, 'addEventListener');
+    const beforeUnloadRegistrations = (): number =>
+      spy.mock.calls.filter(([type]) => type === 'beforeunload').length;
+
+    uninstall = installPreferenceFlushOnUnload();
+    const second = installPreferenceFlushOnUnload();
+    expect(beforeUnloadRegistrations(), '重复 install 不得重复注册').toBe(1);
+    second();
+
+    uninstall();
+    uninstall = installPreferenceFlushOnUnload();
+    expect(beforeUnloadRegistrations(), '注销后允许再次安装').toBe(2);
+  });
+});

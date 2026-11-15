@@ -77,9 +77,39 @@ export function resolveTheme(mode: ThemeMode, prefersDark: boolean): ResolvedThe
 }
 
 export function systemPrefersDark(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia !== undefined
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     ? window.matchMedia('(prefers-color-scheme: dark)').matches
     : false;
+}
+
+/**
+ * 监听系统配色变化（FR-SET-20「跟随系统」）。
+ *
+ * 为什么必须有监听器：{@link applyTheme} 只在调用瞬间解析一次；应用运行期间用户在系统里切深浅色时，
+ * 没有监听就不会重算 `data-theme`，界面（CSS 变量与适配器的 MutationObserver）自然不跟随
+ * （真机缺陷 8.5 的根因：注释声称监听了，实际没有）。
+ *
+ * 回调参数是**系统当前是否深色**，不是应用主题模式；是否生效由调用方判断
+ * （settings store 只在 system 模式下注册，切到 light/dark 时注销 —— 否则系统变化会覆盖用户手选）。
+ *
+ * @returns 注销函数；环境不支持 matchMedia（SSR / 极旧 WebView）时返回空操作。
+ */
+export function watchSystemTheme(onChange: (prefersDark: boolean) => void): () => void {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => undefined;
+  const query = window.matchMedia('(prefers-color-scheme: dark)');
+  const handler = (event: MediaQueryListEvent): void => {
+    onChange(event.matches);
+  };
+  if (typeof query.addEventListener === 'function') {
+    query.addEventListener('change', handler);
+    return () => query.removeEventListener('change', handler);
+  }
+  // 旧 WebView（Safari < 14）只有已废弃的 addListener 对；宁可走兜底也不能"以为监听了"。
+  if (typeof query.addListener === 'function') {
+    query.addListener(handler);
+    return () => query.removeListener(handler);
+  }
+  return () => undefined;
 }
 
 /** 应用主题：写 `<html data-theme>`（变量随之切换，无需重载），返回解析后的模式。 */
