@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { clearRenderCache, renderMarkdown, renderStats } from '@core/markdown/renderer';
+import { resolveAssetSrc } from '@core/markdown/assetPath';
 
 describe('renderMarkdown（§7.2 管线）', () => {
   beforeEach(() => clearRenderCache());
@@ -40,6 +41,23 @@ describe('renderMarkdown（§7.2 管线）', () => {
     expect(html).toContain('src="asset://localhost/vault/attachments/a.png"');
     expect(html).toContain('referrerpolicy="no-referrer"');
     expect(html).toContain('loading="lazy"');
+  });
+
+  it('E1 回归：本地相对图片经 resolveAssetSrc 解析成 Vault 内绝对路径（真机曾全破图）', () => {
+    // 真实接线是 EditorView → MarkdownView → renderer 的 resolveAsset 回调；
+    // 这里用与生产一致的组合（assetPath + convertFileSrc 形态）钉住"相对路径被正确解析"。
+    const root = 'C:\\Users\\me\\vault';
+    const html = renderMarkdown('![图](../assets/%E5%9B%BE%201.png)', {
+      cacheScope: `${root}|notes/a.md`,
+      resolveAsset: (src) => {
+        const absPath = resolveAssetSrc(root, 'notes/a.md', src);
+        return absPath === null ? null : `http://asset.localhost/${encodeURIComponent(absPath)}`;
+      },
+    });
+    expect(html).toContain('<img');
+    expect(html).toContain('http://asset.localhost/');
+    expect(html).toContain(encodeURIComponent('图 1.png'));
+    expect(html).not.toContain('src="../assets/');
   });
 
   it('resolveAsset 返回 null 时保留原 src（仍然不加载远程）', () => {

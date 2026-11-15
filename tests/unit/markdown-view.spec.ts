@@ -10,8 +10,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const hoisted = vi.hoisted(() => ({ outgoing: vi.fn() }));
 vi.mock('@core/ipc/linkCommands', () => ({ linkOutgoing: hoisted.outgoing }));
 
+/** 远程图片占位符的"打开"必须走系统浏览器（E2 / SEC-08）：替身掉 IPC 封装，断言调用。 */
+const external = vi.hoisted(() => ({ openExternal: vi.fn() }));
+vi.mock('@core/ipc/externalCommands', () => ({ openExternal: external.openExternal }));
+
 import { MarkdownView } from '@features/editor';
 import type { OutgoingLink } from '@core/ipc/linkCommands';
+
+beforeEach(() => {
+  external.openExternal.mockReset().mockResolvedValue(undefined);
+});
 
 function link(over: Partial<OutgoingLink> & { targetRef: string; status: string }): OutgoingLink {
   return { linkKind: 'wikilink', line: 1, col: 1, dstRelPath: null, ...over };
@@ -52,18 +60,36 @@ describe('MarkdownView（阅读态）：渲染扩展语法', () => {
     expect(wrapper.find('[data-kp-tag]').attributes('data-kp-tag')).toBe('项目/alpha');
   });
 
-  it('点击远程图片占位符向外抛 remoteImage（容器级事件委托）', async () => {
+  it('点击远程图片占位符 ⇒ 交给系统浏览器打开（E2：应用内不加载，SEC-08）', async () => {
     const wrapper = mount(MarkdownView, { props: { source: '![x](https://evil.example/a.png)' } });
     const placeholder = wrapper.find('[data-kp-remote-src]');
     expect(placeholder.exists()).toBe(true);
     await placeholder.trigger('click');
+    // 打开动作直接走 core/ipc（组件内），emit 保留供上层/测试观测
+    expect(external.openExternal).toHaveBeenCalledWith('https://evil.example/a.png');
     expect(wrapper.emitted('remoteImage')?.[0]).toEqual(['https://evil.example/a.png']);
+    expect(wrapper.html()).not.toContain('<img');
+  });
+
+  it('openExternal 失败 ⇒ console.warn 可见降级，不产生未处理拒绝（R-15）', async () => {
+    external.openExternal.mockRejectedValueOnce({ code: 'E_PATH_ESCAPE_DENY', message: '不允许的链接' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const wrapper = mount(MarkdownView, { props: { source: '![x](https://evil.example/a.png)' } });
+      await wrapper.find('[data-kp-remote-src]').trigger('click');
+      await flushPromises();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('不允许的链接');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('回车键同样触发占位符动作（键盘可达）', async () => {
     const wrapper = mount(MarkdownView, { props: { source: '![x](https://evil.example/a.png)' } });
     await wrapper.find('[data-kp-remote-src]').trigger('keydown', { key: 'Enter' });
     expect(wrapper.emitted('remoteImage')).toHaveLength(1);
+    expect(external.openExternal).toHaveBeenCalledWith('https://evil.example/a.png');
   });
 
   it('resolveAsset 生效（本地附件）', () => {
@@ -103,14 +129,42 @@ describe('MarkdownView：链接状态与点击语义（FR-EDITOR-25 / FR-EDITOR-
     expect(wrapper.find('[data-kp-link]').classes()).not.toContain('kp-link--dangling');
   });
 
-  it('Ctrl+点击已裁决链接 ⇒ emit link（FR-EDITOR-25）', async () => {
-    hoisted.outgoing.mockResolvedValue([link({ targetRef: '有的', status: 'resolved', dstRelPath: '有的.md' })]);
+  it('Ctrl+点击已裁决链接 ⇒ emit link，且 target 换成真实 relPath（D2/10.7）', async () => {
+    hoisted.outgoing.mockResolvedValue([link({ targetRef: '有的', status: 'resolved', dstRelPath: 'notes/有的.md' })]);
     const wrapper = await mountWith('[[有的]]');
     await wrapper.find('[data-kp-link]').trigger('click', { ctrlKey: true });
     // 事件是**两段载荷**：目标/形态/悬空态 + 原始鼠标事件（要读修饰键）—— 第二条只用 toBeInstanceOf 粗验
     const [payload, mouseEvent] = wrapper.emitted('link')?.[0] ?? [];
-    expect(payload).toEqual({ target: '有的', kind: 'link', dangling: false });
+    // 显示目标是 '有的'，但上层（note_read/openNoteInNewTab）只认识 relPath：必须换掉载荷
+    expect(payload).toEqual({ target: 'notes/有的.md', kind: 'link', dangling: false });
     expect(mouseEvent).toBeInstanceOf(MouseEvent);
+  });
+
+  it('带别名的 wikilink：显示别名不变，点击仍用目标 relPath（[[B|别名]]）', async () => {
+    hoisted.outgoing.mockResolvedValue([link({ targetRef: 'B', status: 'resolved', dstRelPath: 'dir/B.md' })]);
+    const wrapper = await mountWith('见 [[B|蓝色别名]]');
+    const el = wrapper.find('[data-kp-link]');
+    expect(el.text()).toBe('蓝色别名');
+    expect(el.attributes('data-kp-link')).toBe('B');
+    await el.trigger('click', { ctrlKey: true });
+    expect(wrapper.emitted('link')?.[0]?.[0]).toEqual({ target: 'dir/B.md', kind: 'link', dangling: false });
+  });
+
+  it('Ctrl/Cmd+Alt+点击 ⇒ 同一 payload（新标签分支由布局层读事件判定），target 已是 relPath', async () => {
+    hoisted.outgoing.mockResolvedValue([link({ targetRef: '有的', status: 'resolved', dstRelPath: 'notes/有的.md' })]);
+    const wrapper = await mountWith('[[有的]]');
+    await wrapper.find('[data-kp-link]').trigger('click', { ctrlKey: true, altKey: true });
+    const [payload, mouseEvent] = wrapper.emitted('link')?.[0] ?? [];
+    expect(payload).toEqual({ target: 'notes/有的.md', kind: 'link', dangling: false });
+    expect(mouseEvent).toBeInstanceOf(MouseEvent);
+    expect((mouseEvent as MouseEvent).altKey).toBe(true);
+  });
+
+  it('Ctrl+点击**歧义**链接仍发原显示目标（不猜路径）', async () => {
+    hoisted.outgoing.mockResolvedValue([link({ targetRef: '重名', status: 'ambiguous', dstRelPath: 'a/重名.md' })]);
+    const wrapper = await mountWith('[[重名]]');
+    await wrapper.find('[data-kp-link]').trigger('click', { ctrlKey: true });
+    expect(wrapper.emitted('link')?.[0]?.[0]).toEqual({ target: '重名', kind: 'link', dangling: false });
   });
 
   it('普通点击已裁决链接 ⇒ **不动作**（避免阅读时误跳）', async () => {

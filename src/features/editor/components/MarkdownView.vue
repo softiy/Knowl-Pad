@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { renderMarkdown } from '@core/markdown/renderer';
-import { applyLinkStatus, loadLinkStatus } from '@core/markdown/linkStatus';
+import { applyLinkStatus, dstRelPathOf, loadLinkStatus, type LinkStatusIndex } from '@core/markdown/linkStatus';
+import { openExternal } from '@core/ipc/externalCommands';
+import { asKpError } from '@core/ipc/errors';
 import KpSafeHtml from '@shared/components/KpSafeHtml.vue';
 
 /**
@@ -10,8 +12,9 @@ import KpSafeHtml from '@shared/components/KpSafeHtml.vue';
  * - 渲染 → 净化 → 图片策略全在 core/markdown/renderer 内完成；扩展语法（`[[x]]`/`#标签`）
  *   也在那里变成带 `data-kp-*` 的中转节点；
  * - 本组件是全项目**唯一**允许把渲染结果交给 v-html 的地方（经由 KpSafeHtml）；
- * - 事件用**容器级委托**（不逐个绑监听器）：读 `data-kp-*` 后向外抛事件，
- *   由上层决定路由/命令（远程图片只允许交给系统浏览器打开，SEC-08）；
+ * - 事件用**容器级委托**（不逐个绑监听器）：读 `data-kp-*` 后向外抛事件；
+ *   远程图片占位符的"打开"在本组件内直接走 `core/ipc/openExternal`（只交给系统浏览器，SEC-08），
+ *   其余（链接/标签）由上层决定路由；
  * - **链接状态（悬空/歧义）在渲染后打标**：一次性查该笔记的出链（索引阶段的裁决结果），
  *   把状态映射成类名打到 DOM 上（见 `core/markdown/linkStatus.ts` 的"为什么不放在渲染器里"）。
  *
@@ -22,12 +25,12 @@ const props = defineProps<{
   source: string;
   /** 当前笔记的 relPath：用来查它的出链状态（缺省则不查，链接保持中性样式）。 */
   relPath?: string | undefined;
-  resolveAsset?: (src: string) => string | null;
+  resolveAsset?: ((src: string) => string | null) | undefined;
   cacheScope?: string;
 }>();
 
 const emit = defineEmits<{
-  /** 点击远程图片占位符（上层应交给系统浏览器打开，应用内不加载） */
+  /** 用户点击了远程图片占位符（应用内不加载；打开动作由本组件直接走 `openExternal`，emit 保留供上层/测试观测） */
   remoteImage: [src: string];
   /** 激活内部链接（`[[x]]`/`![[x]]`）：目标、形态、"是否已判定悬空"，以及**原始事件**（要读修饰键）。
    *
@@ -49,6 +52,13 @@ const rootRef = ref<HTMLElement | null>(null);
 let alive = true;
 /** "只认最后一次请求"：连切笔记时慢的旧响应不能把状态打到新笔记上（同搜索域/标签 store 的口径）。 */
 let statusSeq = 0;
+/**
+ * 最近一次链接裁决（点击跳转要用 `dstRelPath`，见 `handleActivate`）。
+ *
+ * 为什么不从 DOM 上再读一遍：DOM 只带**显示口径**的 `data-kp-link`，真实路径只存在于
+ * `link_outgoing` 的结果里；把整份索引记在这里，点击时按规范化目标查一次即可。
+ */
+let linkIndex: LinkStatusIndex = { byTarget: new Map() };
 
 onBeforeUnmount(() => {
   alive = false;
@@ -64,6 +74,7 @@ async function markLinkStatus(): Promise<void> {
   if (!alive || seq !== statusSeq) return;
   await nextTick();
   if (!alive || seq !== statusSeq || !rootRef.value) return;
+  linkIndex = index;
   applyLinkStatus(rootRef.value, index);
 }
 
@@ -77,11 +88,40 @@ function isDangling(el: Element): boolean {
   return el.classList.contains('kp-link--dangling');
 }
 
+/**
+ * 远程图片占位符被激活（点击 / 回车，E2）：**交给系统默认浏览器**，应用进程不加载（SEC-08）。
+ *
+ * 为什么在组件里直接调 IPC 封装而不是 emit 给上层：占位符的语义是"打开这个 URL"，
+ * 与上层（文件树/标签域）无关；走 `core/ipc` 只依赖 core 层，不违反 FE-02。
+ * 打开失败必须可见 —— 这里降到 console.warn（与 adapter 的降级提示同一口径，R-15）。
+ */
+function activateRemoteImage(src: string): void {
+  if (!src) return;
+  emit('remoteImage', src);
+  void openExternal(src).catch((err: unknown) => {
+    console.warn(`打开远程图片失败：${asKpError(err).message}`);
+  });
+}
+
+/**
+ * 点击时的**真实跳转目标**（D2 / 10.7）：已裁决链接换成 `dstRelPath`，其余保持显示目标。
+ *
+ * 为什么不能一律用显示目标：`[[B]]` / `[[B|别名]]` 的 `data-kp-link` 都是"B"（显示口径），
+ * 而上层（`editor.reveal` / `openNoteInNewTab`）只认识 Vault 相对路径 —— 把 "B" 交给
+ * `note_read` 会报「文件不存在」（M5 真机 D2 的根因）。显示文本不动，只换事件载荷。
+ * 悬空 / 歧义 / 索引未就绪时**不猜**路径，仍发原目标（创建流程用显示名，跳过失败时由上层提示）。
+ */
+function linkTargetOf(link: Element, dangling: boolean): string {
+  const displayTarget = link.getAttribute('data-kp-link') ?? '';
+  if (dangling) return displayTarget;
+  return dstRelPathOf(linkIndex, displayTarget) ?? displayTarget;
+}
+
 function handleActivate(event: Event): void {
   const target = event.target as HTMLElement | null;
   const remote = target?.closest('[data-kp-remote-src]');
   if (remote) {
-    emit('remoteImage', remote.getAttribute('data-kp-remote-src') ?? '');
+    activateRemoteImage(remote.getAttribute('data-kp-remote-src') ?? '');
     return;
   }
   const tag = target?.closest('[data-kp-tag]');
@@ -93,13 +133,14 @@ function handleActivate(event: Event): void {
   if (!link) return;
   const mouse = event as MouseEvent;
   const withModifier = mouse.ctrlKey === true || mouse.metaKey === true;
-  if (!withModifier && !isDangling(link)) return;
+  const dangling = isDangling(link);
+  if (!withModifier && !dangling) return;
   emit(
     'link',
     {
-      target: link.getAttribute('data-kp-link') ?? '',
+      target: linkTargetOf(link, dangling),
       kind: link.getAttribute('data-kp-kind') ?? 'link',
-      dangling: isDangling(link),
+      dangling,
     },
     event instanceof MouseEvent ? event : undefined,
   );

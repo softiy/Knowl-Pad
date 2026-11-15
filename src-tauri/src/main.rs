@@ -66,7 +66,7 @@ use commands::search::{
     search_quick_open,
 };
 use commands::settings::{preference_get, preference_set, vault_state_get, vault_state_set};
-use commands::system::{ping, system_info};
+use commands::system::{open_external, ping, system_info};
 use commands::tag::{tag_notes, tag_tree};
 use commands::tag_rewrite::{tag_rename_apply, tag_rename_preview};
 use commands::vault::{
@@ -194,6 +194,7 @@ fn main() {
             vault_state_set,
             ping,
             system_info,
+            open_external,
             note_create,
             folder_create,
             file_rename,

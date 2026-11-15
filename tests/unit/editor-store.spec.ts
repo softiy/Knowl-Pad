@@ -264,6 +264,28 @@ describe('反链点击定位（FR-LINK-13）', () => {
     expect(store.pendingReveal).toBeNull();
   });
 
+  /**
+   * D2 / 10.7 的**下层契约**：store 收到的已经是 MarkdownView 解析好的真实 relPath。
+   *
+   * 这里刻意不"兜底改写"目标（不补 .md、不取文件名、不换成显示名）—— 显示名到 relPath 的
+   * 解析只发生在阅读态点击那一刻（`MarkdownView`，依据索引裁决的 `dstRelPath`）。
+   * 若 store 再"智能解析"，反链/搜索这些本就传 relPath 的通路会被改错。
+   */
+  it('D2/10.7：reveal / openNoteInNewTab 一律按传入的 relPath 原样使用', async () => {
+    const store = useEditorStore();
+    mRead.mockResolvedValue(note('x'));
+    await store.openNote('notes/anchor.md');
+    const target = 'notes/子目录/B.md';
+    await store.reveal(target, 3);
+    expect(store.activeRelPath).toBe(target);
+    expect(store.pendingReveal).toEqual({ relPath: target, line: 3 });
+    // Ctrl/Cmd+Alt+点击的"新标签"语义：打开但不切走当前标签（FR-EDITOR-25）
+    await store.openNoteInNewTab('notes/C.md');
+    expect(store.buffers.some((buffer) => buffer.relPath === 'notes/C.md')).toBe(true);
+    expect(store.activeRelPath).toBe(target);
+    store.clearReveal();
+  });
+
   it('consumeReveal：只在该笔记活动时定位一次；能力不足则如实降级', async () => {
     const { consumeReveal } = await import('@features/editor/adapter/consumeReveal');
     const seen: number[] = [];
