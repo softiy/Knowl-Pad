@@ -35,9 +35,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.21"
 # ── M1 存储层（PRD §3.3 全局库、技术方案 §4 连接/迁移）──
-rusqlite = { version = "0.40.2", features = ["bundled"] }   # bundled：避免依赖系统 SQLite（三平台一致）
+rusqlite = { version = "0.41.0", features = ["bundled"] }   # bundled：避免依赖系统 SQLite（三平台一致）
 r2d2 = "0.8"                                                 # 读连接池
-r2d2_sqlite = "0.35.0"                                       # 与 rusqlite 0.40.x 配套
+r2d2_sqlite = "0.36.0"                                       # 与 rusqlite 0.41.x 配套
 # 结构化日志（迁移与连接生命周期）
 tracing = "0.1.44"
 # 索引签名 digest（技术方案 §4.6；注意 0.11 的 finalize() 不实现 LowerHex，需手动 hex）
