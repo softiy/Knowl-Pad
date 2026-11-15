@@ -24,7 +24,9 @@ walkdir = "2.5.0"
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 kp-domain = { path = "../crates/kp-domain" }
-tauri = { version = "2.12.0", features = [] }
+# protocol-asset：阅读态本地附件（E1/FR-EDITOR-43）走 asset:// 协议渲染，
+# 与 tauri.conf.json 的 app.security.assetProtocol.enable 配套（tauri-build 会校验两者一致）。
+tauri = { version = "2.12.0", features = ["protocol-asset"] }
 tauri-plugin-shell = "2.3.6"
 tauri-plugin-opener = "2.5.5"
 tauri-plugin-dialog = "2.7.3"
